@@ -1,0 +1,12 @@
+[general]
+name=Auditoria de Redes — GIS & WaterGEMS
+description=Auditoria espacial, bases WaterGEMS versionadas, diagnósticos e decisões técnicas.
+version=1.0.1
+qgisMinimumVersion=3.44
+author=Projeto Modelagem WaterGEMS
+email=
+about=Integra as ferramentas existentes sem alterar modelos hidráulicos ou entradas GIS.
+category=Vector
+icon=icone.svg
+experimental=True
+deprecated=False

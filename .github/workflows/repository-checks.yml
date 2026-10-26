@@ -1,0 +1,25 @@
+name: Repository checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  source-and-publication:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Syntax (does not replace PyQGIS tests)
+        run: python -m compileall -q scripts complemento_qgis testes ferramentas
+      - name: Publication policy and history
+        run: python ferramentas/auditar_publicacao.py --tracked --history
+      - name: Synthetic publication checks
+        run: python -m unittest discover -s testes -p test_publicacao.py -v
+      - name: Plugin archive
+        run: |
+          mkdir -p dist
+          python testes/empacotar_plugin.py dist/WaterNetworkAuditor.zip
+          python -m zipfile -t dist/WaterNetworkAuditor.zip

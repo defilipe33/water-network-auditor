@@ -1,0 +1,195 @@
+"""Formulários de decisão e proposta com rascunhos protegidos por contexto."""
+import json
+import re
+from datetime import datetime
+from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtWidgets import (QWidget,QVBoxLayout,QFormLayout,QHBoxLayout,QLabel,QComboBox,QLineEdit,
+    QPlainTextEdit,QPushButton,QCheckBox,QTabWidget,QScrollArea,QMessageBox,QFileDialog,QDialog,QTextBrowser)
+from . import decisoes as db
+
+
+def combo(valores):
+    c=QComboBox();c.addItems(valores);return c
+
+
+class AnaliseDecisao(QWidget):
+    def __init__(self,painel):
+        super().__init__(painel);self.painel=painel;self.chave=None;self.caso=None;self.head=None;self.prop=None;self._baseline=None
+        v=QVBoxLayout(self);self.identificacao=QLabel('Selecione uma ocorrência.');self.identificacao.setWordWrap(True);v.addWidget(self.identificacao)
+        self.tabs=QTabWidget();v.addWidget(self.tabs)
+        def pagina(titulo):
+            scroll=QScrollArea();scroll.setWidgetResizable(True);w=QWidget();scroll.setWidget(w);self.tabs.addTab(scroll,titulo);f=QFormLayout(w);f.setFormAlignment(Qt.AlignTop);f.setLabelAlignment(Qt.AlignLeft|Qt.AlignTop);return f
+        f=pagina('Decisão técnica');self.situacao=combo(db.SITUACOES);f.addRow('Situação administrativa',self.situacao)
+        self.conclusao=QComboBox();self.conclusao.addItem('Escolha explicitamente a conclusão',None)
+        for c in db.CONCLUSOES:self.conclusao.addItem(c,c)
+        f.addRow('Conclusão técnica',self.conclusao)
+        self.justificativa=QPlainTextEdit();self.justificativa.setMaximumHeight(95);f.addRow('Justificativa / observações',self.justificativa)
+        self.responsavel=QLineEdit();f.addRow('Responsável',self.responsavel)
+        self.fonte=combo(('',)+db.FONTES);f.addRow('Fonte da informação',self.fonte)
+        self.natureza=combo(db.NATUREZAS);f.addRow('Natureza da evidência',self.natureza)
+        self.evidencia=QPlainTextEdit();self.evidencia.setMaximumHeight(85);self.evidencia.setPlaceholderText('Identifique documento, consulta ao modelo, informação operacional ou verificação de campo.');f.addRow('Evidência identificada',self.evidencia)
+        self.data=QLabel('Sem revisão topológica salva.');self.data.setMaximumHeight(32);self.data.setAlignment(Qt.AlignLeft|Qt.AlignTop);f.addRow('Última revisão',self.data)
+        b=QPushButton('Salvar decisão no histórico');b.clicked.connect(self.salvar_decisao);f.addRow(b)
+        f=pagina('Propostas');self.seletor=QComboBox();self.seletor.currentIndexChanged.connect(self.trocar_proposta);f.addRow('Proposta desta ocorrência',self.seletor)
+        self.tipo=combo(db.TIPOS_PROPOSTA);f.addRow('Tipo de intervenção',self.tipo)
+        self.descricao=QPlainTextEdit();self.descricao.setMaximumHeight(75);f.addRow('Descrição',self.descricao)
+        self.ids=QLineEdit();self.ids.setPlaceholderText('DomainElementIDs separados por ponto e vírgula');f.addRow('Elementos envolvidos',self.ids)
+        self.rotulos=QLabel();self.rotulos.setWordWrap(True);f.addRow('Labels / tipos',self.rotulos);self.ids.textChanged.connect(self.mostrar_rotulos)
+        self.elementos_confirmados=QCheckBox('Conferi as identidades dos elementos e seu papel nesta proposta');f.addRow(self.elementos_confirmados)
+        self.prop_just=QPlainTextEdit();self.prop_just.setMaximumHeight(70);f.addRow('Justificativa',self.prop_just)
+        self.requisitos=QPlainTextEdit();self.requisitos.setMaximumHeight(70);f.addRow('Requisitos de validação',self.requisitos)
+        self.prop_resp=QLineEdit();f.addRow('Responsável',self.prop_resp)
+        self.prop_evid=QPlainTextEdit();self.prop_evid.setMaximumHeight(70);f.addRow('Evidência desta alteração',self.prop_evid)
+        self.prop_estado=combo(db.ESTADOS_PROPOSTA);f.addRow('Situação da proposta',self.prop_estado)
+        self.confirmacao=QCheckBox('Confirmo explicitamente esta aprovação / declaração de aplicação / validação técnica');f.addRow(self.confirmacao)
+        self.verificacao_manual=QCheckBox('Realizei verificação técnica adicional e identifiquei a evidência do resultado acima');f.addRow(self.verificacao_manual)
+        self.validacao=QLabel('Nenhuma evidência posterior selecionada.');self.validacao.setWordWrap(True);f.addRow(self.validacao);self.validacao_uid=None
+        b=QPushButton('Salvar proposta / acrescentar histórico');b.clicked.connect(self.salvar_proposta);f.addRow(b)
+        b=QPushButton('Confrontar aplicação com auditoria posterior…');b.clicked.connect(self.verificar);f.addRow(b)
+        f=pagina('Histórico e evidências');self.historia=QTextBrowser();self.historia.setOpenExternalLinks(False);f.addRow(self.historia)
+        b=QPushButton('Registrar correspondência revisada entre versões…');b.clicked.connect(self.reconciliar);f.addRow(b)
+        self.mensagem=QLabel('Revisão topológica independente da revisão espacial. Nenhuma ação escreve no WaterGEMS.');self.mensagem.setWordWrap(True);v.addWidget(self.mensagem)
+        self.setEnabled(False)
+
+    def valores_decisao(self):return (self.situacao.currentText(),self.conclusao.currentData(),self.justificativa.toPlainText(),self.responsavel.text(),self.fonte.currentText(),self.natureza.currentText(),self.evidencia.toPlainText())
+    def valores_proposta(self):return (self.tipo.currentText(),self.descricao.toPlainText(),self.ids.text(),self.elementos_confirmados.isChecked(),self.prop_just.toPlainText(),self.requisitos.toPlainText(),self.prop_resp.text(),self.prop_evid.toPlainText(),self.prop_estado.currentText(),self.confirmacao.isChecked(),self.verificacao_manual.isChecked())
+    def valores(self):return self.valores_decisao(),self.valores_proposta()
+    def tem_edicoes(self):return self.chave is not None and self._baseline is not None and self.valores()!=self._baseline
+
+    def carregar(self,caso,modo,forcar=False):
+        chave=(caso['uid'],modo) if caso else None
+        if chave==self.chave and not forcar:return
+        self.chave=chave;self.caso=caso;self.modo=modo;self.setEnabled(caso is not None)
+        if not caso:self._baseline=None;self.identificacao.setText('Selecione uma ocorrência.');return
+        p=self.painel.pacote;self.ig=p['resultado']['meta']['uid']
+        self.identificacao.setText(caso['titulo']+'\n'+modo+' · cenário '+str(p['topologia']['modelo']['cenario'])+' · ocorrência '+caso['uid']+'\n'+ '; '.join(caso['tubos_gis'] or caso['elementos'][:4]))
+        self.identificacao.setToolTip('Decisão vinculada à execução, cenário e perspectiva selecionados. A hipótese com válvulas abertas não comprova a condição operacional real.')
+        hs=db.historico(self.painel.base,self.ig,caso['uid'],modo);self.head=hs[-1] if hs else None
+        h=self.head or {}
+        self.situacao.setCurrentText(h.get('situacao','PENDENTE'));self.conclusao.setCurrentIndex(self.conclusao.findData(h.get('conclusao')))
+        self.justificativa.setPlainText(h.get('justificativa',''));self.responsavel.setText(h.get('responsavel',''));self.fonte.setCurrentText(h.get('fonte',''))
+        self.natureza.setCurrentText(h.get('natureza','INDEFINIDO'));self.evidencia.setPlainText(h.get('evidencia',''));self.mostrar_data(h.get('data_utc'))
+        self._propostas=db.propostas(self.painel.base,self.ig,caso['uid'],modo)
+        self.seletor.blockSignals(True);self.seletor.clear();self.seletor.addItem('Nova proposta · não criada automaticamente',None)
+        for pr in self._propostas:self.seletor.addItem(pr['prop_uid'][:10]+' · '+pr['atual']['tipo']+' · '+pr['atual']['situacao'],pr['prop_uid'])
+        self.seletor.blockSignals(False);self.carregar_proposta(None)
+        linhas=['EVIDÊNCIAS DA OCORRÊNCIA',*caso['evidencias'],'\nREVISÕES TOPOLÓGICAS']
+        linhas += [f"{h['data_utc']} | {h['responsavel']} | {h['situacao']} | {h['conclusao']}\n{h['justificativa']}\n{h['fonte']} / {h['natureza']} / {h['evidencia']}\nUUID {h['rev_uid']} / anterior {h['anterior']}" for h in hs]
+        for pr in self._propostas:
+            linhas.append('\nPROPOSTA '+pr['prop_uid'])
+            linhas += [f"{h['data_utc']} | {h['situacao']} | {h['responsavel']}\n{h['descricao']}\n{h['evidencia']}\nHistórico {h['hist_uid']} / anterior {h['anterior']}" for h in pr['historico']]
+        self.historia.setPlainText('\n\n'.join(linhas));self._baseline=self.valores()
+
+    def carregar_proposta(self,uid):
+        self.prop=next((p for p in self._propostas if p['prop_uid']==uid),None);h=self.prop['atual'] if self.prop else {}
+        self.tipo.setCurrentText(h.get('tipo',db.TIPOS_PROPOSTA[0]));self.descricao.setPlainText(h.get('descricao',''))
+        ids=[e['wg_id'] for e in h['elementos']] if h else [str(i) for i in self.caso['wg_ids']]
+        self.ids.setText('; '.join(ids));self.elementos_confirmados.setChecked(bool(h.get('elementos_confirmados',False)))
+        self.prop_just.setPlainText(h.get('justificativa',''));self.requisitos.setPlainText(h.get('requisitos',''));self.prop_resp.setText(h.get('responsavel',''))
+        self.prop_evid.setPlainText(h.get('evidencia',''));self.prop_estado.setCurrentText(h.get('situacao','RASCUNHO'));self.confirmacao.setChecked(False)
+        self.verificacao_manual.setChecked(False)
+        self.validacao_uid=None;self.validacao.setText('Confronto posterior precisa ser realizado para o estado atual da proposta.')
+        if self.prop:
+            vs=db.validacoes(self.painel.base,self.prop['prop_uid'],h['hist_uid'])
+            if vs:self.validacao_uid=vs[-1]['uid'];self.validacao.setText(vs[-1]['resultado']+' · evidência persistida; validação final é humana.')
+
+    def trocar_proposta(self):
+        if not self.caso or self._baseline is None:return
+        uid=self.seletor.currentData();anterior=self.prop['prop_uid'] if self.prop else None
+        if self.valores_proposta()!=self._baseline[1]:
+            self.seletor.blockSignals(True);self.seletor.setCurrentIndex(self.seletor.findData(anterior));self.seletor.blockSignals(False)
+            if not self.resolver_edicoes():return
+            # Salvar pode reconstruir a lista; procure novamente o destino escolhido.
+            self.seletor.blockSignals(True);self.seletor.setCurrentIndex(self.seletor.findData(uid));self.seletor.blockSignals(False)
+        self.carregar_proposta(uid);self._baseline=(self._baseline[0],self.valores_proposta())
+
+    def mostrar_rotulos(self):
+        if not self.caso:return
+        try:
+            ids=self.elementos();el=self.painel.pacote['topologia']['modelo']['elementos']
+            self.rotulos.setText('; '.join(f"{i}: {el[i]['label']} / {el[i]['tipo']}" if i in el else f'{i}: NÃO IDENTIFICADO' for i in ids))
+        except ValueError:self.rotulos.setText('Identificadores inválidos; não serão aprovados.')
+
+    def elementos(self):return [int(t) for t in re.split(r'[,;\s]+',self.ids.text().strip()) if t]
+
+    def salvar_decisao(self):
+        if not self.caso:return False
+        try:
+            if self.conclusao.currentData() is None:raise ValueError('Escolha a conclusão explicitamente; use NÃO AVALIADO para salvar uma observação inicial.')
+            db.salvar_decisao(self.painel.base,self.painel.pacote,self.caso,self.modo,*self.valores_decisao(),esperada=self.head['rev_uid'] if self.head else None)
+            self.head=db.historico(self.painel.base,self.ig,self.caso['uid'],self.modo)[-1];self.mostrar_data(self.head['data_utc'])
+            self.painel._revisoes_topologicas[(self.caso['uid'],self.modo)]=self.head
+            row=self.painel.lista.currentRow()
+            if row>=0:self.painel.lista.item(row,2).setText(self.head['situacao'])
+            self._baseline=(self.valores_decisao(),self._baseline[1]);self.atualizar_historico();self.painel.selecionar();self.mensagem.setText('Decisão topológica acrescentada ao histórico. Revisão espacial preservada.');return True
+        except Exception as e:QMessageBox.warning(self,'Decisão não salva',str(e));return False
+
+    def salvar_proposta(self):
+        if not self.caso:return False
+        try:
+            uid,h=db.salvar_proposta(self.painel.base,self.painel.pacote,self.caso,self.modo,self.tipo.currentText(),
+                self.descricao.toPlainText(),self.prop_just.toPlainText(),self.requisitos.toPlainText(),self.prop_resp.text(),self.prop_evid.toPlainText(),
+                self.elementos(),self.elementos_confirmados.isChecked(),self.prop_estado.currentText(),
+                self.prop['prop_uid'] if self.prop else None,self.prop['atual']['hist_uid'] if self.prop else None,self.confirmacao.isChecked(),self.validacao_uid,self.verificacao_manual.isChecked())
+            self._propostas=db.propostas(self.painel.base,self.ig,self.caso['uid'],self.modo)
+            self.seletor.blockSignals(True);self.seletor.clear();self.seletor.addItem('Nova proposta',None)
+            for pr in self._propostas:self.seletor.addItem(pr['prop_uid'][:10]+' · '+pr['atual']['situacao'],pr['prop_uid'])
+            self.seletor.setCurrentIndex(self.seletor.findData(uid));self.seletor.blockSignals(False);self.carregar_proposta(uid)
+            self._baseline=(self._baseline[0],self.valores_proposta());self.atualizar_historico();self.mensagem.setText('Proposta salva. Nenhuma alteração aplicada ao modelo.');return True
+        except Exception as e:QMessageBox.warning(self,'Proposta não salva',str(e));return False
+
+    def resolver_edicoes(self):
+        if not self.tem_edicoes():return True
+        escolha=QMessageBox.question(self,'Alterações topológicas não salvas','Salvar decisão e proposta alteradas antes de mudar de contexto?',QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
+        if escolha==QMessageBox.Cancel:return False
+        if escolha==QMessageBox.Discard:self.carregar(self.caso,self.modo,True);return True
+        if self.valores_decisao()!=self._baseline[0] and not self.salvar_decisao():return False
+        if self.valores_proposta()!=self._baseline[1] and not self.salvar_proposta():return False
+        return not self.tem_edicoes()
+
+    def atualizar_historico(self):
+        hs=db.historico(self.painel.base,self.ig,self.caso['uid'],self.modo)
+        linhas=['EVIDÊNCIAS DA OCORRÊNCIA',*self.caso['evidencias'],'\nREVISÕES TOPOLÓGICAS']
+        linhas += [f"{h['data_utc']} | {h['responsavel']} | {h['situacao']} | {h['conclusao']}\n{h['justificativa']}\n{h['fonte']} / {h['natureza']} / {h['evidencia']}\nUUID {h['rev_uid']} / anterior {h['anterior']}" for h in hs]
+        for p in db.propostas(self.painel.base,self.ig,self.caso['uid'],self.modo):
+            linhas.append('\nPROPOSTA '+p['prop_uid'])
+            linhas += [f"{h['data_utc']} | {h['situacao']} | {h['responsavel']}\n{h['descricao']}\n{h['evidencia']}\nHistórico {h['hist_uid']} / anterior {h['anterior']}" for h in p['historico']]
+        self.historia.setPlainText('\n\n'.join(linhas))
+
+    def mostrar_data(self,data):
+        self.data.setText(datetime.fromisoformat(data).astimezone().strftime('%d/%m/%Y %H:%M:%S %z') if data else 'Sem revisão topológica salva.')
+        self.data.setToolTip(data or '')
+
+    def verificar(self):
+        if self.tem_edicoes():QMessageBox.information(self,'Salve primeiro','Salve a proposta antes de comparar versões.');return
+        if not self.prop:QMessageBox.information(self,'Proposta','Selecione uma proposta salva cuja aplicação foi informada.');return
+        caminho,_=QFileDialog.getOpenFileName(self,'Auditoria integrada posterior','','GeoPackage (*.gpkg)')
+        if not caminho:return
+        try:
+            from .comparacao_decisoes import avaliar_proposta,salvar_validacao,selecionar_integracao
+            novo=selecionar_integracao(caminho,self)
+            if novo is None:return
+            r=avaliar_proposta(self.prop,self.painel.pacote,novo)
+            self.validacao_uid=salvar_validacao(self.painel.base,self.painel.pacote,self.prop,r,caminho)
+            self.validacao.setText(r['resultado']+' · confronto registrado. A validação final exige confirmação humana explícita e evidência.')
+            j=QDialog(self);j.setWindowTitle('Evidências do confronto posterior');j.resize(720,420);l=QVBoxLayout(j);t=QPlainTextEdit();t.setReadOnly(True)
+            t.setPlainText(f"Resultado: {r['resultado']}\nCenários comparáveis: {r['cenarios_comparaveis']}\nIdentidades preservadas: {r['identidades_preservadas']}\nLigações diretas antes: {r['conexoes_diretas_antes']}\nLigações diretas depois: {r['conexoes_diretas_depois']}\nComposição alterada: {r['composicao_antes']!=r['composicao_depois']}\nNovos diagnósticos dos elementos: {len(r['novos_diagnosticos'])}\n\n{r['conclusao']}\n\nEvidência técnica completa preservada no GPKG e nas exportações.");l.addWidget(t);j.exec_()
+        except Exception as e:QMessageBox.warning(self,'Confronto não registrado',str(e))
+
+    def reconciliar(self):
+        if self.tem_edicoes() or not self.head:QMessageBox.information(self,'Revisão de destino','Salve uma decisão própria desta ocorrência antes de registrar a correspondência.');return
+        try:
+            from qgis.PyQt.QtWidgets import QInputDialog
+            from .comparacao_decisoes import reconciliar
+            with db.abrir_ro(self.painel.base) as con:
+                linhas=con.execute('SELECT c.comp_uid,c.ordem,c.classe,c.dados FROM IGD_CORRESPONDENCIAS c JOIN IGD_COMPARACOES p ON p.comp_uid=c.comp_uid WHERE p.ig_destino=?',(self.ig,)).fetchall()
+            linhas=[l for l in linhas if self.caso['uid'] in json.loads(l[3])['destinos']]
+            if not linhas:raise ValueError('Nenhuma comparação registrada aponta esta ocorrência como candidata')
+            nomes=[f'{l[2]} · comparação {l[0][:10]} · item {l[1]}' for l in linhas]
+            nome,ok=QInputDialog.getItem(self,'Correspondência entre versões','Selecione a relação que conferiu:',nomes,0,False)
+            if not ok:return
+            justificativa,ok=QInputDialog.getMultiLineText(self,'Justificativa da reconciliação','Explique a correspondência; a conclusão antiga não será copiada:')
+            if not ok:return
+            l=linhas[nomes.index(nome)];reconciliar(self.painel.base,l[0],l[1],self.caso['uid'],self.head['rev_uid'],self.responsavel.text(),justificativa,self.evidencia.toPlainText())
+            self.mensagem.setText('Correspondência registrada com revisão própria do destino; sem transferir conclusão anterior.')
+        except Exception as e:QMessageBox.warning(self,'Reconciliação não registrada',str(e))
