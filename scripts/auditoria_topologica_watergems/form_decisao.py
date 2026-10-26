@@ -35,6 +35,8 @@ class AnaliseDecisao(QWidget):
         self.descricao=QPlainTextEdit();self.descricao.setMaximumHeight(75);f.addRow('Descrição',self.descricao)
         self.ids=QLineEdit();self.ids.setPlaceholderText('DomainElementIDs separados por ponto e vírgula');f.addRow('Elementos envolvidos',self.ids)
         self.rotulos=QLabel();self.rotulos.setWordWrap(True);f.addRow('Labels / tipos',self.rotulos);self.ids.textChanged.connect(self.mostrar_rotulos)
+        from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
+        self.tabela_proposta=TabelaConsulta(['Tipo','Label WaterGEMS','DomainElementID','Identificação']);f.addRow(self.tabela_proposta)
         self.elementos_confirmados=QCheckBox('Conferi as identidades dos elementos e seu papel nesta proposta');f.addRow(self.elementos_confirmados)
         self.prop_just=QPlainTextEdit();self.prop_just.setMaximumHeight(70);f.addRow('Justificativa',self.prop_just)
         self.requisitos=QPlainTextEdit();self.requisitos.setMaximumHeight(70);f.addRow('Requisitos de validação',self.requisitos)
@@ -49,6 +51,12 @@ class AnaliseDecisao(QWidget):
         f=pagina('Histórico e evidências');self.historia=QTextBrowser();self.historia.setOpenExternalLinks(False);f.addRow(self.historia)
         b=QPushButton('Registrar correspondência revisada entre versões…');b.clicked.connect(self.reconciliar);f.addRow(b)
         self.mensagem=QLabel('Revisão topológica independente da revisão espacial. Nenhuma ação escreve no WaterGEMS.');self.mensagem.setWordWrap(True);v.addWidget(self.mensagem)
+        self.salvar_fixo_decisao=QPushButton('Salvar decisão no histórico');self.salvar_fixo_decisao.clicked.connect(self.salvar_decisao);v.addWidget(self.salvar_fixo_decisao)
+        self.salvar_fixo_proposta=QPushButton('Salvar proposta / histórico');self.salvar_fixo_proposta.clicked.connect(self.salvar_proposta);v.addWidget(self.salvar_fixo_proposta)
+        def acoes_fixas(i):self.salvar_fixo_decisao.setVisible(i==0);self.salvar_fixo_proposta.setVisible(i==1)
+        self.tabs.currentChanged.connect(acoes_fixas);acoes_fixas(0)
+        from auditoria_fronteiras.ui_comum import configurar_controles
+        configurar_controles(self)
         self.setEnabled(False)
 
     def valores_decisao(self):return (self.situacao.currentText(),self.conclusao.currentData(),self.justificativa.toPlainText(),self.responsavel.text(),self.fonte.currentText(),self.natureza.currentText(),self.evidencia.toPlainText())
@@ -108,7 +116,10 @@ class AnaliseDecisao(QWidget):
         try:
             ids=self.elementos();el=self.painel.pacote['topologia']['modelo']['elementos']
             self.rotulos.setText('; '.join(f"{i}: {el[i]['label']} / {el[i]['tipo']}" if i in el else f'{i}: NÃO IDENTIFICADO' for i in ids))
-        except ValueError:self.rotulos.setText('Identificadores inválidos; não serão aprovados.')
+            if hasattr(self,'tabela_proposta'):self.tabela_proposta.preencher([[el.get(i,{}).get('tipo'),el.get(i,{}).get('label'),i,'Identificado' if i in el else 'Não identificado'] for i in ids])
+        except ValueError:
+            self.rotulos.setText('Identificadores inválidos; não serão aprovados.')
+            if hasattr(self,'tabela_proposta'):self.tabela_proposta.preencher([])
 
     def elementos(self):return [int(t) for t in re.split(r'[,;\s]+',self.ids.text().strip()) if t]
 

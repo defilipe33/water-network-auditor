@@ -128,6 +128,8 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
         self.atualizar_camadas()
         self.monitorar_configuracao()
         self.mudar_modalidade()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     @staticmethod
     def _tabela(cabecalhos):

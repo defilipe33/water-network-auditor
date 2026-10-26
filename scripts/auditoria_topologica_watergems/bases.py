@@ -83,6 +83,9 @@ def extrair(fonte,cenario,modo,pasta,nome,projeto,anterior=None,referencia=None,
         referencia_espacial=referencia or {},extrator='Banco.ler / snapshot-1',regras='grafo validado; sem interpretação de estados efetivos',
         codigo={n:hash_arquivo(Path(__file__).with_name(n+'.py')) for n in ('leitura','resolucao','topologia')},
         resumo=estrutural['resumo'],resumo_potencial=potencial['resumo'],situacao='CONCLUIDA')
+    from .deteccao_espacial import ler_metadados_sqlite
+    from .referencia_espacial import contexto_modelo
+    meta['metadados_espaciais']=dict(ler_metadados_sqlite(origem['snapshot'],cancelar),contexto_modelo=contexto_modelo(modelo))
     return dict(sem_alteracao=False,meta=meta,modelo=modelo,estrutural=estrutural,potencial=potencial,pasta=str(pasta))
 
 
@@ -104,6 +107,11 @@ def persistir(preparada,destino,cancelar=None):
         con.execute('CREATE INDEX wb_tipo ON WB_ELEMENTOS(tipo)');con.execute('CREATE INDEX wb_familia ON WB_ELEMENTOS(familia)')
         con.execute('CREATE TABLE WB_RESULTADOS(modo TEXT PRIMARY KEY,dados TEXT NOT NULL)')
         con.execute('INSERT INTO WB_BASE VALUES(?,?,?)',(meta['uuid'],texto(meta),texto({k:v for k,v in m.items() if k!='elementos'})))
+        validacao=meta.get('referencia_espacial',{}).get('validacao')
+        if validacao:
+            con.execute('CREATE TABLE WB_EVIDENCIA(base_uuid TEXT PRIMARY KEY REFERENCES WB_BASE(uuid),dados_json TEXT NOT NULL)')
+            con.execute('INSERT INTO WB_EVIDENCIA VALUES(?,?)',(meta['uuid'],texto(meta['referencia_espacial'])))
+            con.execute("INSERT INTO gpkg_contents(table_name,data_type,identifier) VALUES('WB_EVIDENCIA','attributes','WB_EVIDENCIA')")
         for i,e in m['elementos'].items():
             verificar(cancelar);con.execute('INSERT INTO WB_ELEMENTOS VALUES(?,?,?,?,?,?,?,?)',(i,e['uid'],e['tipo'],e['familia'],e['ativo'],e['excluido'],texto({k:v for k,v in e.items() if k!='geometria'}),e['geometria']))
         for modo,res in [(MODOS[0],r),(MODOS[1],preparada['potencial'])]:con.execute('INSERT INTO WB_RESULTADOS VALUES(?,?)',(modo,texto({k:v for k,v in res.items() if k!='grafo'})))

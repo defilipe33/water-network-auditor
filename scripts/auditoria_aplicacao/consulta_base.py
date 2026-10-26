@@ -17,6 +17,8 @@ class ConsultaBase(QDialog):
             b=QPushButton(nome);b.clicked.connect(lambda _,d=delta:self.mudar(d));l.addWidget(b)
         self.rodape=QLabel();l.addWidget(self.rodape)
         self.tipo.currentIndexChanged.connect(self.resetar);self.modo.currentIndexChanged.connect(self.resetar);self.atualizar()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
     def resetar(self):self.pagina=0;self.atualizar()
     def mudar(self,delta):self.pagina=max(0,self.pagina+delta);self.atualizar()
     def atualizar(self):

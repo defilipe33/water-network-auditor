@@ -32,6 +32,8 @@ class JanelaIntegracao(QDialog):
         self.executar=QPushButton('Gerar nova investigação integrada…');self.executar.clicked.connect(self.gerar);l.addWidget(self.executar)
         self.cancelar=QPushButton('Cancelar processamento');self.cancelar.setEnabled(False);self.cancelar.clicked.connect(lambda:setattr(self,'_cancelado',True));l.addWidget(self.cancelar)
         self.reabrir=QPushButton('Reabrir investigação integrada salva…');self.reabrir.clicked.connect(self.abrir_existente);l.addWidget(self.reabrir)
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def escolher(self,alvo,filtro):
         if self._executando:return

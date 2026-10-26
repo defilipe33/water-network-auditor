@@ -13,7 +13,7 @@ def erro_vertices(wkb,gis,fator):
     return min(max(dist(x,y) for x,y in zip(a,b)),max(dist(x,y) for x,y in zip(a,reversed(b))))
 
 
-def provar_correspondencia(modelo,registros_gis,fator,tolerancia):
+def provar_correspondencia(modelo,registros_gis,fator,tolerancia,cancelar=None):
     """registros: uid, chave_cadastral, geometria, origem. Mapeamento explícito.
 
     Critério: chave única em AMBAS fontes + todos os vértices XY compatíveis.
@@ -25,6 +25,7 @@ def provar_correspondencia(modelo,registros_gis,fator,tolerancia):
     for r in registros_gis:gis[r['chave_cadastral']].append(r['uid'])
     saida=[];erros=[]
     for r in registros_gis:
+        if cancelar and cancelar():raise InterruptedError('Comparação cancelada; fontes preservadas')
         chave=r['chave_cadastral'];candidatos=wg.get(chave,[]) if chave is not None else []
         codigo='NAO_ENCONTRADA';erro=None
         if chave is None or not str(chave).strip():codigo='INCONSISTENTE'

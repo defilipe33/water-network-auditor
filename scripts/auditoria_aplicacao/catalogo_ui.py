@@ -19,6 +19,8 @@ class SeletorBases(QDialog):
         for nome,acao in [('Adicionar arquivo…',self.adicionar),('Reexaminar pasta',self.varrer),('Abrir selecionada',self.abrir),('Cancelar',self.reject)]:
             b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b)
         self.busca.textChanged.connect(self.atualizar);self.atualizar()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
     def atualizar(self):
         self.visiveis=[r for r in self.itens if (not self.tipo or r['tipo']==self.tipo) and all(c.currentData() is None or str(r.get(k,''))==c.currentData() for k,c in self.filtros.items()) and self.busca.text().casefold() in ' '.join(str(v) for k,v in r.items() if k!='base').casefold()]
         self.tabela.setRowCount(len(self.visiveis))

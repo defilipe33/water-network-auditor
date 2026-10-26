@@ -101,6 +101,8 @@ class DialogExportarDecisoes(QDialog):
         self.gpkg=QCheckBox('Cópia completa GPKG com históricos');v.addWidget(self.gpkg)
         self.shp=QCheckBox('SHP de ocorrências espaciais — sem intervenções');v.addWidget(self.shp)
         b=QPushButton('Escolher pasta e gerar nova exportação…');b.clicked.connect(self.exportar);v.addWidget(b)
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
     def exportar(self):
         if not any(w.isChecked() for w in (self.xlsx,self.gpkg,self.shp)):QMessageBox.warning(self,'Formato','Selecione pelo menos um formato.');return
         pasta=QFileDialog.getExistingDirectory(self,'Pasta de destino')

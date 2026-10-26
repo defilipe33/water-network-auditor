@@ -58,6 +58,8 @@ class Janela(QDialog):
         integrar=QPushButton('Integrar com auditoria geométrica persistida…')
         integrar.clicked.connect(self.abrir_integracao);l.addWidget(integrar)
         self.resumo.setPlainText('Abra uma cópia previamente extraída. Leitura somente leitura.\nESTRUTURAL inclui topologia cadastrada, inclusive elementos inativos, identificados nos atributos.\nTODAS_VALVULAS_ABERTAS preserva Active Topology; bombas indeterminadas não são habilitadas.\nSem confirmação espacial, GPKG conserva coordenadas brutas sem CRS e SHP permanece bloqueado.')
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def selecionar(self):
         p,_=QFileDialog.getOpenFileName(self,'Selecionar cópia WaterGEMS','','WaterGEMS (*.wtg.sqlite)')

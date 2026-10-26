@@ -4,7 +4,7 @@ from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt,pyqtSignal
 from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QLabel,
     QTreeWidget,QTreeWidgetItem,QPushButton,QPlainTextEdit,QLineEdit,QFormLayout,
-    QFileDialog,QMessageBox,QSplitter,QWidget,QCheckBox)
+    QFileDialog,QMessageBox,QSplitter,QWidget,QCheckBox,QTabWidget)
 from qgis.core import QgsVectorLayer,QgsGeometry,QgsCoordinateTransform
 from .inspecao import detalhes_local,contagens
 from .apresentacao import legivel
@@ -92,7 +92,12 @@ class PainelInspecao(QDialog):
         self.arvore.setColumnWidth(1,140)
         self.arvore.setColumnWidth(2,180)
         self.arvore.setColumnWidth(3,320)
-        raiz.addWidget(self.arvore,1)
+        from .tabelas_consulta import TabelaConsulta
+        self.dados_tabs=QTabWidget();raiz.addWidget(self.dados_tabs,1)
+        self.tubulacoes_tabela=TabelaConsulta(['Tipo','ID GIS','Camada','Setor cadastral','Regiões geométricas','Diâmetro','Material','Chave técnica'])
+        self.eventos_tabela=TabelaConsulta(['ID','Classificação','Limite','Área','Região antes','Região depois','Ambiguidade','X','Y','Chave técnica'])
+        self.dados_tabs.addTab(self.tubulacoes_tabela,'Tubulações');self.dados_tabs.addTab(self.eventos_tabela,'Eventos');self.dados_tabs.addTab(self.arvore,'Detalhes completos')
+        self.tubulacoes_tabela.tabela.setColumnHidden(7,True);self.eventos_tabela.tabela.setColumnHidden(9,True)
         botoes=QHBoxLayout()
         for texto,funcao in [('Destacar local e eventos',self.destacar),
                 ('Selecionar tubulações originais',self.selecionar_origens),('Aproximar mapa',self.aproximar)]:
@@ -129,6 +134,8 @@ class PainelInspecao(QDialog):
         if self.camada_locais is not None:
             self.camada_locais.selectionChanged.connect(self.selecao_inversa)
         self.atualizar()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def atualizar(self):
         uid=self.locais.currentData()
@@ -147,12 +154,15 @@ class PainelInspecao(QDialog):
         for w in (self.situacao,self.observacoes,self.responsavel):
             w.setEnabled(bool(uid))
         if not uid:
+            self.tubulacoes_tabela.preencher([]);self.eventos_tabela.preencher([])
             self.confirmar_reconciliacao.setEnabled(False)
             self._local_carregado=None
             self._form_baseline=None
             self.gerais.setText('Selecione um local para consultar seus elementos.')
             return
         d=detalhes_local(self.dossie,uid)
+        self.tubulacoes_tabela.preencher([['Tubulação',t['id_exibido'],t['camada'],t['extras'].get('setor'),'; '.join(legivel(p.get('nome') or p.get('id_original')) for p in t['regioes_geometricas']),t['extras'].get('diametro'),t['extras'].get('material'),t['uid']] for t in d['tubulacoes']])
+        self.eventos_tabela.preencher([[e['registro'].get(k) for k in ('ID','CLASSIF','TIPO_LIM','AREA','REG_ANTES','REG_DEPOIS','AMBIGUO','X','Y')]+[e['uid']] for e in d['eventos']])
         l=d['local']
         r=l['registro']
         revisao=l['revisao']

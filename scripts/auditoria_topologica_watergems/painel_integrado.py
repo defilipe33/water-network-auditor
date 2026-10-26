@@ -1,7 +1,7 @@
 """Extensão do painel existente; revisões permanecem na cópia integrada."""
 from pathlib import Path
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QComboBox,QLabel,QTreeWidget,QTreeWidgetItem,QPushButton,QHBoxLayout)
+from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QComboBox,QLabel,QTreeWidget,QTreeWidgetItem,QPushButton,QHBoxLayout,QTabWidget)
 from qgis.core import QgsProject,QgsVectorLayer,QgsGeometry,QgsCoordinateTransform,QgsCoordinateReferenceSystem
 from auditoria_fronteiras.painel import PainelInspecao
 from auditoria_fronteiras.inspecao import restaurar
@@ -84,11 +84,17 @@ class DialogComponentes(QDialog):
         self.componentes=QComboBox();self.componentes.setMinimumContentsLength(30);self.componentes.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon);l.addWidget(self.componentes)
         self.resumo=QLabel();self.resumo.setWordWrap(True);l.addWidget(self.resumo)
         self.arvore=QTreeWidget();self.arvore.setHeaderLabels(['Elemento','ID / Label','Informações','Chave']);l.addWidget(self.arvore,1)
+        from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
+        self.membros_tabela=TabelaConsulta(['Tipo','ID GIS da auditoria','Camada GIS','Label WG','DomainElementID','Componente','Vínculo','Diagnóstico','Chave GIS de correspondência'])
+        self.tabs_dados=QTabWidget();l.removeWidget(self.arvore);l.addWidget(self.tabs_dados,1)
+        self.tabs_dados.addTab(self.membros_tabela,'Membros em colunas');self.tabs_dados.addTab(self.arvore,'Evidências completas')
         for i,w in enumerate((220,200,350,100)):self.arvore.setColumnWidth(i,w)
         linha=QHBoxLayout();self.mais=QPushButton('Carregar mais 200 membros');self.mais.clicked.connect(self.carregar_mais);linha.addWidget(self.mais)
         zoom=QPushButton('Aproximar componente');zoom.clicked.connect(self.aproximar);linha.addWidget(zoom);l.addLayout(linha)
         self.modo.currentIndexChanged.connect(self.preencher);self.porte.currentIndexChanged.connect(self.preencher);self.componentes.currentIndexChanged.connect(self.exibir)
         self.arvore.itemSelectionChanged.connect(self.selecionar);self.preencher()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def preencher(self):
         r=self.painel.pacote['resultado'];pot=self.modo.currentText()!='ESTRUTURAL'
@@ -101,7 +107,7 @@ class DialogComponentes(QDialog):
     def exibir(self):
         self.arvore.clear();uid=self.componentes.currentData();self.pagina=0
         self.atual=next((c for c in self.cs if c['uid']==uid),None)
-        if not self.atual:self.resumo.setText('Sem componentes nesta faixa.');return
+        if not self.atual:self.resumo.setText('Sem componentes nesta faixa.');self.membros_tabela.preencher([]);return
         c=self.atual;self.resumo.setText(f"{c['porte']} | {c['n_nos']} nós | {c['n_tubos']} tubos | {c['n_dispositivos']} dispositivos | "+c['interpretacao_fonte'])
         for titulo,ids in [('Reservatórios',c['reservatorios']),('Tanques',c['tanques']),('Bombas (energia)',c['bombas']),('Extremidades',c['extremidades'])]:
             grupo=QTreeWidgetItem(self.arvore,[titulo])
@@ -131,6 +137,13 @@ class DialogComponentes(QDialog):
         for m in self.lista_membros[self.pagina:self.pagina+200]:
             v=QTreeWidgetItem(self.grupo_membros,[m['tipo'],str(m['id'])+' / '+str(m['label']),'; '.join(m['diagnosticos']),str(m['id'])]);v.setData(0,Qt.UserRole,m['id'])
         self.pagina+=200;self.mais.setEnabled(self.pagina<len(self.lista_membros))
+        d=self.painel.pacote['dossie'];ts={t['uid']:t for t in d['tubulacoes']};fontes={f['origem']:f['camada'] for f in d['contexto']['fontes']}
+        assocs={a['wg_id']:a for a in self.painel.pacote['resultado']['associacoes_componentes'] if a['comp_uid']==self.atual['uid']}
+        linhas=[]
+        for m in self.lista_membros[:self.pagina]:
+            a=assocs.get(m['id'],{});t=ts.get(a.get('gis_uid'),{})
+            linhas.append([m['tipo'],t.get('id_exibido'),fontes.get(a.get('origem')),m['label'],m['id'],self.atual['numero'],'INEQUIVOCA' if a else 'SEM_CORRESPONDENCIA_PRESERVADA','; '.join(m['diagnosticos']),a.get('chave')])
+        self.membros_tabela.preencher(linhas)
 
     def selecionar(self):
         itens=self.arvore.selectedItems()

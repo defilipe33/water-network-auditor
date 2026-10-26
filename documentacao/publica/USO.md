@@ -31,6 +31,13 @@ cruzada e zoom explícito. O sentido antes/depois é geométrico, não hidráuli
 
 ## WaterGEMS e investigação
 
+Use o [assistente de validação espacial](VALIDACAO_ESPACIAL.md) na aba CRS e unidades.
+A detecção precede qualquer informação manual. Confirme as colunas sugeridas,
+examine unidades e geometrias e aprove somente com evidências suficientes.
+
+Consulte o [guia de inspeção, telas, CRS/unidades e correspondência GIS × Label](USABILIDADE_CRS.md)
+para o novo assistente e o roteiro de conferência em notebook.
+
 Usar ANALISAR COM WATERGEMS somente sobre uma auditoria concluída. A configuração
 pendente deve ser executada, descartada conscientemente ou mantida por cancelamento.
 Revisões não salvas utilizam Salvar/Descartar/Cancelar.

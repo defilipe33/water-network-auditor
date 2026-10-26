@@ -57,6 +57,8 @@ class SeletorVersoes(QDialog):
         self.lista.setCurrentRow(0 if itens else -1)
         self.botoes.button(QDialogButtonBox.Ok).setEnabled(bool(itens))
         self.abreviar()
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def abreviar(self):
         for label,caminho in self._caminhos:

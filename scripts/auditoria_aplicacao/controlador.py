@@ -1,7 +1,7 @@
 """Unificação operacional; reaproveita as janelas e suas guardas de estado."""
 from pathlib import Path
 from uuid import uuid4
-from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication
+from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy
 from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsProject
 from auditoria_fronteiras.interface import AuditoriaFronteirasDialog
@@ -21,9 +21,9 @@ class Aplicacao:
         self._catalogo_antigo=None
         import auditoria_fronteiras.catalogo as cat
         self._catalogo_antigo=cat.CATALOGO_APLICACAO;cat.CATALOGO_APLICACAO=self.catalogo.raiz/'auditorias_recentes.json'
-        w=QWidget();linha=QHBoxLayout(w)
-        for texto,acao in [('ANALISAR COM WATERGEMS…',self.analisar),('Catálogo / continuar investigação…',self.catalogar),('Base WaterGEMS / versões…',self.bases)]:
-            b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
+        w=QWidget();linha=QGridLayout(w)
+        for i,(texto,acao) in enumerate([('ANALISAR COM WATERGEMS…',self.analisar),('Catálogo / continuar investigação…',self.catalogar),('Base WaterGEMS / versões…',self.bases)]):
+            b=QPushButton(texto);b.clicked.connect(acao);b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred);b.setToolTip(texto);linha.addWidget(b,i//2,i%2)
         self.geo.layout().insertWidget(0,w)
     def abrir(self):self.geo.show();self.geo.raise_()
     def resolver(self):return not self.painel or self.painel.resolver_alteracoes()
@@ -98,8 +98,8 @@ class Aplicacao:
         try:
             pasta=Path(p).parent/'_tecnicos'/uuid4().hex;pasta.parent.mkdir(parents=True,exist_ok=True)
             pacote=preparar_integracao(g.base_revisao,g.dossie['execucao_uid'],base_wg,pasta,mapeamento,tolerancia,cancelar=cancelar)
-            n=sum(a['situacao']=='INEQUIVOCA' for l in pacote['resultado']['locais'] for a in l['correspondencias'])
-            resumo=f"GIS: {g.dossie['execucao_uid']}\nBase WaterGEMS: {pacote['topologia']['meta_base']['uuid']}\nPerspectiva inicial: {modo}\nCorrespondências inequívocas nas consultas dos locais: {n}\nDestino: {p}\nSem correção automática e sem transferência de conclusões."
+            n=len({a['gis_uid'] for l in pacote['resultado']['locais'] for a in l['correspondencias'] if a['situacao']=='INEQUIVOCA'})
+            resumo=f"GIS: {g.dossie['execucao_uid']}\nBase WaterGEMS: {pacote['topologia']['meta_base']['uuid']}\nPerspectiva inicial: {modo}\nTubulações GIS únicas com correspondência inequívoca: {n}\nDestino: {p}\nSem correção automática e sem transferência de conclusões."
             progresso.hide()
             if QMessageBox.question(self.wg,'Confirmar publicação da investigação',resumo,QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
             pacote['resultado']['meta']['nome']=Path(p).stem;pacote['resultado']['meta']['hipotese']=modo

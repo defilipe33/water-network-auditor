@@ -69,6 +69,10 @@ class PainelDiagnosticos(QDockWidget):
         QTreeWidgetItem(informacoes,['Conclusões e propostas','Análise topológica própria, histórico anexado, propostas sob controle humano; não altera o WaterGEMS.'])
         from .form_decisao import AnaliseDecisao
         self.analise=AnaliseDecisao(self);self.tabs.insertTab(1,self.analise,'ANÁLISE E DECISÃO')
+        from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
+        self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
+        self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
+        for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
         for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes)]:
             b=QPushButton(nome);b.clicked.connect(acao);fv.addWidget(b)
         configurar=QPushButton('Abrir seleção de auditorias e fontes…');fv.addWidget(configurar)
@@ -83,6 +87,8 @@ class PainelDiagnosticos(QDockWidget):
             if c.customProperty('integracao/uid')==meta['uid'] and c.customProperty('integracao/base')==str(Path(self.base).resolve()):
                 callback=lambda *args,c=c:self.inversa(c)
                 c.selectionChanged.connect(callback);self._conexoes.append((c,callback))
+        from auditoria_fronteiras.ui_comum import adaptar_janela
+        adaptar_janela(self)
 
     def revisao_atualizada(self,*args):
         if not self._ativo:return
@@ -148,6 +154,7 @@ class PainelDiagnosticos(QDockWidget):
         else:
             self.lista.clearSelection();self.lista.setCurrentCell(-1,-1);self.atual=None;self.detalhes.clear();self.cartao.clear();self.mapa.limpar()
             self.analise.carregar(None,self.modo.currentData())
+            self.elementos_tabela.preencher([])
             self.aviso.setText('Escolha um dos casos relacionados.' if self.visiveis else 'Nenhum caso atende aos filtros. Isso não comprova ausência de problemas na rede.')
 
     def selecionar(self):
@@ -159,6 +166,8 @@ class PainelDiagnosticos(QDockWidget):
             self.lista.blockSignals(True);self.lista.selectRow(anterior);self.lista.blockSignals(False);return
         self.atual=self.visiveis[row];c=self.atual;self.detalhes.clear();modo=self.modo.currentData()
         self.analise.carregar(c,modo)
+        from .inspecao_tabular import elementos_caso
+        self.elementos_tabela.preencher(elementos_caso(self.pacote,c,modo,self.analise.head.get('situacao','PENDENTE') if self.analise.head else 'PENDENTE'))
         def grupo(titulo,textos,expandido=True):
             raiz=QTreeWidgetItem(self.detalhes,[titulo]);raiz.setExpanded(expandido)
             for texto in textos:QTreeWidgetItem(raiz,['',str(texto)])
@@ -278,7 +287,7 @@ def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None):
         try:
             from qgis.utils import iface
             if iface:
-                iface.addDockWidget(Qt.RightDockWidgetArea,painel);painel.setMinimumWidth(480)
+                iface.addDockWidget(Qt.RightDockWidgetArea,painel);painel.setMinimumWidth(0)
                 from qgis.gui import QgsApplicationExitBlockerInterface
                 class Bloqueador(QgsApplicationExitBlockerInterface):
                     def exitBlocked(self):return not painel.resolver_alteracoes()

@@ -71,9 +71,9 @@ class Catalogo:
         return avisos
 
 
-def provar_fontes(modelo,registros,fator,tolerancia):
+def provar_fontes(modelo,registros,fator,tolerancia,cancelar=None):
     from .validacao import provar_correspondencia
-    assocs,e=provar_correspondencia(modelo,registros,fator,tolerancia)
+    assocs,e=provar_correspondencia(modelo,registros,fator,tolerancia,cancelar)
     for a in assocs:
         if not a['candidatos'] and a['situacao']=='INCONSISTENTE':
             a['classificacao_bruta']=a['situacao'];a['situacao']='NAO_ENCONTRADA'
@@ -81,16 +81,9 @@ def provar_fontes(modelo,registros,fator,tolerancia):
     return assocs,e
 
 
-def preparar_integracao(geo,exe,base_wg,pasta,mapeamento=None,tolerancia=.01,limiar=5,areas=(),cancelar=None):
+def registros_gis(d,mapeamento,crs_destino=None,cancelar=None,registrar_operacoes=False):
     from qgis.core import QgsVectorLayer,QgsGeometry,QgsCoordinateTransform,QgsCoordinateReferenceSystem,QgsProject
-    from .integracao import preparar
-    from .saidas import exportar_json
-    t=bases.restaurar(base_wg,cancelar);meta=t['meta_base']
-    with abrir_ro(geo) as con:d=carregar_execucao(geo,exe,conexao=con)
-    projeto=d.get('controle_versao',{}).get('projeto','')
-    if projeto and meta['projeto'] and projeto.casefold().strip()!=meta['projeto'].casefold().strip():raise ValueError('Município/projeto incompatível; confira as identidades e fontes antes de integrar')
-    if not t['metrica']:raise ValueError('Base sem CRS/unidade confirmados: disponível para consulta topológica; integração espacial bloqueada')
-    pasta=Path(pasta);pasta.mkdir(parents=True,exist_ok=False);registros=[];avisos=[];mapeamento=mapeamento or {}
+    registros=[];avisos=[];mapeamento=mapeamento or {}
     for f in d['contexto']['fontes']:
         if f.get('modo'):continue
         campo=mapeamento.get(f['origem'])
@@ -99,15 +92,39 @@ def preparar_integracao(geo,exe,base_wg,pasta,mapeamento=None,tolerancia=.01,lim
         if not camada.isValid() or camada.fields().indexFromName(campo)<0:raise ValueError('Fonte/campo indisponível: '+f['camada'])
         crs=camada.crs()
         if not crs.isValid():raise ValueError('Fonte GIS sem CRS')
-        transformacao=QgsCoordinateTransform(crs,t['crs'],QgsProject.instance().transformContext());regs=[];repetidos={}
+        destino=QgsCoordinateReferenceSystem(crs_destino) if crs_destino else crs
+        if not destino.isValid():raise ValueError('Escolha um CRS de processamento válido antes de comparar coordenadas')
+        transformacao=QgsCoordinateTransform(crs,destino,QgsProject.instance().transformContext());regs=[];repetidos={}
         for feat in camada.getFeatures():
             bases.verificar(cancelar);g=QgsGeometry(feat.geometry());attrs={c.name():valor_python(feat[c.name()]) for c in camada.fields()}
             chave=digest([f['origem'],attrs,bytes(g.asWkb()).hex()]);repetidos[chave]=repetidos.get(chave,0)+1
-            if crs!=t['crs']:g.transform(transformacao)
+            if crs!=destino:
+                if g.transform(transformacao)!=0:raise ValueError('Não foi possível reprojetar a fonte GIS: '+f['camada'])
             valor=attrs[campo]
             from auditoria_fronteiras.apresentacao import legivel
-            regs.append(dict(uid=chave+'_'+str(repetidos[chave]),origem=f['origem'],chave_cadastral=legivel(valor) if valor is not None else None,geometria=g))
+            chave_id=valor if isinstance(valor,str) else legivel(valor) if valor is not None else None
+            regs.append(dict(uid=chave+'_'+str(repetidos[chave]),origem=f['origem'],camada=f['camada'],campo=campo,bruto=valor,crs=destino.authid(),chave_cadastral=chave_id,geometria=g))
+        if registrar_operacoes:
+            operacao=dict(origem=f['origem'],de=crs.toWkt(),para=destino.toWkt(),metodo='IDENTIDADE' if crs==destino else 'QgsCoordinateTransform',
+                pipeline=transformacao.instantiatedCoordinateOperationDetails().proj if crs!=destino and regs else None)
+            for r in regs:r['operacao_crs']=operacao
         registros+=regs
+    return registros,avisos
+
+
+def preparar_integracao(geo,exe,base_wg,pasta,mapeamento=None,tolerancia=.01,limiar=5,areas=(),cancelar=None):
+    from .integracao import preparar
+    from .saidas import exportar_json
+    from .referencia_espacial import estado_referencia
+    t=bases.restaurar(base_wg,cancelar);meta=t['meta_base']
+    with abrir_ro(geo) as con:d=carregar_execucao(geo,exe,conexao=con)
+    projeto=d.get('controle_versao',{}).get('projeto','')
+    if projeto and meta['projeto'] and projeto.casefold().strip()!=meta['projeto'].casefold().strip():raise ValueError('Município/projeto incompatível; confira as identidades e fontes antes de integrar')
+    estado=estado_referencia(meta.get('referencia_espacial'),t['modelo'])
+    if not t['metrica'] or estado['estado']!='VALIDADO':
+        raise ValueError('Integração espacial ainda não liberada: '+'; '.join(estado['faltas'])+'. Abra Verificar evidência existente ou Validar correspondência espacial. Você pode continuar na consulta somente topológica; nenhuma integração foi publicada.')
+    pasta=Path(pasta);pasta.mkdir(parents=True,exist_ok=False)
+    registros,avisos=registros_gis(d,mapeamento,t['crs'],cancelar)
     # Unicidade bilateral sobre TODAS as fontes escolhidas, inclusive IDs
     # repetidos entre camadas diferentes, conforme prova validada do piloto.
     assocs,e=provar_fontes(t['modelo'],registros,meta['referencia_espacial']['fator'],tolerancia)

@@ -1,5 +1,19 @@
 # Arquitetura topológica WaterGEMS
 
+`deteccao_espacial.py` complementa `referencia_espacial.py` com leitura de declarações,
+inventário GIS, ranking cadastral, estatísticas e controles pontuais. O assistente
+`auditoria_aplicacao/assistente_espacial.py` executa tarefas em QThread e utiliza a
+persistência existente. `bases.py` conserva metadados do snapshot e adiciona
+`WB_EVIDENCIA` somente às novas bases com validação. O comparador recebeu um callback
+opcional de cancelamento; seus critérios geométricos foram preservados. Consulte
+[critérios, arquitetura da evidência e limitações](VALIDACAO_ESPACIAL.md).
+
+O [fluxo de referência espacial e inspeção tabular](USABILIDADE_CRS.md) complementa
+esta arquitetura. `referencia_espacial.py` valida evidências por contexto e grava a
+confirmação em nova versão através da persistência existente. Não modifica o leitor,
+o resolvedor ou o grafo. `inspecao_tabular.py` projeta os vínculos para consulta sem
+eliminar candidatos, valores brutos ou relações técnicas.
+
 `scripts/auditoria_topologica_watergems` separa leitura, resolução, grafo, geometria,
 investigação, persistência, diagnóstico e saídas. Não exige que o WaterGEMS esteja aberto.
 

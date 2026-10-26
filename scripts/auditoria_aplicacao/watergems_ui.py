@@ -1,9 +1,13 @@
 from pathlib import Path
 from uuid import uuid4
 from qgis.PyQt.QtCore import QThread,pyqtSignal
-from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QHBoxLayout,QPushButton,QLabel,QLineEdit,QComboBox,QFileDialog,QMessageBox,QCheckBox,QDoubleSpinBox,QPlainTextEdit,QApplication)
+from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QFormLayout,QHBoxLayout,QGridLayout,QWidget,QTabWidget,QPushButton,QLabel,QLineEdit,QComboBox,QFileDialog,QMessageBox,QCheckBox,QDoubleSpinBox,QPlainTextEdit,QApplication,QTableWidget,QTableWidgetItem,QProgressDialog,QInputDialog)
+from qgis.PyQt.QtCore import Qt
 from auditoria_topologica_watergems import bases
-from auditoria_topologica_watergems.gerenciamento import sugestao
+from auditoria_topologica_watergems.gerenciamento import sugestao,registros_gis
+from auditoria_topologica_watergems import referencia_espacial as referencias
+from auditoria_fronteiras.ui_comum import adaptar_janela
+from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
 from .catalogo_ui import SeletorBases
 
 
@@ -17,43 +21,73 @@ class Extracao(QThread):
 
 class WatergemsDialog(QDialog):
     def __init__(self,app):
-        super().__init__(app.geo);self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('Base WaterGEMS e investigação integrada');self.resize(820,720)
+        super().__init__(app.geo);self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('WaterGEMS — modelo, correspondência e referência espacial');self.resize(860,650)
+        self._topologia=None;self._prova=None;self._referencia_confirmada=None;self._ref_pendente=False;self._carregando=False
         v=QVBoxLayout(self);self.geo_info=QLabel();self.geo_info.setWordWrap(True);v.addWidget(self.geo_info)
-        l=QHBoxLayout();v.addLayout(l)
-        for nome,acao in [('Selecionar .wtg.sqlite…',self.selecionar),('ABRIR BASE WATERGEMS EXISTENTE…',self.abrir_base),('ATUALIZAR BASE WATERGEMS…',self.atualizar_base)]:
-            b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b)
-        f=QFormLayout();v.addLayout(f);self.identidade=QLabel('Nenhuma base selecionada');self.identidade.setWordWrap(True);f.addRow(self.identidade)
+        self.tabs=QTabWidget();v.addWidget(self.tabs,1)
+        modelo=QWidget();self.tabs.addTab(modelo,'1 · Modelo e cenário');mv=QVBoxLayout(modelo)
+        l=QGridLayout();mv.addLayout(l)
+        for i,(nome,acao) in enumerate([('Selecionar .wtg.sqlite…',self.selecionar),('ABRIR BASE WATERGEMS EXISTENTE…',self.abrir_base),('ATUALIZAR BASE WATERGEMS…',self.atualizar_base)]):
+            b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b,i//2,i%2)
+        f=QFormLayout();mv.addLayout(f);self.identidade=QLabel('Nenhuma base selecionada');self.identidade.setWordWrap(True);f.addRow(self.identidade)
         self.nome=QLineEdit();self.projeto=QLineEdit();f.addRow('Nome amigável do modelo',self.nome);f.addRow('Município / projeto',self.projeto)
         self.cenario=QComboBox();f.addRow('Cenário-base',self.cenario)
         self.modo=QComboBox();self.modo.addItems(list(bases.MODOS)+['ESTADOS_DO_CENARIO — indisponível']);self.modo.setCurrentIndex(1);self.modo.model().item(2).setEnabled(False);f.addRow('Perspectiva',self.modo)
-        self.espacial=QCheckBox('CRS e unidade confirmados por evidência');f.addRow(self.espacial)
+        ajuda=QLabel('Primeiro crie ou abra a base topológica. CRS e unidades não são necessários para consultar o grafo. A integração com o mapa só será liberada após confirmação espacial.');ajuda.setWordWrap(True);mv.addWidget(ajuda)
+        self.informacao=QPlainTextEdit();self.informacao.setReadOnly(True);mv.addWidget(self.informacao,1)
+        refpage=QWidget();self.tabs.addTab(refpage,'3 · CRS e unidades');rv=QVBoxLayout(refpage)
+        ajuda=QLabel('CRS identifica a referência das coordenadas GIS; a unidade bruta pertence às coordenadas WaterGEMS. Selecione o CRS métrico confirmado e a conversão correta. Não deduza esses valores pelo município.\nUse evidência anterior compatível ou confira pares cadastrais, coordenadas e uma fonte independente antes de confirmar.');ajuda.setWordWrap(True);rv.addWidget(ajuda)
+        b=QPushButton('VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS…');b.clicked.connect(self.assistente_espacial);rv.addWidget(b)
+        self.estado_espacial=QLabel('PENDENTE · crie ou abra uma base topológica. Use o assistente para detectar dados antes de preencher opções avançadas abaixo.');self.estado_espacial.setWordWrap(True);rv.addWidget(self.estado_espacial)
+        f=QFormLayout();rv.addLayout(f)
+        self.espacial=QCheckBox('Referência espacial confirmada para esta composição do modelo');self.espacial.setEnabled(False);f.addRow(self.espacial)
         self.crs=QLineEdit();self.crs.setPlaceholderText('CRS projetado em metros, sem suposição automática')
+        self.unidade=QComboBox()
+        for nome,codigo in [('Não informada',None),('Metros','METRO'),('Pés internacionais','PE_INTERNACIONAL'),('Outra unidade, com fator declarado','OUTRA_DECLARADA')]:self.unidade.addItem(nome,codigo)
+        f.addRow('Unidade bruta WaterGEMS',self.unidade)
         self.fator=QDoubleSpinBox();self.fator.setDecimals(10);self.fator.setRange(.000000001,1000000);self.fator.setValue(1)
         self.evidencia=QLineEdit();f.addRow('CRS',self.crs);f.addRow('Fator bruto → metro',self.fator);f.addRow('Evidência de CRS/unidade',self.evidencia)
-        self.mapas={};self.geo_uid=None;self.mapeamento=QFormLayout();v.addLayout(self.mapeamento)
-        self.tolerancia=QDoubleSpinBox();self.tolerancia.setDecimals(5);self.tolerancia.setRange(0,1000);self.tolerancia.setValue(.01);f.addRow('Tolerância da prova cadastral (m)',self.tolerancia)
-        self.informacao=QPlainTextEdit();self.informacao.setReadOnly(True);v.addWidget(self.informacao,1)
+        self.metodo=QLineEdit('Sem validação');self.metodo.setReadOnly(True);f.addRow('Método de validação',self.metodo)
+        self.evidencia.setPlaceholderText('Documento, conferência independente ou validação anterior identificável')
+        self.resp_evidencia=QLineEdit();f.addRow('Responsável pela confirmação',self.resp_evidencia)
+        for texto,acao in [('Usar o CRS de processamento da auditoria GIS',self.usar_crs_gis),('Verificar evidência existente…',self.verificar_evidencia),('Validar correspondência espacial…',self.validar_espacial),('Consultar detalhes da validação',self.detalhes_validacao)]:
+            b=QPushButton(texto);b.clicked.connect(acao);rv.addWidget(b)
+        rv.addStretch()
+        mapage=QWidget();self.tabs.insertTab(1,mapage,'2 · Correspondência GIS × Label');pv=QVBoxLayout(mapage)
+        ajuda=QLabel('Selecione a coluna da camada GIS que contém o mesmo identificador utilizado como Label da tubulação no WaterGEMS. Label é o identificador de apresentação do modelo, não DomainElementID. O campo da auditoria geométrica pode ser diferente. Nada é escolhido automaticamente.');ajuda.setWordWrap(True);pv.addWidget(ajuda)
+        self.mapas={};self.geo_uid=None;self.mapeamento=QTableWidget(0,5);self.mapeamento.setHorizontalHeaderLabels(['Camada GIS','CRS da entrada GIS','Campo da auditoria','Campo GIS ↔ Label','Campo WaterGEMS']);pv.addWidget(self.mapeamento,1)
+        self.tolerancia=QDoubleSpinBox();self.tolerancia.setDecimals(5);self.tolerancia.setRange(0,1000);self.tolerancia.setValue(.01)
+        f=QFormLayout();f.addRow('Tolerância da prova geométrica (m)',self.tolerancia);pv.addLayout(f)
+        b=QPushButton('Prévia: exemplos, nulos, repetidos e correspondências…');b.clicked.connect(self.previsualizar);pv.addWidget(b)
         consultar=QPushButton('Consultar elementos, componentes e diagnósticos da base…');consultar.clicked.connect(self.consultar);v.addWidget(consultar)
         l=QHBoxLayout();v.addLayout(l)
-        for nome,acao in [('Criar nova versão persistente…',self.criar),('Comparar com versão anterior',self.comparar),('Abrir diagnósticos integrados…',self.integrar),('Cancelar processamento',self.cancelar)]:
+        for nome,acao in [('Criar base / salvar validação em nova versão…',self.criar),('Comparar com versão anterior',self.comparar),('Abrir diagnósticos integrados…',self.integrar),('Cancelar processamento',self.cancelar)]:
             b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b)
+        for w,sinal in [(self.crs,'textChanged'),(self.evidencia,'textChanged'),(self.fator,'valueChanged')]:getattr(w,sinal).connect(self.invalidar_prova)
+        self.tolerancia.valueChanged.connect(self.invalidar_correspondencia)
+        self.unidade.currentIndexChanged.connect(self.mudar_unidade)
         self.atualizar_geo()
+        adaptar_janela(self)
     def atualizar_geo(self):
         d=self.app.geo.dossie
         uid=d['execucao_uid'] if d else None
         if uid!=self.geo_uid:
-            while self.mapeamento.rowCount():self.mapeamento.removeRow(0)
+            self.mapeamento.setRowCount(0)
             self.mapas={};self.geo_uid=uid
         self.geo_info.setText('Auditoria GIS: nenhuma concluída selecionada.' if not d else f"Auditoria GIS: {d.get('controle_versao',{}).get('nome','Auditoria')} · {d['execucao_uid']}\n{len(d['eventos'])} eventos / {len(d['locais'])} locais; configuração preservada.")
+        if d:self.geo_info.setText(self.geo_info.text()+f"\nProjeto: {d.get('controle_versao',{}).get('projeto') or 'não informado'} · versão: {d.get('controle_versao',{}).get('versao',1)} · CRS de processamento: {d['contexto']['parametros']['crs']}")
         if d:
-            self.projeto.setText(d.get('controle_versao',{}).get('projeto',''))
+            if not self.base and not self.fonte:self.projeto.setText(d.get('controle_versao',{}).get('projeto',''))
             if not self.mapas:
                 for fonte in d['contexto']['fontes']:
                     if fonte.get('modo'):continue
                     c=QComboBox();c.addItem('Sem correspondência verificada',None)
                     campos=sorted({k for t in d['tubulacoes'] if t['origem']==fonte['origem'] for k in t['atributos']})
                     for k in campos:c.addItem(k,k)
-                    self.mapas[fonte['origem']]=c;self.mapeamento.addRow('Label WG ↔ campo GIS / '+fonte['camada'],c)
+                    i=self.mapeamento.rowCount();self.mapeamento.insertRow(i)
+                    self.mapeamento.setItem(i,0,QTableWidgetItem(fonte['camada']));self.mapeamento.setItem(i,1,QTableWidgetItem(fonte.get('crs_origem') or 'Não informado'));self.mapeamento.setItem(i,2,QTableWidgetItem(fonte['campo_id'] or 'Não informado'));self.mapeamento.setCellWidget(i,3,c);self.mapeamento.setItem(i,4,QTableWidgetItem('Label'))
+                    self.mapas[fonte['origem']]=c;c.currentIndexChanged.connect(self.invalidar_correspondencia)
+            if uid!=getattr(self,'_geo_previa',None):self._prova=None;self._geo_previa=uid
     def selecionar(self,atualizacao=False):
         if self.ocupado:return
         p,_=QFileDialog.getOpenFileName(self,'Modelo salvo em disco — leitura por snapshot','','WaterGEMS (*.wtg.sqlite)')
@@ -64,6 +98,8 @@ class WatergemsDialog(QDialog):
             if self.cenario.findData(ativo)>=0:self.cenario.setCurrentIndex(self.cenario.findData(ativo))
             if not atualizacao:self.anterior=None
             self.fonte=p;self.identidade.setText(p+'\nSeleção ainda não extraída; mudanças não salvas no WaterGEMS não são capturadas.');self.base=None
+            self._carregando=True;self.crs.clear();self.evidencia.clear();self.unidade.setCurrentIndex(0);self.fator.setValue(1);self._carregando=False
+            self._topologia=None;self.invalidar_prova();self.informacao.setPlainText('Crie a base topológica primeiro. Depois confira correspondência e CRS/unidades; essa etapa não exige reabrir o modelo original.')
         except Exception as e:QMessageBox.warning(self,'Modelo não selecionado',str(e))
     def abrir_base(self):
         if self.ocupado:return
@@ -76,10 +112,15 @@ class WatergemsDialog(QDialog):
             destino,_=QFileDialog.getSaveFileName(self,'Nova base para importar legado',str(sugestao(self.app.catalogo.raiz,self.projeto.text(),'TopologiaWG')),'GeoPackage (*.gpkg)')
             if not destino:return
             base=bases.importar_legado(base,destino,self.nome.text() or 'Modelo legado',self.projeto.text());m=bases.metadados(base)
-        self.base=str(base);self.nome.setText(m['nome']);self.projeto.setText(m['projeto'])
+        self.base=str(base);self.fonte=None;self._topologia=None;self._prova=None;self._carregando=True;self.nome.setText(m['nome']);self.projeto.setText(m['projeto'])
         self.cenario.clear();self.cenario.addItem('Cenário '+str(m['cenario']),m['cenario']);self.modo.setCurrentIndex(self.modo.findText(m['hipotese']))
         self.identidade.setText(f"{m['nome']} · v{m['versao']:03} · {m['uuid']}\n{m['resumo']['componentes']} componentes estruturais / {m['resumo_potencial']['componentes']} na hipótese aberta.")
-        ref=m['referencia_espacial'];self.espacial.setChecked(bool(ref));self.crs.setText(ref.get('crs',''));self.fator.setValue(ref.get('fator',1));self.evidencia.setText(ref.get('fonte',''))
+        ref=m['referencia_espacial'];self.crs.setText(ref.get('crs',''));self.fator.setValue(ref.get('fator',1));self.evidencia.setText(ref.get('fonte',''))
+        unidade=ref.get('unidade_bruta') or (referencias.unidade_fator(ref['fator']) if ref else None);self.unidade.setCurrentIndex(max(0,self.unidade.findData(unidade)))
+        self._carregando=False;self._ref_pendente=False;estado=referencias.estado_referencia(ref)
+        self._referencia_confirmada=ref if estado['estado']=='VALIDADO' else None;self.espacial.setChecked(bool(self._referencia_confirmada))
+        self.metodo.setText({'DECLARACAO_LEGADA':'Declaração preservada da base anterior','REUSO_CONTEXTUAL_CONFIRMADO':'Reaproveitamento de conteúdo tecnicamente equivalente','VERTICES_E_CONFIRMACAO_DOCUMENTAL':'Chaves únicas, vértices e confirmação documental','ASSISTENTE_METADADOS_E_VERTICES':'Metadados, unidades comparadas e aprovação técnica'}.get(estado['metodo'],'Sem validação'))
+        self.estado_espacial.setText(estado['estado']+' · '+estado['metodo']+(' · declaração preservada da base anterior; confira a fonte antes de reutilizar.' if estado['legada'] else '')+'\n'+'; '.join(estado['faltas']))
         self.app.catalogo.registrar(base);self.informacao.setPlainText('Base recuperada sem extrair o modelo original. Os elementos completos só são carregados ao investigar/comparar.')
     def atualizar_base(self):
         if self.ocupado:return
@@ -88,6 +129,10 @@ class WatergemsDialog(QDialog):
         self.anterior=self.base;self.selecionar(True)
     def criar(self):
         if self.ocupado:return
+        if self.base:
+            if self._ref_pendente:self.gravar_referencia()
+            else:QMessageBox.information(self,'Base existente','Para alterar o modelo use ATUALIZAR BASE WATERGEMS. Para acrescentar CRS/unidade, valide a referência e salve uma nova versão.')
+            return
         if not self.fonte or self.cenario.currentData() is None:QMessageBox.warning(self,'Fonte','Selecione um SQLite salvo.');return
         if not self.nome.text().strip() or not self.projeto.text().strip():QMessageBox.warning(self,'Identificação','Informe nome amigável e município/projeto.');return
         versao=bases.metadados(self.anterior)['versao']+1 if self.anterior else 1
@@ -96,13 +141,13 @@ class WatergemsDialog(QDialog):
         if not destino:return
         if not destino.lower().endswith('.gpkg'):destino+='.gpkg'
         if Path(destino).exists():QMessageBox.warning(self,'Destino','Escolha arquivo novo.');return
-        ref=dict(crs=self.crs.text(),fator=self.fator.value(),fonte=self.evidencia.text()) if self.espacial.isChecked() else None
+        ref=None  # A primeira extração é topológica; a validação liga-se ao snapshot real.
         resumo=f"Modelo: {self.nome.text()}\nProjeto: {self.projeto.text()}\nCenário: {self.cenario.currentData()}\nHipótese: {self.modo.currentText()}\nOrigem: {self.fonte}\nDestino: {destino}\nSnapshot SQLite consistente será preservado nos arquivos técnicos. A fonte não será alterada."
         if QMessageBox.question(self,'Confirmar extração/versionamento',resumo,QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
         pasta=Path(destino).parent/'_tecnicos'/uuid4().hex;pasta.parent.mkdir(parents=True,exist_ok=True)
         args=dict(fonte=self.fonte,cenario=self.cenario.currentData(),modo=self.modo.currentText(),pasta=pasta,nome=self.nome.text(),projeto=self.projeto.text(),anterior=self.anterior,referencia=ref)
         self.destino=destino;self.ocupado=True;self.trabalho=Extracao(args,self);self.trabalho.pronto.connect(self.pronto);self.trabalho.erro.connect(lambda e:self.informacao.setPlainText('Não publicado: '+e));self.trabalho.finished.connect(self.terminar)
-        for w in (self.nome,self.projeto,self.cenario,self.modo,self.espacial,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(False)
+        for w in (self.nome,self.projeto,self.cenario,self.modo,self.unidade,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(False)
         self.informacao.setPlainText('Extraindo snapshot e cenários. Cancelar preserva versões anteriores.');self.trabalho.start()
     def pronto(self,dados):
         try:
@@ -118,7 +163,7 @@ class WatergemsDialog(QDialog):
         except Exception as e:self.informacao.setPlainText('Não publicado: '+str(e))
     def terminar(self):
         self.ocupado=False
-        for w in (self.nome,self.projeto,self.cenario,self.modo,self.espacial,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(True)
+        for w in (self.nome,self.projeto,self.cenario,self.modo,self.unidade,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(True)
     def cancelar(self):
         if self.trabalho:self.trabalho.requestInterruption();self.informacao.setPlainText('Cancelamento solicitado; aguarde a etapa atual terminar.')
     def comparar(self):
@@ -134,10 +179,135 @@ class WatergemsDialog(QDialog):
             r=bases.comparar(anterior,self.base);self.informacao.setPlainText(__import__('json').dumps(r,ensure_ascii=False,indent=2))
         except Exception as e:QMessageBox.warning(self,'Comparação',str(e))
     def integrar(self):
-        if self.ocupado or not self.base:return
+        if self.ocupado:return
+        if not self.base:QMessageBox.information(self,'Primeiro passo','Crie ou abra uma base topológica antes de integrar. A criação não exige CRS.');return
+        if not self._referencia_confirmada:
+            j=QMessageBox(self);j.setWindowTitle('Escolha como continuar');j.setText('Integração espacial ainda não liberada. Confirme o CRS métrico, a unidade bruta, o fator e a fonte de evidência na aba CRS e unidades. Nenhum resultado espacial será criado.')
+            topo=j.addButton('Continuar somente topológica',QMessageBox.AcceptRole);validar=j.addButton('Validar CRS/unidade',QMessageBox.ActionRole);j.addButton(QMessageBox.Cancel);j.exec_()
+            if j.clickedButton()==topo:self.consultar()
+            elif j.clickedButton()==validar:self.tabs.setCurrentIndex(2)
+            return
+        if self._ref_pendente and not self.gravar_referencia():return
         if not self.app.validar_geo():return
-        try:self.app.integrar(self.base,{k:c.currentData() for k,c in self.mapas.items()},self.tolerancia.value(),self.modo.currentText())
+        d=self.app.geo.dossie;m=bases.metadados(self.base)
+        mapa={k:c.currentData() for k,c in self.mapas.items()}
+        fontes={f['origem']:f['camada'] for f in d['contexto']['fontes']}
+        resumo=f"Auditoria GIS: {d['execucao_uid']} · {len(d['eventos'])} eventos / {len(d['locais'])} locais\nModelo: {m['nome']} · v{m['versao']}\nCenário: {m['cenario']}\nPerspectiva: {self.modo.currentText()}\nCRS: {self.crs.text()} · unidade: {self.unidade.currentText()} · fator: {self.fator.value()}\nFonte: {self.evidencia.text()}\n"+'\n'.join(f"{fontes.get(k,k)}: Label WG ↔ {v or 'sem mapeamento (insuficiente)'}" for k,v in mapa.items())+'\nSerão gerados componentes, correspondências, diagnósticos e investigação espacial. Estados do cenário permanecem bloqueados. Não haverá correções automáticas.'
+        if QMessageBox.question(self,'Resumo antes da integração',resumo,QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
+        try:self.app.integrar(self.base,mapa,self.tolerancia.value(),self.modo.currentText())
         except Exception as e:QMessageBox.warning(self,'Investigação não aberta',str(e))
+
+    def dados_referencia(self):
+        return dict(crs=self.crs.text().strip(),fator=self.fator.value(),unidade_bruta=self.unidade.currentData(),fonte=self.evidencia.text().strip())
+    def invalidar_correspondencia(self,*args):
+        if not self._carregando:self._prova=None
+    def invalidar_prova(self,*args):
+        if self._carregando:return
+        self._prova=None;self._referencia_confirmada=None;self._ref_pendente=False;self.espacial.setChecked(False)
+        self.metodo.setText('Sem validação confirmada para estes valores')
+        estado=referencias.estado_referencia(self.dados_referencia())
+        self.estado_espacial.setText(('INCOMPATÍVEL' if estado['estado']=='INCOMPATIVEL' else 'PENDENTE')+' · '+('; '.join(estado['faltas']) or 'valores do formulário ainda não comprovados')+'. A base e os resultados anteriores permanecem intactos.')
+    def mudar_unidade(self):
+        if self._carregando:return
+        u=self.unidade.currentData()
+        if u in ('METRO','PE_INTERNACIONAL'):self.fator.setValue(1 if u=='METRO' else .3048)
+        self.invalidar_prova()
+    def usar_crs_gis(self):
+        d=self.app.geo.dossie
+        if not d:QMessageBox.information(self,'Cadastro GIS','Abra uma auditoria geométrica para consultar seu CRS de processamento.');return
+        self.crs.setText(d['contexto']['parametros']['crs']);self.tabs.setCurrentIndex(2)
+        self.informacao.setPlainText('CRS copiado da auditoria GIS, por comando explícito. Isso não confirma as unidades WaterGEMS nem a compatibilidade espacial.')
+    def topologia_atual(self):
+        if not self.base:raise ValueError('Crie ou abra a base topológica primeiro; não é necessário confirmar CRS para essa etapa.')
+        if self._topologia is None:self._topologia=bases.restaurar(self.base)
+        return self._topologia
+    def verificar_evidencia(self):
+        if self.ocupado:return
+        try:
+            t=self.topologia_atual();itens=[]
+            for r in self.app.catalogo.listar(tipo='TOPOLOGIA_WG'):
+                if r.get('disponivel') and r.get('modelo_uid')==t['modelo']['projeto']:
+                    try:
+                        if bases.metadados(r['base']).get('referencia_espacial'):itens.append(r)
+                    except (ValueError,OSError):pass
+            nomes=[f"{r['nome']} · v{r['versao']} · {r['uuid'][:10]}" for r in itens]+['Selecionar GPKG ou JSON de evidência…']
+            nome,ok=QInputDialog.getItem(self,'Evidências disponíveis','Escolha uma referência anterior; identidade e composição serão verificadas:',nomes,0,False)
+            if not ok:return
+            if nomes.index(nome)<len(itens):p=itens[nomes.index(nome)]['base']
+            else:
+                p,_=QFileDialog.getOpenFileName(self,'Referência anterior — somente leitura',str(self.app.catalogo.raiz),'Evidência (*.gpkg *.json)')
+                if not p:return
+            e=referencias.ler_evidencia(p);c=referencias.compatibilidade(t['modelo'],e)
+            self._evidencia_anterior=e
+            if c['estado']=='INCOMPATIVEL':self.estado_espacial.setText(('VALIDADO (base atual) · candidata incompatível: ' if self._referencia_confirmada else 'INCOMPATÍVEL · ')+'; '.join(c['faltas']));QMessageBox.warning(self,'Evidência incompatível','; '.join(c['faltas'])+'. Nenhum valor foi aplicado.');return
+            r=e['referencia']
+            if c['estado']=='VALIDADO' and QMessageBox.question(self,'Reutilizar referência compatível',f"Mesma identidade, cenário, alternativas e conteúdo extraído.\nCRS: {r['crs']} · fator: {r['fator']}\nFonte: {r['fonte']}\nConfirmar reaproveitamento em nova versão, preservando a anterior?",QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
+            r=e['referencia'];self._carregando=True;self.crs.setText(r.get('crs',''));self.fator.setValue(r.get('fator',1));self.evidencia.setText(r.get('fonte') or 'Arquivo de evidência '+Path(p).name)
+            self.unidade.setCurrentIndex(max(0,self.unidade.findData(r.get('unidade_bruta') or referencias.unidade_fator(r.get('fator',1)))));self._carregando=False;self.invalidar_prova()
+            if c['estado']!='VALIDADO':
+                self.estado_espacial.setText('PENDENTE · '+'; '.join(c['faltas'])+'. Os valores são candidatos; confira a prévia e valide novamente.');return
+            self._referencia_confirmada=referencias.referencia_reutilizada(t['modelo'],e,self.resp_evidencia.text());self._ref_pendente=True;self.espacial.setChecked(True)
+            self.metodo.setText('Reaproveitamento de conteúdo tecnicamente equivalente')
+            self.estado_espacial.setText('VALIDADO · reaproveitamento contextual confirmado. Salve a validação em nova versão antes da integração.')
+        except Exception as e:self._carregando=False;QMessageBox.warning(self,'Evidência não recuperada',str(e))
+    def previsualizar(self):
+        if self.ocupado:return False
+        try:
+            t=self.topologia_atual();d=self.app.geo.dossie
+            if not d:raise ValueError('Abra uma auditoria GIS para selecionar suas colunas. A consulta topológica continua disponível.')
+            mapa={k:c.currentData() for k,c in self.mapas.items()}
+            if not any(mapa.values()):raise ValueError('Escolha ao menos uma coluna GIS na aba Correspondência. O campo WG é Label; não presuma igualdade com o campo da auditoria.')
+            ref=self.dados_referencia();ref=ref if ref['crs'] else None
+            from qgis.core import QgsCoordinateReferenceSystem,QgsUnitTypes
+            if ref:
+                crs=QgsCoordinateReferenceSystem(ref['crs'])
+                if not crs.isValid() or crs.isGeographic() or crs.mapUnits()!=QgsUnitTypes.DistanceMeters:raise ValueError('Para comparar coordenadas escolha um CRS projetado em metros, ou deixe o CRS vazio para prévia apenas cadastral.')
+            progresso=QProgressDialog('Consultando colunas e comparando candidatos…','Cancelar',0,0,self);progresso.setWindowModality(Qt.ApplicationModal);progresso.show();self.ocupado=True
+            def cancelar():QApplication.processEvents();return progresso.wasCanceled()
+            try:
+                regs,avisos=registros_gis(d,mapa,ref['crs'] if ref else None,cancelar)
+                prova=referencias.previa(t['modelo'],regs,ref,self.tolerancia.value());prova['avisos']=avisos
+                if cancelar():raise InterruptedError('Prévia cancelada; contexto anterior preservado')
+                self._prova=prova
+            finally:self.ocupado=False;progresso.close()
+            j=QDialog(self);j.setWindowTitle('Prévia GIS × Label — não altera nem conecta elementos');j.resize(900,600);v=QVBoxLayout(j)
+            aviso=QLabel('Correspondência cadastral não equivale a vínculo inequívoco sem verificação de geometria. Coordenadas e distâncias desta prévia são candidatas ao CRS/fator escolhido; a confirmação exige fonte independente. Nulos, vazios e zero permanecem distintos.');aviso.setWordWrap(True);v.addWidget(aviso)
+            tabs=QTabWidget();v.addWidget(tabs,1)
+            resumo=TabelaConsulta(['Camada GIS','Campo GIS','Campo WG','Total','Únicas compatíveis','Valores repetidos','Nulos','Vazios','Não encontrados','Geometria inconsistente']);resumo.preencher([[r[k] for k in ('camada','campo','campo_wg','total','unicas','repetidos','nulos','vazios','nao_encontradas','inconsistencias_geometricas')] for r in prova['camadas']]);tabs.addTab(resumo,'Contagens por camada')
+            amostras=TabelaConsulta(['Camada GIS','Campo GIS','Valor GIS bruto','Label WG','DomainElementID','Situação','Erro XY (m)','X GIS','Y GIS','X WG convertido','Y WG convertido','Geometria GIS','Geometria WG bruta']);amostras.preencher(prova['amostras'])
+            for c in range(7,13):amostras.tabela.setColumnHidden(c,True)
+            tabs.addTab(amostras,'Amostras e coordenadas (Colunas)')
+            b=QPushButton('Fechar prévia');b.clicked.connect(j.accept);v.addWidget(b);adaptar_janela(j);self._janela_previa=j;j.show()
+            return True
+        except Exception as e:QMessageBox.warning(self,'Prévia não concluída',str(e));return False
+    def validar_espacial(self):
+        if self.ocupado:return
+        try:
+            if self._prova is None:
+                self.previsualizar()
+                self.estado_espacial.setText('PENDENTE · examine a prévia, informe unidade/fonte e clique novamente em Validar correspondência espacial para confirmar.');return
+            ref=referencias.confirmar_prova(self.topologia_atual()['modelo'],self.dados_referencia(),self._prova,self.resp_evidencia.text())
+            if QMessageBox.question(self,'Confirmação técnica explícita','Conferi o CRS e a unidade em fonte independente e examinei os pares/coordenadas da prévia. A prova cadastral e geométrica é complementar e não confirma conectividade. Confirmar a referência registrada?',QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
+            self._referencia_confirmada=ref;self._ref_pendente=True;self.espacial.setChecked(True);self.estado_espacial.setText('VALIDADO · vértices e confirmação documental. Salve em nova versão; a base anterior permanece intacta.')
+            self.metodo.setText('Chaves únicas, todos os vértices e confirmação documental')
+        except Exception as e:QMessageBox.warning(self,'Referência permanece pendente',str(e))
+    def detalhes_validacao(self):
+        import json
+        j=QDialog(self);j.setWindowTitle('Proveniência da referência espacial');j.resize(720,480);v=QVBoxLayout(j)
+        t=QPlainTextEdit();t.setReadOnly(True);t.setPlainText(json.dumps(self._referencia_confirmada or self.dados_referencia(),ensure_ascii=False,indent=2));v.addWidget(t)
+        b=QPushButton('Fechar');b.clicked.connect(j.accept);v.addWidget(b);adaptar_janela(j);j.show();self._detalhes_validacao=j
+    def gravar_referencia(self):
+        if self.ocupado or not self.base or not self._ref_pendente or not self._referencia_confirmada:return False
+        try:
+            m=bases.metadados(self.base);destino,_=QFileDialog.getSaveFileName(self,'Nova versão com evidência — base anterior preservada',str(sugestao(self.app.catalogo.raiz,m['projeto'],'TopologiaWG',m['versao']+1)),'GeoPackage (*.gpkg)')
+            if not destino:return False
+            if not destino.lower().endswith('.gpkg'):destino+='.gpkg'
+            if Path(destino).exists():raise FileExistsError('Escolha um arquivo novo; a base existente não será substituída')
+            self.ocupado=True
+            try:p=referencias.salvar_referencia(self.base,destino,self._referencia_confirmada)
+            finally:self.ocupado=False
+            self.usar_base(p);self.informacao.setPlainText('Nova versão espacial validada e registrada. Elementos, eventos, grafo e versões anteriores preservados.');return True
+        except Exception as e:QMessageBox.warning(self,'Validação não gravada',str(e));return False
     def consultar(self):
         if self.ocupado or not self.base:return
         from .consulta_base import ConsultaBase
@@ -145,6 +315,16 @@ class WatergemsDialog(QDialog):
         if anterior and anterior.base==self.base:anterior.show();anterior.raise_();return
         if anterior:anterior.close()
         self.consulta=ConsultaBase(self.base,self);self.consulta.show()
+    def assistente_espacial(self):
+        if self.ocupado:return
+        anterior=getattr(self,'_assistente',None)
+        if anterior and anterior.isVisible():anterior.raise_();return
+        if not self.base:
+            QMessageBox.information(self,'Base topológica necessária','Crie ou abra a base topológica na primeira aba. O assistente examina essa versão persistida sem reextrair o modelo original.');return
+        if not self.app.geo.dossie:
+            QMessageBox.information(self,'Referência GIS necessária','Abra uma auditoria GIS concluída para comparar as fontes. A consulta topológica continua disponível.');return
+        from .assistente_espacial import AssistenteEspacial
+        self._assistente=AssistenteEspacial(self);self._assistente.show()
     def closeEvent(self,e):
         if self.ocupado:self.cancelar();e.ignore()
         else:e.accept()

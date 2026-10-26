@@ -119,6 +119,13 @@ Instruções para revisão de publicação: [segurança](SECURITY.md).
 
 ## Limitações atuais
 
+Na versão 1.2.0, [Validar referência espacial do WaterGEMS](documentacao/publica/VALIDACAO_ESPACIAL.md)
+detecta metadados, recomenda campos GIS, testa unidades e compara geometrias em um
+assistente. A aprovação técnica gera evidência persistente e nova versão da base.
+
+O [guia de usabilidade e validação espacial](documentacao/publica/USABILIDADE_CRS.md)
+documenta as tabelas de inspeção, dimensionamento das janelas e confirmação de CRS/unidades.
+
 - ESTADOS_DO_CENARIO permanece bloqueado; estados iniciais não são estados simulados.
 - Bombas e retenções mantêm restrições próprias; válvulas abertas não comprovam operação.
 - Sem CRS/unidades comprovados, integração espacial e SHP real permanecem bloqueados.
