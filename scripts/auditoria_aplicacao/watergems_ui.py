@@ -121,7 +121,7 @@ class WatergemsDialog(QDialog):
         self._referencia_confirmada=ref if estado['estado']=='VALIDADO' else None;self.espacial.setChecked(bool(self._referencia_confirmada))
         self.metodo.setText({'DECLARACAO_LEGADA':'Declaração preservada da base anterior','REUSO_CONTEXTUAL_CONFIRMADO':'Reaproveitamento de conteúdo tecnicamente equivalente','VERTICES_E_CONFIRMACAO_DOCUMENTAL':'Chaves únicas, vértices e confirmação documental','ASSISTENTE_METADADOS_E_VERTICES':'Metadados, unidades comparadas e aprovação técnica'}.get(estado['metodo'],'Sem validação'))
         self.estado_espacial.setText(estado['estado']+' · '+estado['metodo']+(' · declaração preservada da base anterior; confira a fonte antes de reutilizar.' if estado['legada'] else '')+'\n'+'; '.join(estado['faltas']))
-        self.app.catalogo.registrar(base);self.informacao.setPlainText('Base recuperada sem extrair o modelo original. Os elementos completos só são carregados ao investigar/comparar.')
+        self.app.catalogo.registrar_opcional(base);self.informacao.setPlainText('Base recuperada sem extrair o modelo original. Os elementos completos só são carregados ao investigar/comparar.')
     def atualizar_base(self):
         if self.ocupado:return
         if not self.base:self.abrir_base()
@@ -324,7 +324,8 @@ class WatergemsDialog(QDialog):
         if not self.app.geo.dossie:
             QMessageBox.information(self,'Referência GIS necessária','Abra uma auditoria GIS concluída para comparar as fontes. A consulta topológica continua disponível.');return
         from .assistente_espacial import AssistenteEspacial
-        self._assistente=AssistenteEspacial(self);self._assistente.show()
+        try:self._assistente=AssistenteEspacial(self);self._assistente.show()
+        except Exception as e:QMessageBox.warning(self,'Assistente não iniciado','Não foi possível preparar o assistente: '+str(e)+'. O contexto atual e as bases anteriores foram preservados.')
     def closeEvent(self,e):
         if self.ocupado:self.cancelar();e.ignore()
         else:e.accept()

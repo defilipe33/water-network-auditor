@@ -119,6 +119,9 @@ Instruções para revisão de publicação: [segurança](SECURITY.md).
 
 ## Limitações atuais
 
+A versão 1.2.1 corrige a [inicialização e recuperação do catálogo de bases](documentacao/publica/RECUPERACAO_CATALOGO.md),
+incluindo abertura do assistente com índice vazio e preservação das bases existentes.
+
 Na versão 1.2.0, [Validar referência espacial do WaterGEMS](documentacao/publica/VALIDACAO_ESPACIAL.md)
 detecta metadados, recomenda campos GIS, testa unidades e compara geometrias em um
 assistente. A aprovação técnica gera evidência persistente e nova versão da base.

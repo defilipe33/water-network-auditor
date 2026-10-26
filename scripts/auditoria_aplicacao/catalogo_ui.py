@@ -8,7 +8,7 @@ class SeletorBases(QDialog):
         super().__init__(parent);self.catalogo=catalogo;self.tipo=tipo;self.selecionada=None;self.setWindowTitle('Catálogo de bases e investigações');self.resize(950,600)
         v=QVBoxLayout(self);self.busca=QLineEdit();self.busca.setPlaceholderText('Pesquisar nome, município ou modelo…');v.addWidget(self.busca)
         self.filtros={};g=QGridLayout();v.addLayout(g)
-        self.itens=catalogo.listar()
+        self.itens=catalogo.listar_opcional();self.avisos=QLabel('\n'.join(catalogo.avisos[:3]));self.avisos.setWordWrap(True);v.addWidget(self.avisos)
         for i,(k,nome) in enumerate([('projeto','Município/projeto'),('modelo_uid','Modelo'),('tipo','Tipo'),('versao','Versão'),('data','Data'),('cenario','Cenário'),('hipotese','Hipótese'),('situacao','Situação')]):
             c=QComboBox();c.addItem('Todos',None)
             for valor in sorted({str(r.get(k,'')) for r in self.itens if r.get(k) is not None}):c.addItem(valor,valor)
@@ -37,7 +37,7 @@ class SeletorBases(QDialog):
         avisos=self.catalogo.varrer();self.recarregar()
         if avisos:QMessageBox.information(self,'Arquivos ignorados','\n'.join(avisos[:15]))
     def recarregar(self):
-        self.itens=self.catalogo.listar()
+        self.itens=self.catalogo.listar_opcional();self.avisos.setText('\n'.join(self.catalogo.avisos[:3]))
         for k,c in self.filtros.items():
             antes=c.currentData();c.blockSignals(True);c.clear();c.addItem('Todos',None)
             for valor in sorted({str(r.get(k,'')) for r in self.itens if r.get(k) is not None}):c.addItem(valor,valor)
@@ -53,4 +53,8 @@ class SeletorBases(QDialog):
             try:self.catalogo.localizar(r['uuid'],r['tipo'],p)
             except Exception as e:QMessageBox.warning(self,'Identidade incompatível',str(e));return
             r=dict(r,base=str(Path(p).resolve()))
+        try:
+            from auditoria_topologica_watergems.gerenciamento import identificar
+            if not any(m['uuid']==r['uuid'] and m['tipo']==r['tipo'] for m in identificar(r['base'])):raise ValueError('O arquivo não contém mais a identidade selecionada. Reexamine a pasta; a versão não foi trocada automaticamente.')
+        except Exception as e:QMessageBox.warning(self,'Índice desatualizado',str(e));return
         self.selecionada=r;self.accept()

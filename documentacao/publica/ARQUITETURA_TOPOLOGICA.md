@@ -1,5 +1,11 @@
 # Arquitetura topológica WaterGEMS
 
+`indice_bases.py` centraliza a verificação idempotente do esquema, migração, backup
+e erros de acesso do catálogo operacional. `gerenciamento.Catalogo` conserva sua API
+e reconstrói o índice a partir das identidades internas das bases. Operações opcionais
+de indexação não impedem consulta de uma base ativa válida. GeoPackages, extrator e
+algoritmos não são modificados por esse mecanismo. Consulte [recuperação](RECUPERACAO_CATALOGO.md).
+
 `deteccao_espacial.py` complementa `referencia_espacial.py` com leitura de declarações,
 inventário GIS, ranking cadastral, estatísticas e controles pontuais. O assistente
 `auditoria_aplicacao/assistente_espacial.py` executa tarefas em QThread e utiliza a

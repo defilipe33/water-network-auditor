@@ -12,6 +12,7 @@ from auditoria_fronteiras.persistencia import carregar_execucao
 from auditoria_fronteiras.entradas import digest,valor_python
 from . import bases
 from .arquivos import hash_arquivo
+from .indice_bases import IndiceSQLite,ErroCatalogo
 
 
 def sugestao(pasta,projeto,tipo,versao=None):
@@ -43,19 +44,55 @@ def identificar(base):
     return saida
 
 
-class Catalogo:
-    def __init__(self,raiz):
-        self.raiz=Path(raiz).resolve();self.raiz.mkdir(parents=True,exist_ok=True);self.arquivo=self.raiz/'catalogo_bases.sqlite'
-        with self.conectar() as con:con.execute('CREATE TABLE IF NOT EXISTS bases(uuid TEXT,tipo TEXT,base TEXT NOT NULL,dados TEXT NOT NULL,PRIMARY KEY(uuid,tipo,base))')
-    def conectar(self):return closing(sqlite3.connect(self.arquivo,timeout=15))
+class Catalogo(IndiceSQLite):
     def registrar(self,base):
         itens=identificar(base)
-        with self.conectar() as con,con:
-            for m in itens:con.execute('INSERT OR REPLACE INTO bases VALUES(?,?,?,?)',(m['uuid'],m['tipo'],m['base'],json.dumps(m,ensure_ascii=False)))
+        try:
+            with self.conectar() as con,con:
+                for m in itens:
+                    st=Path(m['base']).stat();m['_indice_fonte']=dict(tamanho=st.st_size,mtime_ns=st.st_mtime_ns)
+                    con.execute('INSERT OR REPLACE INTO bases VALUES(?,?,?,?)',(m['uuid'],m['tipo'],m['base'],json.dumps(m,ensure_ascii=False)))
+        except (sqlite3.Error,OSError) as e:raise self.traduzir(e) from e
         return itens
     def listar(self,**filtros):
-        with self.conectar() as con:itens=[json.loads(r[0]) for r in con.execute('SELECT dados FROM bases ORDER BY rowid DESC')]
-        for r in itens:r['disponivel']=Path(r['base']).is_file()
+        self.garantir()
+        with closing(self._abrir_ro()) as con:vazio=con.execute('SELECT count(*) FROM bases').fetchone()[0]==0
+        if (self._reconstruir or vazio and not self._reconstrucao_tentada) and not self._varrendo:
+            self._reconstruir=False;self._varrendo=True;self._reconstrucao_tentada=True
+            try:
+                for aviso in self.varrer():self.advertir(aviso)
+            finally:self._varrendo=False
+        itens=[]
+        with closing(self._abrir_ro()) as con:
+            for uid,tipo,base,bruto in con.execute('SELECT uuid,tipo,base,dados FROM bases ORDER BY rowid DESC'):
+                try:
+                    d=json.loads(bruto)
+                    if not isinstance(d,dict):raise ValueError('metadados não são objeto')
+                    d.update(uuid=uid,tipo=tipo,base=base);itens.append(d)
+                except (ValueError,TypeError):self.advertir('Registro com metadados inválidos preservado no catálogo: '+str(uid))
+        for r in itens:
+            p=Path(r['base']);r['disponivel']=p.is_file()
+            if not r['disponivel']:self.advertir('Base movida/ausente; use Adicionar arquivo ou relocalizar por UUID: '+str(p))
+            elif r.get('_indice_fonte'):
+                st=p.stat();r['indice_desatualizado']=r['_indice_fonte']!=dict(tamanho=st.st_size,mtime_ns=st.st_mtime_ns)
+                if r['indice_desatualizado']:self.advertir('Base alterada desde a indexação; use Reexaminar pasta: '+str(p))
+        grupos={}
+        for r in itens:grupos.setdefault((r['uuid'],r['tipo']),[]).append(r)
+        itens=[]
+        for grupo in grupos.values():
+            vistos={}
+            for r in grupo:
+                p=Path(r['base']);wal=Path(str(p)+'-wal');assinatura=None
+                if len(grupo)>1 and r['disponivel'] and not (wal.exists() and wal.stat().st_size):
+                    antes=p.stat();assinatura=hash_arquivo(p);depois=p.stat()
+                    if (antes.st_size,antes.st_mtime_ns)!=(depois.st_size,depois.st_mtime_ns):assinatura=None
+                if assinatura and assinatura in vistos:
+                    vistos[assinatura].setdefault('caminhos',[vistos[assinatura]['base']]).append(r['base']);continue
+                if assinatura:vistos[assinatura]=r
+                itens.append(r)
+            if len(vistos)>1:
+                for r in grupo:r['conflito_identidade']=True
+                self.advertir('Mesma identidade em arquivos com conteúdo diferente; nenhuma versão escolhida automaticamente: '+grupo[0]['uuid'])
         return [r for r in itens if all(v in (None,'') or str(r.get(k,''))==str(v) for k,v in filtros.items())]
     def localizar(self,uuid,tipo,novo_caminho):
         itens=identificar(novo_caminho)
@@ -67,7 +104,7 @@ class Catalogo:
         for p in self.raiz.rglob('*.gpkg'):
             if '_tecnicos' in p.parts or 'preparando' in p.name:continue
             try:self.registrar(p)
-            except (ValueError,sqlite3.DatabaseError) as e:avisos.append(str(p)+': '+str(e))
+            except (ValueError,sqlite3.DatabaseError,ErroCatalogo,OSError) as e:avisos.append(str(p)+': '+str(e))
         return avisos
 
 

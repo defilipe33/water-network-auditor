@@ -48,7 +48,7 @@ class Aplicacao:
             if not p:return False
             if not p.lower().endswith('.gpkg'):p+='.gpkg'
             exportar_gpkg(p,g.dossie);g.vincular_base(p)
-        self.catalogo.registrar(g.base_revisao);return True
+        self.catalogo.registrar_opcional(g.base_revisao);return True
     def analisar(self):
         try:
             if self.validar_geo():self.bases()
@@ -83,7 +83,7 @@ class Aplicacao:
         if self.painel:self.painel.desativar()
         self.painel=novo
         if modo in ('ESTRUTURAL','TODAS_VALVULAS_ABERTAS'):novo.modo.setCurrentIndex(novo.modo.findData(modo))
-        self.catalogo.registrar(base);self.geo.hide()
+        self.catalogo.registrar_opcional(base);self.geo.hide()
         if self.wg:self.wg.hide()
         return True
     def integrar(self,base_wg,mapeamento,tolerancia,modo):

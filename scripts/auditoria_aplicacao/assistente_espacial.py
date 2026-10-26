@@ -39,12 +39,13 @@ class AssistenteEspacial(QDialog):
     def __init__(self,pai):
         super().__init__(pai);self.pai=pai;self.setWindowTitle('VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS');self.resize(930,660)
         self.setWindowModality(Qt.WindowModal);self.t=None;self.metadados=None;self.relatorio=None;self.trabalho=None;self.controles=[];self.reuso=None;self.resultado=None;self.mapa=None
-        self.d=deepcopy(pai.app.geo.dossie);self.base=pai.base;self.crs_projeto=QgsProject.instance().crs().authid();self.catalogo=list(pai.app.catalogo.listar())
+        self.d=deepcopy(pai.app.geo.dossie);self.base=pai.base;self.crs_projeto=QgsProject.instance().crs().authid();self.catalogo=pai.app.catalogo.listar_opcional();self.avisos_catalogo=list(pai.app.catalogo.avisos)
         v=QVBoxLayout(self);self.titulo=QLabel();self.titulo.setWordWrap(True);v.addWidget(self.titulo)
         self.paginas=QStackedWidget();v.addWidget(self.paginas,1);self.corpos=[]
         for nome in ['1 · Fontes','2 · Metadados e evidências','3 · Correspondências cadastrais','4 · Unidades e Junctions','5 · Geometrias e estatísticas','6 · Evidências e pendências','7 · Confirmar e salvar']:
             w=QWidget();w.setObjectName(nome);self.corpos.append(QVBoxLayout(w));self.paginas.addWidget(w)
         self.fontes=TabelaConsulta(['Informação','Valor']);self.corpos[0].addWidget(self.fontes)
+        aviso=QLabel('\n'.join(self.avisos_catalogo[:3]));aviso.setWordWrap(True);self.corpos[0].addWidget(aviso)
         self.metatabela=TabelaConsulta(['Origem','Campo','Valor bruto','Interpretação','Confiabilidade']);self.corpos[1].addWidget(self.metatabela)
         self.candidatos=TabelaConsulta(['Camada','Campo GIS','Preenchidos','Nulos','Vazios','Repetidos','Exatos WG','Únicos bilaterais','Múltiplos','Não encontrados','Recomendação']);self.corpos[2].addWidget(self.candidatos,1)
         self.selecao=QTableWidget(0,2);self.selecao.setHorizontalHeaderLabels(['Camada GIS','Coluna para confrontar com Label WG']);self.corpos[2].addWidget(self.selecao)
@@ -105,6 +106,7 @@ class AssistenteEspacial(QDialog):
         linhas=[[r['tabela'],r['campo'],r['bruto'],r['interpretacao'],r['confiabilidade']] for r in self.metadados['registros']]
         linhas += [[r['camada'],'CRS GIS',r['crs'],r['unidade']+' · '+r['origem_informacao'],r['estado']+(' · CRS difere do registrado na auditoria' if r['inconsistencia'] else '')] for r in self.gis['camadas']]
         linhas += [[e['base'],'Evidência anterior',e['referencia']['crs'],e['referencia']['fator'],'CONTEXTO COMPATIVEL'] for e in self.evidencias]
+        linhas += [['Catálogo da pasta selecionada','Aviso',aviso,'Base ativa pode ser analisada independentemente do índice','VERIFICAR'] for aviso in self.avisos_catalogo]
         self.metatabela.preencher(linhas);self.crs.setText(self.metadados.get('crs') or self.gis['crs_auditoria'])
         self.candidatos.preencher([[r[k] for k in ('camada','campo','preenchidos','nulos','vazios','repetidos','exatas','unicas','multiplas','nao_encontradas','recomendacao')] for r in dados['campos']])
         for origem in dict.fromkeys(r['origem'] for r in dados['campos']):

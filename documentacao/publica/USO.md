@@ -31,6 +31,9 @@ cruzada e zoom explícito. O sentido antes/depois é geométrico, não hidráuli
 
 ## WaterGEMS e investigação
 
+Se o índice estiver vazio ou indisponível, consulte a [recuperação do catálogo](RECUPERACAO_CATALOGO.md).
+Não é necessário apagar o arquivo de zero bytes antes de atualizar o complemento.
+
 Use o [assistente de validação espacial](VALIDACAO_ESPACIAL.md) na aba CRS e unidades.
 A detecção precede qualquer informação manual. Confirme as colunas sugeridas,
 examine unidades e geometrias e aprove somente com evidências suficientes.
