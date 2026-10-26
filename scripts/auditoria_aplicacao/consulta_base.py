@@ -17,9 +17,20 @@ class ConsultaBase(QDialog):
             b=QPushButton(nome);b.clicked.connect(lambda _,d=delta:self.mudar(d));l.addWidget(b)
         self.rodape=QLabel();l.addWidget(self.rodape)
         self.tipo.currentIndexChanged.connect(self.resetar);self.modo.currentIndexChanged.connect(self.resetar);self.atualizar()
+        b=QPushButton('Carregar representação desta versão no mapa');b.clicked.connect(self.carregar_mapa);v.addWidget(b)
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
     def resetar(self):self.pagina=0;self.atualizar()
+    def carregar_mapa(self):
+        from qgis.core import QgsProject
+        from qgis.PyQt.QtWidgets import QMessageBox
+        from auditoria_fronteiras.organizacao_camadas import publicar
+        from auditoria_topologica_watergems.saidas import camadas
+        try:
+            t=bases.restaurar(self.base);m=t['meta_base']
+            if not t['metrica']:raise ValueError('Consulta topológica disponível; confirme CRS/unidade antes de carregar geometrias no mapa.')
+            for c in camadas(t['modelo'],t['estrutural'],t['geometrias'],m['crs']):publicar(c,QgsProject.instance(),'wg',m['uuid'],self.base,m['projeto'] or m['nome'],m['versao'],None if c.isSpatial() else 'Diagnósticos e auxiliares')
+        except Exception as e:QMessageBox.warning(self,'Camadas não carregadas',str(e))
     def mudar(self,delta):self.pagina=max(0,self.pagina+delta);self.atualizar()
     def atualizar(self):
         with abrir_ro(self.base) as c:

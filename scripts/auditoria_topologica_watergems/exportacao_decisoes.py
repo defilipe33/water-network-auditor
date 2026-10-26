@@ -53,6 +53,9 @@ def tabelas_decisoes(base,pacote):
             tuple(r[k] for k in ('rec_uid','comp_uid','ordem','occ_destino','rev_uid','responsavel','justificativa','evidencia','data_utc')) for r in recs]),
         'VALIDACOES_PROPOSTAS':(('VAL_UID','PROP_UID','HIST_UID','ORIGEM','DESTINO','PERSPECTIVA','RESULTADO','CENARIOS_COMPARAVEIS','IDENTIDADES_PRESERVADAS','DATA_UTC'),[
             tuple(v[k] for k in ('uid','prop_uid','hist_uid','origem','destino','modo','resultado','cenarios_comparaveis','identidades_preservadas','data_utc')) for v in vals])}
+    from .decisoes import registros
+    rs=registros(base,ig)
+    tabelas['ANOTACOES_PRELIMINARES']=(('REG_UID','OCC_UID','PERSPECTIVA','TIPO','CLASSIFICACAO','OBSERVACAO','RESPONSAVEL','DATA_UTC','ASSINATURA'),[tuple(r[k] for k in ('reg_uid','occ_uid','modo','tipo','classificacao','observacao','responsavel','data_utc','assinatura')) for r in rs])
     return tabelas
 
 

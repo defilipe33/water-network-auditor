@@ -38,7 +38,7 @@ def assinatura_gis(d,cancelar=None):
 class AssistenteEspacial(QDialog):
     def __init__(self,pai):
         super().__init__(pai);self.pai=pai;self.setWindowTitle('VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS');self.resize(930,660)
-        self.setWindowModality(Qt.WindowModal);self.t=None;self.metadados=None;self.relatorio=None;self.trabalho=None;self.controles=[];self.reuso=None;self.resultado=None;self.mapa=None
+        self.setWindowModality(Qt.WindowModal);self.t=None;self.metadados=None;self.relatorio=None;self.trabalho=None;self.controles=[];self.reuso=None;self.resultado=None;self._publicacao=None;self.mapa=None
         self.d=deepcopy(pai.app.geo.dossie);self.base=pai.base;self.crs_projeto=QgsProject.instance().crs().authid();self.catalogo=pai.app.catalogo.listar_opcional();self.avisos_catalogo=list(pai.app.catalogo.avisos)
         v=QVBoxLayout(self);self.titulo=QLabel();self.titulo.setWordWrap(True);v.addWidget(self.titulo)
         self.paginas=QStackedWidget();v.addWidget(self.paginas,1);self.corpos=[]
@@ -62,7 +62,7 @@ class AssistenteEspacial(QDialog):
         self.mostrar=QPushButton('Mostrar amostras e divergências candidatas no mapa');self.mostrar.clicked.connect(self.mostrar_mapa);self.corpos[4].addWidget(self.mostrar)
         self.avaliacao=QLabel();self.avaliacao.setWordWrap(True);self.corpos[5].addWidget(self.avaliacao)
         f=QFormLayout();self.crs_documental=QLineEdit();self.documento=QLineEdit();self.responsavel=QLineEdit(pai.resp_evidencia.text())
-        f.addRow('CRS documental (somente se metadados ausentes)',self.crs_documental);f.addRow('Fonte documental adicional',self.documento);f.addRow('Responsável pela aprovação',self.responsavel);self.corpos[5].addLayout(f)
+        f.addRow('CRS documental (somente se metadados ausentes)',self.crs_documental);f.addRow('Fonte documental adicional',self.documento);f.addRow('Responsável pela aprovação *',self.responsavel);self.corpos[5].addLayout(f)
         b=QPushButton('Anexar documento de evidência (copiado para a nova versão)…');b.clicked.connect(self.anexar);self.corpos[5].addWidget(b);self.anexo=None
         self.resumo=QLabel();self.resumo.setWordWrap(True);self.corpos[6].addWidget(self.resumo)
         self.aprovar=QCheckBox('Aprovo tecnicamente as evidências apresentadas; compatibilidade espacial não comprova conectividade hidráulica');self.corpos[6].addWidget(self.aprovar)
@@ -82,7 +82,9 @@ class AssistenteEspacial(QDialog):
         self.trabalho=Trabalho(funcao,self);self.trabalho.progresso.connect(self.progresso)
         self.trabalho.pronto.connect(pronto);self.trabalho.erro.connect(self.erro);self.trabalho.finished.connect(self.terminou);self.trabalho.start()
     def progresso(self,n,texto):self.barra.setRange(0,100);self.barra.setValue(n);self.estado.setText(texto)
-    def terminou(self):self.pai.ocupado=False;self.paginas.setEnabled(True);self.barra.setRange(0,100);self.barra.setValue(100);self.voltar.setEnabled(self.paginas.currentIndex()>0);self.avancar.setEnabled(self.t is not None and self.resultado is None)
+    def terminou(self):
+        self.pai.ocupado=False;self.paginas.setEnabled(True);self.barra.setRange(0,100);self.barra.setValue(100);self.voltar.setEnabled(self.paginas.currentIndex()>0);self.avancar.setEnabled(self.t is not None and self._publicacao is None)
+        if self.resultado:self.accept();self.pai.show();self.pai.raise_();self.pai.activateWindow()
     def erro(self,erro):self.estado.setText('Operação não concluída: '+erro+'. A base e as fontes anteriores permanecem intactas.');self.aprovar.setChecked(False)
     def detectar(self,cancelar,progresso):
         t=bases.restaurar(self.base,cancelar);progresso(10,'Lendo declarações espaciais e CRSs GIS')
@@ -184,7 +186,10 @@ class AssistenteEspacial(QDialog):
         a=det.avaliar(self.t,self.relatorio,md,documental);self.documental_efetivo=documental;self.avaliacao.setText(a['estado']+'\n'+'\n'.join(a['faltas'])+'\nCRS declarado e unidade inferida são evidências diferentes de conectividade hidráulica.')
         self.resumo.setText(f"Base: {self.t['meta_base']['nome']} · {self.t['meta_base']['uuid']}\nCRS comparação: {self.relatorio['crs']}\nFator recomendado: {self.relatorio['fator_recomendado']}\nGIS examinadas: {self.relatorio['gis_examinadas']}; WG: {self.relatorio['wg_examinadas']}\n{a['estado']} · {'; '.join(a['faltas'])}\nA gravação cria nova versão, UUID próprio e JSON relacional. A versão anterior permanece intacta.")
     def salvar(self):
+        if self._publicacao or self.resultado or self.trabalho and self.trabalho.isRunning():return
         try:
+            ausente=not self.responsavel.text().strip();self.responsavel.setStyleSheet('border: 1px solid #b53030;' if ausente else '')
+            if ausente:self.pagina(5);raise ValueError('Informe o responsável (*) pela confirmação definitiva. Os dados preenchidos foram mantidos.')
             self.atualizar_avaliacao();doc=dict(crs=self.documental_efetivo,fonte=self.documento.text().strip())
             if not doc['fonte'] and self.documental_efetivo:
                 e=next(e for e in self.evidencias if e['referencia']['crs']==self.documental_efetivo);doc['fonte']=e['referencia']['fonte'];doc['base_evidencia']=e['base'];doc['sha256']=hash_arquivo(e['base'])
@@ -194,13 +199,28 @@ class AssistenteEspacial(QDialog):
             m=self.t['meta_base'];destino,_=QFileDialog.getSaveFileName(self,'Nova versão topológica validada',str(sugestao(self.pai.app.catalogo.raiz,m['projeto'],'TopologiaWG',m['versao']+1)),'GeoPackage (*.gpkg)')
             if not destino:return
             if not destino.lower().endswith('.gpkg'):destino+='.gpkg'
-            self.executar(lambda cancelar,progresso:ref.salvar_referencia(self.base,destino,r,cancelar),self.salvo)
+            def gravar(cancelar,progresso):
+                from auditoria_fronteiras.versoes import abrir_ro
+                p=ref.salvar_referencia(self.base,destino,r,cancelar)
+                with abrir_ro(p) as c:
+                    if c.execute('PRAGMA quick_check').fetchone()[0]!='ok' or c.execute('PRAGMA foreign_key_check').fetchall():raise ValueError('A publicação não passou na verificação de integridade')
+                return p
+            self.executar(gravar,self.salvo)
         except Exception as e:QMessageBox.warning(self,'Validação não salva',str(e))
     def salvo(self,p):
-        self.resultado=str(p);self.pai.usar_base(p)
-        for origem,campo in self.relatorio['mapeamento'].items():
-            if origem in self.pai.mapas:self.pai.mapas[origem].setCurrentIndex(max(0,self.pai.mapas[origem].findData(campo)))
-        self.estado.setText('Nova versão salva. A base anterior e o modelo original foram preservados.');self.sair.setText('Fechar');self.avancar.setEnabled(False)
+        self._publicacao=str(p)
+        try:
+            meta=bases.metadados(p)
+            if ref.estado_referencia(meta.get('referencia_espacial'))['estado']!='VALIDADO':raise ValueError('A nova base não contém evidência espacial validada')
+            self.pai.usar_base(p)
+            if Path(self.pai.base).resolve()!=Path(p).resolve():raise ValueError('A janela principal não ativou a versão publicada')
+            for origem,campo in self.relatorio['mapeamento'].items():
+                if origem in self.pai.mapas:self.pai.mapas[origem].setCurrentIndex(max(0,self.pai.mapas[origem].findData(campo)))
+            if 'tolerancia_m' in self.relatorio:self.pai.tolerancia.setValue(self.relatorio['tolerancia_m'])
+            self.pai.resp_evidencia.setText(meta.get('referencia_espacial',{}).get('validacao',{}).get('responsavel',''))
+            self.resultado=str(p);self.estado.setText('Nova versão salva e configuração atualizada.');self.avancar.setEnabled(False)
+        except Exception as e:
+            self.avancar.setEnabled(False);QMessageBox.warning(self,'Publicação requer recuperação','A versão foi gravada em '+str(p)+', mas não foi possível ativá-la: '+str(e)+'. Reabra este arquivo; não será criada outra versão por este assistente.')
     def mostrar_mapa(self):
         if not self.relatorio:return
         crs=self.relatorio['crs'];camada=QgsVectorLayer('Point?crs='+crs,'VALIDACAO — coordenadas candidatas (não comprovam datum)','memory');p=camada.dataProvider()
@@ -215,12 +235,15 @@ class AssistenteEspacial(QDialog):
         from qgis.core import QgsCategorizedSymbolRenderer,QgsRendererCategory,QgsMarkerSymbol
         categorias=[QgsRendererCategory(tipo,QgsMarkerSymbol.createSimple(dict(name='circle',color=cor,size='2.5')),tipo) for tipo,cor in [('GIS','40,110,220'),('WG convertido','180,40,180'),('DIVERGENCIA GIS','230,120,20')]]
         camada.setRenderer(QgsCategorizedSymbolRenderer('TIPO',categorias))
-        p.addFeatures(fs);camada.updateExtents();QgsProject.instance().addMapLayer(camada)
-        if self.mapa:QgsProject.instance().removeMapLayer(self.mapa)
+        p.addFeatures(fs);camada.updateExtents()
+        from auditoria_fronteiras.organizacao_camadas import publicar
+        camada.setCustomProperty('wna/tecnico','CANDIDATOS_VALIDACAO_'+camada.id())
+        camada=publicar(camada,QgsProject.instance(),'wg',self.t['meta_base']['uuid'],self.base,self.t['meta_base']['nome'],self.t['meta_base']['versao'],temporaria=True)
         self.mapa=camada.id();self.estado.setText('Camada temporária de candidatos criada sem alterar fontes ou impor zoom. Remova-a após a investigação.')
     def reject(self):
         if self.trabalho and self.trabalho.isRunning():self.trabalho.requestInterruption();self.estado.setText('Cancelamento solicitado; aguardando ponto seguro, sem publicar resultados.');return
         super().reject()
     def closeEvent(self,e):
-        if self.trabalho and self.trabalho.isRunning():self.reject();e.ignore()
+        if self.resultado:e.accept()
+        elif self.trabalho and self.trabalho.isRunning():self.reject();e.ignore()
         else:e.accept()

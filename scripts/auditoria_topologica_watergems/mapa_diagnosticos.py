@@ -28,7 +28,7 @@ class MapaDiagnosticos:
         if not self.canvas:return
         from qgis.gui import QgsRubberBand
         b=QgsRubberBand(self.canvas,copia.type());b.setColor(QColor(cor));b.setFillColor(QColor(0,0,0,0))
-        b.setWidth(4);b.setIconSize(12);b.setIcon(QgsRubberBand.ICON_CIRCLE)
+        b.setWidth(1.5 if copia.type()==2 else 4);b.setZValue(10 if copia.type()==2 else 60 if tracado else 40);b.setIconSize(12);b.setIcon(QgsRubberBand.ICON_CIRCLE)
         if tracado:b.setLineStyle(Qt.DashLine)
         b.setToGeometry(copia,None);self.destaques.append(b)
 
@@ -67,7 +67,7 @@ class MapaDiagnosticos:
         origem=QgsCoordinateReferenceSystem(self.pacote['dossie']['contexto']['parametros']['crs'])
         if origem.isGeographic() or origem.mapUnits()!=QgsUnitTypes.DistanceMeters:return 'Aproximação métrica bloqueada: CRS de processamento não confirmado em metros.'
         caixa=(self.centro_local if self.centro_local else QgsGeometry.collectGeometry(self.foco_origem)).boundingBox()
-        caixa.grow(max(15,caixa.width()*.1,caixa.height()*.1))
+        caixa.grow(max(50,caixa.width()*.1,caixa.height()*.1))
         trans=QgsCoordinateTransform(origem,self.canvas.mapSettings().destinationCrs(),self.projeto)
         self.canvas.setExtent(trans.transformBoundingBox(caixa));self.canvas.refresh();return 'Mapa aproximado aos destaques; nenhuma geometria foi alterada.'
 

@@ -31,6 +31,9 @@ cruzada e zoom explícito. O sentido antes/depois é geométrico, não hidráuli
 
 ## WaterGEMS e investigação
 
+Consulte o [fluxo investigativo da versão 1.3.0](FLUXO_INVESTIGATIVO.md) para anotações
+rápidas, confirmações fundamentadas, grupos de camadas e reabertura de projetos QGIS.
+
 Se o índice estiver vazio ou indisponível, consulte a [recuperação do catálogo](RECUPERACAO_CATALOGO.md).
 Não é necessário apagar o arquivo de zero bytes antes de atualizar o complemento.
 

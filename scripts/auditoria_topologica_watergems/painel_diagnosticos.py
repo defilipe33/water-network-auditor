@@ -19,7 +19,7 @@ class PainelDiagnosticos(QDockWidget):
         self._filtros_estaveis=None;self._modo_estavel='ESTRUTURAL';self._bloqueador=None;self._iface=None
         self.mapa=MapaDiagnosticos(self.pacote,legado.projeto,legado.canvas)
         w=QWidget();self.setWidget(w);v=QVBoxLayout(w);self.resize(920,720)
-        self.execucao=QLabel('Auditoria integrada · '+self.pacote['resultado']['meta']['uid'][:12]+' · detectar → localizar → investigar');v.addWidget(self.execucao)
+        self.execucao=QLabel('Auditoria integrada · '+self.pacote['resultado']['meta']['uid'][:12]+' · detectar → localizar → investigar');self.execucao.setWordWrap(True);v.addWidget(self.execucao)
         self.tabs=QTabWidget();v.addWidget(self.tabs);diag=QWidget();self.tabs.addTab(diag,'DIAGNÓSTICOS');layout=QVBoxLayout(diag)
         self.resumo=QLabel();self.resumo.setWordWrap(True);layout.addWidget(self.resumo)
         self.mostrar_filtros=QPushButton('Filtros ▾');self.mostrar_filtros.setCheckable(True);self.mostrar_filtros.setChecked(True);layout.addWidget(self.mostrar_filtros)
@@ -37,6 +37,7 @@ class PainelDiagnosticos(QDockWidget):
         from .decisoes import SITUACOES
         self.revisao_topo=QComboBox();self.revisao_topo.addItem('Todas as revisões topológicas',None)
         for situacao in SITUACOES:self.revisao_topo.addItem(situacao,situacao)
+        self.revisao_topo.addItem('Com anotações ou revisão','ANALISADOS')
         self.regiao.addItem('Todas as regiões',None)
         for n in sorted({a for c in self.casos for a in c['regioes']}):self.regiao.addItem(n,n)
         self.revisao.addItem('Todas as revisões espaciais',None)
@@ -54,6 +55,9 @@ class PainelDiagnosticos(QDockWidget):
         self.detalhes=QTreeWidget();self.detalhes.setHeaderLabels(['Detalhes expansíveis','Informação']);self.detalhes.setColumnWidth(0,180);self.detalhes.setWordWrap(True);self.detalhes.setMaximumHeight(100);layout.addWidget(self.detalhes)
         linha=QHBoxLayout();layout.addLayout(linha)
         for texto,acao in [('Aproximar mapa',self.aproximar),('Destacar componentes',self.componentes),('Selecionar GIS original',self.origens)]:
+            b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
+        linha=QHBoxLayout();layout.addLayout(linha)
+        for texto,acao in [('Ajustar extensão dos elementos',self.extensao_elementos),('Remover destaques',self.mapa.limpar)]:
             b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
         self.aviso=QLabel('Categorias são situações investigáveis, não erros confirmados. Contagens de categorias não são aditivas.');self.aviso.setWordWrap(True);layout.addWidget(self.aviso)
         self.legenda=QLabel('Azul: tubos · Verde: nós · Magenta: dispositivos · Ocre: limites\nLaranja tracejado: possível ligação geométrica, não cadastrada.');self.legenda.setWordWrap(True)
@@ -89,6 +93,7 @@ class PainelDiagnosticos(QDockWidget):
                 c.selectionChanged.connect(callback);self._conexoes.append((c,callback))
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
+        if self.atual:self.mostrar_filtros.setChecked(False)
 
     def revisao_atualizada(self,*args):
         if not self._ativo:return
@@ -114,9 +119,11 @@ class PainelDiagnosticos(QDockWidget):
         if not self._ativo:return
         self._inversos=None
         novos=filtrar(self.casos,self.categoria.currentData(),self.componente.currentData(),self.regiao.currentData(),self.revisao.currentData(),self.modo.currentData(),self.busca.text(),self.fonte.currentData(),self.prioridade.currentData())
-        from .decisoes import indice_revisoes
+        from .decisoes import indice_revisoes,registros
         self._revisoes_topologicas=indice_revisoes(self.base,self.pacote['resultado']['meta']['uid'])
-        if self.revisao_topo.currentData():novos=[c for c in novos if self._revisoes_topologicas.get((c['uid'],self.modo.currentData()),{}).get('situacao','PENDENTE')==self.revisao_topo.currentData()]
+        rr=registros(self.base,self.pacote['resultado']['meta']['uid'],modo=self.modo.currentData());analisados={r['occ_uid'] for r in rr}|{u for u,m in self._revisoes_topologicas if m==self.modo.currentData()}
+        if self.revisao_topo.currentData()=='ANALISADOS':novos=[c for c in novos if c['uid'] in analisados]
+        elif self.revisao_topo.currentData():novos=[c for c in novos if self._revisoes_topologicas.get((c['uid'],self.modo.currentData()),{}).get('situacao','PENDENTE')==self.revisao_topo.currentData()]
         if hasattr(self,'analise') and self.analise.tem_edicoes() and self.atual and not any(c['uid']==self.atual['uid'] for c in novos):
             if not self.analise.resolver_edicoes():
                 if self._filtros_estaveis:
@@ -149,6 +156,12 @@ class PainelDiagnosticos(QDockWidget):
                 item=QTableWidgetItem(texto);item.setToolTip(texto);item.setData(Qt.UserRole,c['uid']);self.lista.setItem(n,col,item)
         self.lista.blockSignals(False)
         self.resumo.setText(f"{len(self.visiveis)} casos exibidos / {len(self.casos)} casos únicos. Prioridade é triagem. A lista mostra andamento topológico; a revisão espacial é preservada separadamente.")
+        from .decisoes import registros,propostas,CONCLUSOES
+        meta=self.pacote['resultado']['meta'];modo=self.modo.currentData();rs=registros(self.base,meta['uid'],modo=modo);hs=[r for (u,m),r in self._revisoes_topologicas.items() if m==modo]
+        vistos={r['occ_uid'] for r in rs}|{r['occ_uid'] for r in hs};prelim={r['occ_uid'] for r in rs if r['tipo']=='PRELIMINAR'};confirmados=sum(r['conclusao'] in CONCLUSOES[1:6] for r in hs)
+        self.execucao.setText(f"{meta.get('projeto') or meta.get('nome','Investigação')} · {self.modo.currentText()}\nGIS {meta['geo']['execucao_uid'][:8]} · WaterGEMS {meta['topologia']['execucao_uid'][:8]} · cenário {meta['topologia'].get('cenario')}")
+        self.execucao.setToolTip(f"Investigação {meta['uid']}\nGIS {meta['geo']['execucao_uid']}\nWaterGEMS {meta['topologia']['execucao_uid']}\nVersões e fontes completas na aba CONFIGURAÇÕES E FONTES")
+        self.resumo.setText(self.resumo.text()+f"\nSem registro: {len(self.casos)-len(vistos)} · com análise/anotação: {len(vistos)} · preliminares: {len(prelim)} · confirmadas: {confirmados} · propostas: {len(propostas(self.base,meta['uid'],modo=modo))}. Categorias podem se sobrepor; não são contagens de erros comprovados.")
         if self.visiveis and selecionar_primeiro:
             indice=next((i for i,c in enumerate(self.visiveis) if c['uid']==anterior),0);self.lista.selectRow(indice);self.selecionar()
         else:
@@ -212,6 +225,8 @@ class PainelDiagnosticos(QDockWidget):
         if self.atual:self.mapa.destacar(self.atual,self.modo.currentData(),True)
 
     def aproximar(self):self.aviso.setText(self.mapa.aproximar())
+    def extensao_elementos(self):
+        self.mapa.centro_local=None;self.aviso.setText(self.mapa.aproximar())
 
     def origens(self):
         if self.atual:self.aviso.setText(self.mapa.selecionar_gis(self.atual))
@@ -283,6 +298,7 @@ def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None):
     from .painel_integrado import abrir_painel
     legado=abrir_painel(pacote,base,projeto,parent,canvas);legado.hide()
     painel=PainelDiagnosticos(legado,parent)
+    painel.setObjectName('WNA_Diagnosticos_Integrados')
     if canvas is not None:
         try:
             from qgis.utils import iface
@@ -293,4 +309,7 @@ def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None):
                     def exitBlocked(self):return not painel.resolver_alteracoes()
                 painel._iface=iface;painel._bloqueador=Bloqueador();iface.registerApplicationExitBlocker(painel._bloqueador)
         except ImportError:pass
-    painel.show();return painel
+    painel.show()
+    if painel._iface and not painel._iface.mainWindow().property('wna/dock_dimensionado'):
+        principal=painel._iface.mainWindow();principal.resizeDocks([painel],[max(280,int(principal.width()*.5))],Qt.Horizontal);principal.setProperty('wna/dock_dimensionado',True)
+    return painel

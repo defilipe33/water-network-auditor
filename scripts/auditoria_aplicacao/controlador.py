@@ -1,7 +1,7 @@
 """Unificação operacional; reaproveita as janelas e suas guardas de estado."""
 from pathlib import Path
 from uuid import uuid4
-from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy
+from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy,QCheckBox
 from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsProject
 from auditoria_fronteiras.interface import AuditoriaFronteirasDialog
@@ -25,6 +25,7 @@ class Aplicacao:
         for i,(texto,acao) in enumerate([('ANALISAR COM WATERGEMS…',self.analisar),('Catálogo / continuar investigação…',self.catalogar),('Base WaterGEMS / versões…',self.bases)]):
             b=QPushButton(texto);b.clicked.connect(acao);b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred);b.setToolTip(texto);linha.addWidget(b,i//2,i%2)
         self.geo.layout().insertWidget(0,w)
+        self.limpar_ao_sair=QCheckBox('Remover somente temporárias da ferramenta ao encerrar');self.limpar_ao_sair.setToolTip('Opcional: remove representações de validação marcadas pela ferramenta; não apaga arquivos ou camadas persistentes.');self.geo.layout().insertWidget(1,self.limpar_ao_sair)
     def abrir(self):self.geo.show();self.geo.raise_()
     def resolver(self):return not self.painel or self.painel.resolver_alteracoes()
     def validar_geo(self):
@@ -75,11 +76,15 @@ class Aplicacao:
         except Exception as e:QMessageBox.warning(self.geo,'Base não aberta',str(e))
     def publicar(self,pacote,base,modo=None):
         if not self.resolver():return False
+        anterior=(self.geo.base_revisao,self.geo.dossie['execucao_uid']) if self.geo.dossie and self.geo.base_revisao else None
         # A auditoria exibida na janela principal deve ser a mesma do painel.
         # O fluxo existente resolve rascunhos e mantém o contexto ao cancelar.
         if not self.geo.abrir_auditoria(str(base),pacote['dossie']['execucao_uid']):return False
         self.geo.voltar_inspecao()
-        novo=abrir_diagnosticos(pacote,base,QgsProject.instance(),self.iface.mainWindow(),self.iface.mapCanvas())
+        try:novo=abrir_diagnosticos(pacote,base,QgsProject.instance(),self.iface.mainWindow(),self.iface.mapCanvas())
+        except Exception as e:
+            if anterior:self.geo.abrir_auditoria(*anterior)
+            QMessageBox.warning(self.geo,'Investigação não aberta',str(e)+'\nAs versões anteriores foram preservadas. Reabra a fonte correta ou restaure uma cópia íntegra.');return False
         if self.painel:self.painel.desativar()
         self.painel=novo
         if modo in ('ESTRUTURAL','TODAS_VALVULAS_ABERTAS'):novo.modo.setCurrentIndex(novo.modo.findData(modo))
@@ -107,6 +112,9 @@ class Aplicacao:
         finally:self.ocupado=False;progresso.close()
     def encerrar(self):
         if not self.preparar_saida():return False
+        if self.limpar_ao_sair.isChecked():
+            from auditoria_fronteiras.organizacao_camadas import remover_temporarias
+            remover_temporarias(QgsProject.instance())
         if not self.geo.close():return False
         if self.painel and not self.painel.close():self.geo.show();return False
         if self.wg:self.wg.close()

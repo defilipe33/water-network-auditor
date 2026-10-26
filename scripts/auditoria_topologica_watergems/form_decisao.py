@@ -4,7 +4,7 @@ import re
 from datetime import datetime
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QWidget,QVBoxLayout,QFormLayout,QHBoxLayout,QLabel,QComboBox,QLineEdit,
-    QPlainTextEdit,QPushButton,QCheckBox,QTabWidget,QScrollArea,QMessageBox,QFileDialog,QDialog,QTextBrowser)
+    QPlainTextEdit,QPushButton,QCheckBox,QTabWidget,QScrollArea,QMessageBox,QFileDialog,QDialog,QTextBrowser,QGroupBox)
 from . import decisoes as db
 
 
@@ -14,22 +14,36 @@ def combo(valores):
 
 class AnaliseDecisao(QWidget):
     def __init__(self,painel):
-        super().__init__(painel);self.painel=painel;self.chave=None;self.caso=None;self.head=None;self.prop=None;self._baseline=None
+        super().__init__(painel);self.painel=painel;self.chave=None;self.caso=None;self.head=None;self.prop=None;self._baseline=None;self._hipotese_preparada=False
         v=QVBoxLayout(self);self.identificacao=QLabel('Selecione uma ocorrência.');self.identificacao.setWordWrap(True);v.addWidget(self.identificacao)
         self.tabs=QTabWidget();v.addWidget(self.tabs)
         def pagina(titulo):
             scroll=QScrollArea();scroll.setWidgetResizable(True);w=QWidget();scroll.setWidget(w);self.tabs.addTab(scroll,titulo);f=QFormLayout(w);f.setFormAlignment(Qt.AlignTop);f.setLabelAlignment(Qt.AlignLeft|Qt.AlignTop);return f
         f=pagina('Decisão técnica');self.situacao=combo(db.SITUACOES);f.addRow('Situação administrativa',self.situacao)
+        self.anotacao=QPlainTextEdit();self.anotacao.setMaximumHeight(95);self.anotacao.setPlaceholderText('Observação rápida: exige somente texto.');f.addRow('Anotação rápida',self.anotacao)
+        b=QPushButton('Salvar anotação');b.clicked.connect(lambda:self.salvar_registro(False));f.addRow(b)
+        self.preliminar=QComboBox();self.preliminar.addItem('Sem interpretação preliminar',None)
+        for c in db.PRELIMINARES:self.preliminar.addItem(c,c)
+        f.addRow('Classificação preliminar opcional',self.preliminar)
+        b=QPushButton('Salvar conclusão preliminar e observação');b.clicked.connect(lambda:self.salvar_registro(True));f.addRow(b)
+        b=QPushButton('Salvar somente andamento administrativo');b.clicked.connect(self.salvar_andamento);f.addRow(b)
+        principal=f;self.avancadas=QGroupBox('CONFIRMAÇÃO TÉCNICA / EVIDÊNCIAS AVANÇADAS');self.avancadas.setCheckable(True);self.avancadas.setChecked(False);principal.addRow(self.avancadas)
+        conteudo=QWidget();f=QFormLayout(conteudo);av=QVBoxLayout(self.avancadas);av.addWidget(conteudo);conteudo.setVisible(False);self.avancadas.toggled.connect(conteudo.setVisible)
+        aviso=QLabel('Conclusões definitivas exigem justificativa, responsável, fonte e evidência DOCUMENTAL, OPERACIONAL ou de CAMPO. Hipóteses podem ser salvas acima como preliminares. VERIFICADO é andamento, não correção comprovada.');aviso.setWordWrap(True);f.addRow(aviso)
         self.conclusao=QComboBox();self.conclusao.addItem('Escolha explicitamente a conclusão',None)
         for c in db.CONCLUSOES:self.conclusao.addItem(c,c)
         f.addRow('Conclusão técnica',self.conclusao)
         self.justificativa=QPlainTextEdit();self.justificativa.setMaximumHeight(95);f.addRow('Justificativa / observações',self.justificativa)
         self.responsavel=QLineEdit();f.addRow('Responsável',self.responsavel)
+        from qgis.core import QgsSettings
+        self.operador=QgsSettings().value('auditoria_redes/operador_padrao','');self.responsavel.setText(self.operador)
+        b=QPushButton('Usar este responsável como operador padrão opcional');b.clicked.connect(self.salvar_operador);f.addRow(b)
         self.fonte=combo(('',)+db.FONTES);f.addRow('Fonte da informação',self.fonte)
         self.natureza=combo(db.NATUREZAS);f.addRow('Natureza da evidência',self.natureza)
         self.evidencia=QPlainTextEdit();self.evidencia.setMaximumHeight(85);self.evidencia.setPlaceholderText('Identifique documento, consulta ao modelo, informação operacional ou verificação de campo.');f.addRow('Evidência identificada',self.evidencia)
         self.data=QLabel('Sem revisão topológica salva.');self.data.setMaximumHeight(32);self.data.setAlignment(Qt.AlignLeft|Qt.AlignTop);f.addRow('Última revisão',self.data)
         b=QPushButton('Salvar decisão no histórico');b.clicked.connect(self.salvar_decisao);f.addRow(b)
+        b=QPushButton('Usar esta interpretação como hipótese preliminar');b.clicked.connect(self.usar_hipotese);f.addRow(b)
         f=pagina('Propostas');self.seletor=QComboBox();self.seletor.currentIndexChanged.connect(self.trocar_proposta);f.addRow('Proposta desta ocorrência',self.seletor)
         self.tipo=combo(db.TIPOS_PROPOSTA);f.addRow('Tipo de intervenção',self.tipo)
         self.descricao=QPlainTextEdit();self.descricao.setMaximumHeight(75);f.addRow('Descrição',self.descricao)
@@ -53,15 +67,16 @@ class AnaliseDecisao(QWidget):
         self.mensagem=QLabel('Revisão topológica independente da revisão espacial. Nenhuma ação escreve no WaterGEMS.');self.mensagem.setWordWrap(True);v.addWidget(self.mensagem)
         self.salvar_fixo_decisao=QPushButton('Salvar decisão no histórico');self.salvar_fixo_decisao.clicked.connect(self.salvar_decisao);v.addWidget(self.salvar_fixo_decisao)
         self.salvar_fixo_proposta=QPushButton('Salvar proposta / histórico');self.salvar_fixo_proposta.clicked.connect(self.salvar_proposta);v.addWidget(self.salvar_fixo_proposta)
-        def acoes_fixas(i):self.salvar_fixo_decisao.setVisible(i==0);self.salvar_fixo_proposta.setVisible(i==1)
+        def acoes_fixas(i):self.salvar_fixo_decisao.setVisible(i==0 and self.avancadas.isChecked());self.salvar_fixo_proposta.setVisible(i==1)
         self.tabs.currentChanged.connect(acoes_fixas);acoes_fixas(0)
+        self.avancadas.toggled.connect(lambda _:acoes_fixas(self.tabs.currentIndex()))
         from auditoria_fronteiras.ui_comum import configurar_controles
         configurar_controles(self)
         self.setEnabled(False)
 
     def valores_decisao(self):return (self.situacao.currentText(),self.conclusao.currentData(),self.justificativa.toPlainText(),self.responsavel.text(),self.fonte.currentText(),self.natureza.currentText(),self.evidencia.toPlainText())
     def valores_proposta(self):return (self.tipo.currentText(),self.descricao.toPlainText(),self.ids.text(),self.elementos_confirmados.isChecked(),self.prop_just.toPlainText(),self.requisitos.toPlainText(),self.prop_resp.text(),self.prop_evid.toPlainText(),self.prop_estado.currentText(),self.confirmacao.isChecked(),self.verificacao_manual.isChecked())
-    def valores(self):return self.valores_decisao(),self.valores_proposta()
+    def valores(self):return self.valores_decisao(),self.valores_proposta(),(self.anotacao.toPlainText(),self.preliminar.currentData())
     def tem_edicoes(self):return self.chave is not None and self._baseline is not None and self.valores()!=self._baseline
 
     def carregar(self,caso,modo,forcar=False):
@@ -70,13 +85,16 @@ class AnaliseDecisao(QWidget):
         self.chave=chave;self.caso=caso;self.modo=modo;self.setEnabled(caso is not None)
         if not caso:self._baseline=None;self.identificacao.setText('Selecione uma ocorrência.');return
         p=self.painel.pacote;self.ig=p['resultado']['meta']['uid']
-        self.identificacao.setText(caso['titulo']+'\n'+modo+' · cenário '+str(p['topologia']['modelo']['cenario'])+' · ocorrência '+caso['uid']+'\n'+ '; '.join(caso['tubos_gis'] or caso['elementos'][:4]))
-        self.identificacao.setToolTip('Decisão vinculada à execução, cenário e perspectiva selecionados. A hipótese com válvulas abertas não comprova a condição operacional real.')
+        envolvidos=caso['tubos_gis'] or caso['elementos'];amostra='; '.join(str(x)[:45] for x in envolvidos[:2])
+        self.identificacao.setText(caso['titulo']+'\n'+amostra+(f' · +{len(envolvidos)-2} elementos' if len(envolvidos)>2 else ''))
+        self.identificacao.setToolTip('Ocorrência '+caso['uid']+'\n'+modo+' · cenário '+str(p['topologia']['modelo']['cenario'])+'\n'+'; '.join(envolvidos)+'\nA hipótese com válvulas abertas não comprova a operação real. Identificadores completos permanecem no detalhamento.')
         hs=db.historico(self.painel.base,self.ig,caso['uid'],modo);self.head=hs[-1] if hs else None
         h=self.head or {}
         self.situacao.setCurrentText(h.get('situacao','PENDENTE'));self.conclusao.setCurrentIndex(self.conclusao.findData(h.get('conclusao')))
-        self.justificativa.setPlainText(h.get('justificativa',''));self.responsavel.setText(h.get('responsavel',''));self.fonte.setCurrentText(h.get('fonte',''))
+        self.anotacao.clear();self.preliminar.setCurrentIndex(0);self._hipotese_preparada=False
+        self.justificativa.setPlainText(h.get('justificativa',''));self.responsavel.setText(h.get('responsavel') or self.operador);self.fonte.setCurrentText(h.get('fonte',''))
         self.natureza.setCurrentText(h.get('natureza','INDEFINIDO'));self.evidencia.setPlainText(h.get('evidencia',''));self.mostrar_data(h.get('data_utc'))
+        for w in (self.justificativa,self.responsavel,self.fonte,self.natureza,self.evidencia):w.setStyleSheet('')
         self._propostas=db.propostas(self.painel.base,self.ig,caso['uid'],modo)
         self.seletor.blockSignals(True);self.seletor.clear();self.seletor.addItem('Nova proposta · não criada automaticamente',None)
         for pr in self._propostas:self.seletor.addItem(pr['prop_uid'][:10]+' · '+pr['atual']['tipo']+' · '+pr['atual']['situacao'],pr['prop_uid'])
@@ -86,6 +104,7 @@ class AnaliseDecisao(QWidget):
         for pr in self._propostas:
             linhas.append('\nPROPOSTA '+pr['prop_uid'])
             linhas += [f"{h['data_utc']} | {h['situacao']} | {h['responsavel']}\n{h['descricao']}\n{h['evidencia']}\nHistórico {h['hist_uid']} / anterior {h['anterior']}" for h in pr['historico']]
+        linhas += [f"{r['data_utc']} | {r['tipo']} | {r['classificacao'] or ''}\n{r['observacao']}" for r in db.registros(self.painel.base,self.ig,caso['uid'],modo)]
         self.historia.setPlainText('\n\n'.join(linhas));self._baseline=self.valores()
 
     def carregar_proposta(self,uid):
@@ -109,7 +128,7 @@ class AnaliseDecisao(QWidget):
             if not self.resolver_edicoes():return
             # Salvar pode reconstruir a lista; procure novamente o destino escolhido.
             self.seletor.blockSignals(True);self.seletor.setCurrentIndex(self.seletor.findData(uid));self.seletor.blockSignals(False)
-        self.carregar_proposta(uid);self._baseline=(self._baseline[0],self.valores_proposta())
+        self.carregar_proposta(uid);self._baseline=(self._baseline[0],self.valores_proposta(),self._baseline[2])
 
     def mostrar_rotulos(self):
         if not self.caso:return
@@ -127,12 +146,17 @@ class AnaliseDecisao(QWidget):
         if not self.caso:return False
         try:
             if self.conclusao.currentData() is None:raise ValueError('Escolha a conclusão explicitamente; use NÃO AVALIADO para salvar uma observação inicial.')
+            definitiva=self.conclusao.currentData() in db.CONCLUSOES[1:6] or self.conclusao.currentData()=='NÃO APLICÁVEL'
+            campos=[(self.justificativa,self.justificativa.toPlainText()),(self.responsavel,self.responsavel.text()),(self.fonte,self.fonte.currentText()),(self.evidencia,self.evidencia.toPlainText())]
+            for w,t in campos:w.setStyleSheet('border: 1px solid #b53030' if definitiva and not t.strip() else '')
+            self.natureza.setStyleSheet('border: 1px solid #b53030' if definitiva and self.natureza.currentText() in ('HIPOTESE','INDEFINIDO') else '')
+            if definitiva and (any(not t.strip() for _,t in campos) or self.natureza.currentText() in ('HIPOTESE','INDEFINIDO')):raise ValueError('Para confirmar, complete os campos destacados e use evidência documental, operacional ou de campo. Para investigar sem comprovação, use “Usar esta interpretação como hipótese preliminar” ou salve uma anotação rápida.')
             db.salvar_decisao(self.painel.base,self.painel.pacote,self.caso,self.modo,*self.valores_decisao(),esperada=self.head['rev_uid'] if self.head else None)
             self.head=db.historico(self.painel.base,self.ig,self.caso['uid'],self.modo)[-1];self.mostrar_data(self.head['data_utc'])
             self.painel._revisoes_topologicas[(self.caso['uid'],self.modo)]=self.head
             row=self.painel.lista.currentRow()
             if row>=0:self.painel.lista.item(row,2).setText(self.head['situacao'])
-            self._baseline=(self.valores_decisao(),self._baseline[1]);self.atualizar_historico();self.painel.selecionar();self.mensagem.setText('Decisão topológica acrescentada ao histórico. Revisão espacial preservada.');return True
+            self._baseline=(self.valores_decisao(),self._baseline[1],self._baseline[2]);self.atualizar_historico();self.painel.filtrar();self.mensagem.setText('Decisão topológica acrescentada ao histórico. Revisão espacial preservada.');return True
         except Exception as e:QMessageBox.warning(self,'Decisão não salva',str(e));return False
 
     def salvar_proposta(self):
@@ -146,7 +170,7 @@ class AnaliseDecisao(QWidget):
             self.seletor.blockSignals(True);self.seletor.clear();self.seletor.addItem('Nova proposta',None)
             for pr in self._propostas:self.seletor.addItem(pr['prop_uid'][:10]+' · '+pr['atual']['situacao'],pr['prop_uid'])
             self.seletor.setCurrentIndex(self.seletor.findData(uid));self.seletor.blockSignals(False);self.carregar_proposta(uid)
-            self._baseline=(self._baseline[0],self.valores_proposta());self.atualizar_historico();self.mensagem.setText('Proposta salva. Nenhuma alteração aplicada ao modelo.');return True
+            self._baseline=(self._baseline[0],self.valores_proposta(),self._baseline[2]);self.atualizar_historico();self.painel.filtrar();self.mensagem.setText('Proposta salva. Nenhuma alteração aplicada ao modelo.');return True
         except Exception as e:QMessageBox.warning(self,'Proposta não salva',str(e));return False
 
     def resolver_edicoes(self):
@@ -154,6 +178,7 @@ class AnaliseDecisao(QWidget):
         escolha=QMessageBox.question(self,'Alterações topológicas não salvas','Salvar decisão e proposta alteradas antes de mudar de contexto?',QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
         if escolha==QMessageBox.Cancel:return False
         if escolha==QMessageBox.Discard:self.carregar(self.caso,self.modo,True);return True
+        if (self.anotacao.toPlainText(),self.preliminar.currentData())!=self._baseline[2] and not self.salvar_registro(self.preliminar.currentData() is not None):return False
         if self.valores_decisao()!=self._baseline[0] and not self.salvar_decisao():return False
         if self.valores_proposta()!=self._baseline[1] and not self.salvar_proposta():return False
         return not self.tem_edicoes()
@@ -161,6 +186,7 @@ class AnaliseDecisao(QWidget):
     def atualizar_historico(self):
         hs=db.historico(self.painel.base,self.ig,self.caso['uid'],self.modo)
         linhas=['EVIDÊNCIAS DA OCORRÊNCIA',*self.caso['evidencias'],'\nREVISÕES TOPOLÓGICAS']
+        linhas += [f"{r['data_utc']} | {r['tipo']} | {r['classificacao'] or ''}\n{r['observacao']}\n{r['responsavel']}" for r in db.registros(self.painel.base,self.ig,self.caso['uid'],self.modo)]
         linhas += [f"{h['data_utc']} | {h['responsavel']} | {h['situacao']} | {h['conclusao']}\n{h['justificativa']}\n{h['fonte']} / {h['natureza']} / {h['evidencia']}\nUUID {h['rev_uid']} / anterior {h['anterior']}" for h in hs]
         for p in db.propostas(self.painel.base,self.ig,self.caso['uid'],self.modo):
             linhas.append('\nPROPOSTA '+p['prop_uid'])
@@ -170,6 +196,35 @@ class AnaliseDecisao(QWidget):
     def mostrar_data(self,data):
         self.data.setText(datetime.fromisoformat(data).astimezone().strftime('%d/%m/%Y %H:%M:%S %z') if data else 'Sem revisão topológica salva.')
         self.data.setToolTip(data or '')
+
+    def salvar_operador(self):
+        from qgis.core import QgsSettings
+        self.operador=self.responsavel.text().strip();QgsSettings().setValue('auditoria_redes/operador_padrao',self.operador);self.mensagem.setText('Operador padrão opcional atualizado neste perfil.')
+    def salvar_registro(self,preliminar=False):
+        if not self.caso:return False
+        try:
+            c=self.preliminar.currentData() if preliminar else None
+            if preliminar and c is None:raise ValueError('Escolha a interpretação preliminar')
+            db.salvar_registro(self.painel.base,self.painel.pacote,self.caso,self.modo,self.anotacao.toPlainText(),c,self.operador)
+            if preliminar and self._hipotese_preparada:
+                # Os dados tentativos foram copiados integralmente para a observação.
+                b=self._baseline[0];self.conclusao.setCurrentIndex(self.conclusao.findData(b[1]));self.justificativa.setPlainText(b[2]);self.responsavel.setText(b[3]);self.fonte.setCurrentText(b[4]);self.natureza.setCurrentText(b[5]);self.evidencia.setPlainText(b[6]);self.avancadas.setChecked(False);self._hipotese_preparada=False
+                for w in (self.justificativa,self.responsavel,self.fonte,self.natureza,self.evidencia):w.setStyleSheet('')
+            self.anotacao.clear();self.preliminar.setCurrentIndex(0);self._baseline=(self._baseline[0],self._baseline[1],('',None));self.atualizar_historico();self.painel.filtrar();self.mensagem.setText('Registro acrescentado. Não representa confirmação técnica nem altera o WaterGEMS.');return True
+        except Exception as e:QMessageBox.warning(self,'Observação não salva',str(e));return False
+    def usar_hipotese(self):
+        if not self.justificativa.toPlainText().strip():QMessageBox.information(self,'Observação necessária','Escreva a observação que fundamenta a interpretação preliminar.');return
+        c=self.conclusao.currentData();mapa={'DESCONEXÃO INTENCIONAL':db.PRELIMINARES[1],'CONEXÃO FALTANTE CONFIRMADA':db.PRELIMINARES[0],'CONEXÃO INDEVIDA CONFIRMADA':db.PRELIMINARES[2],'PROBLEMA CADASTRAL CONFIRMADO':db.PRELIMINARES[3]}
+        textos=[self.justificativa.toPlainText()]
+        for titulo,valor in [('Interpretação tentativa',self.conclusao.currentText()),('Responsável informado',self.responsavel.text()),('Fonte informada',self.fonte.currentText()),('Natureza',self.natureza.currentText()),('Evidência informada',self.evidencia.toPlainText())]:
+            if valor.strip():textos.append(titulo+': '+valor)
+        self.anotacao.setPlainText('\n'.join(textos));self.preliminar.setCurrentIndex(max(0,self.preliminar.findData(mapa.get(c))));self._hipotese_preparada=True;self.mensagem.setText('Hipótese preparada na anotação rápida; confira e salve a conclusão preliminar. Os detalhes tentativos foram copiados para o texto, sem confirmação definitiva.')
+    def salvar_andamento(self):
+        if not self.caso:return False
+        try:
+            h=self.head or {};db.salvar_decisao(self.painel.base,self.painel.pacote,self.caso,self.modo,self.situacao.currentText(),*[h.get(k,d) for k,d in [('conclusao','NÃO AVALIADO'),('justificativa',''),('responsavel',''),('fonte',''),('natureza','INDEFINIDO'),('evidencia','')]],esperada=h.get('rev_uid'))
+            self.head=db.historico(self.painel.base,self.ig,self.caso['uid'],self.modo)[-1];b=list(self._baseline[0]);b[0]=self.situacao.currentText();self._baseline=(tuple(b),self._baseline[1],self._baseline[2]);self.atualizar_historico();self.painel.filtrar();self.mensagem.setText('Andamento salvo; a conclusão anterior não foi alterada.');return True
+        except Exception as e:QMessageBox.warning(self,'Andamento não salvo',str(e));return False
 
     def verificar(self):
         if self.tem_edicoes():QMessageBox.information(self,'Salve primeiro','Salve a proposta antes de comparar versões.');return

@@ -236,19 +236,23 @@ def criar_camadas_temporarias(resultado, cancelar=None, analise=None):
     return saida
 
 
-def carregar_no_projeto(camadas, projeto):
+def carregar_no_projeto(camadas, projeto, contexto=None):
     """Publica somente saídas prontas, em grupo novo por execução."""
     raiz = projeto.layerTreeRoot()
     base = 'AUDITORIA_FRONTEIRAS ' + datetime.now().strftime('%Y%m%d_%H%M%S_%f')
     nome, numero = base, 2
     while raiz.findGroup(nome) is not None:
         nome, numero = f'{base} ({numero})', numero+1
-    grupo = raiz.insertGroup(0, nome)
+    from .organizacao_camadas import grupo as grupo_proprio
+    from uuid import uuid4
+    contexto=contexto or {};grupo = grupo_proprio(projeto,'gis',contexto.get('uid') or uuid4().hex,contexto.get('base',''),contexto.get('nome','Auditoria GIS'),contexto.get('versao'))
     adicionadas = []
     relacoes = []
     try:
         for camada in camadas:
+            for k,v in [('categoria','gis'),('uid',contexto.get('uid','')),('base',str(contexto.get('base',''))),('tecnico',camada.name()),('quantidade',camada.featureCount())]:camada.setCustomProperty('wna/'+k,v)
             if projeto.mapLayer(camada.id()):
+                if grupo.findLayer(camada.id()) is None:grupo.addLayer(camada)
                 continue
             if not projeto.addMapLayer(camada, False):
                 raise RuntimeError('Falha ao registrar resultado no projeto')
@@ -296,9 +300,8 @@ def carregar_no_projeto(camadas, projeto):
             projeto.relationManager().removeRelation(relacao_id)
         for camada_id in adicionadas:
             projeto.removeMapLayer(camada_id)
-        projeto.layerTreeRoot().removeChildNode(grupo)
+        if not grupo.children():grupo.parent().removeChildNode(grupo)
         raise
     if not adicionadas:
-        raiz.removeChildNode(grupo)
         return None
     return grupo

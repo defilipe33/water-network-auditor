@@ -161,25 +161,30 @@ class DialogComponentes(QDialog):
 
 
 def abrir_painel(pacote,base,projeto=None,parent=None,canvas=None):
+    from auditoria_fronteiras.organizacao_camadas import publicar
     projeto=projeto or QgsProject.instance();resultado,analise=restaurar(pacote['dossie'])
     uid=pacote['resultado']['meta']['uid'];base=str(Path(base).resolve())
     conhecidas=[c for c in projeto.mapLayers().values() if c.customProperty('integracao/uid')==uid and c.customProperty('integracao/base')==base]
     geo=[c for c in conhecidas if c.customProperty('integracao/grupo')=='geo']
     wg=[c for c in conhecidas if c.customProperty('integracao/grupo')=='wg']
-    if geo and len(wg)==3:
+    meta=pacote['resultado']['meta'];nome=meta.get('projeto') or meta.get('nome','Investigação');versao=meta.get('versao',1)
+    if any(not c.isValid() for c in conhecidas):raise ValueError('Resultados carregados contêm camada inválida. Reabra explicitamente a fonte correta; camadas anteriores foram preservadas.')
+    vazias=[c for c in projeto.mapLayers().values() if c.customProperty('wna/uid')==uid and c.providerType()=='memory' and c.featureCount()==0 and int(c.customProperty('wna/quantidade',0))>0]
+    if geo and len(wg)==3 and not vazias:
+        for c in conhecidas:publicar(c,projeto,'integrada',uid,base,nome,versao,'Elementos WaterGEMS' if c in wg else None)
         from auditoria_fronteiras.painel import aplicar_revisoes
         aplicar_revisoes(geo,pacote['dossie'])
         painel=PainelIntegrado(pacote,geo,wg,projeto,parent,canvas,base);painel.show();return painel
     cs=criar_camadas_temporarias(resultado)+criar_camadas_locais(resultado,analise)
-    carregar_no_projeto(cs,projeto)
-    for c in cs:
+    for i,c in enumerate(cs):
         c.setCustomProperty('integracao/uid',uid);c.setCustomProperty('integracao/base',base);c.setCustomProperty('integracao/grupo','geo')
+        cs[i]=publicar(c,projeto,'integrada',uid,base,nome,versao,'Relações e auxiliares' if c.customProperty('auditoria_fronteiras/papel')=='tecnica' else None)
     wg=[]
     from .saidas import camadas
     # Novas representações; simbologias e camadas originais não são alteradas.
     for c in camadas(pacote['topologia']['modelo'],pacote['topologia']['estrutural'],pacote.get('geometrias'),
         pacote['resultado']['meta']['parametros']['crs'] if pacote.get('geometrias') else None)[:3]:
-        c.setCustomProperty('integracao/uid',uid);c.setCustomProperty('integracao/base',base);c.setCustomProperty('integracao/grupo','wg');projeto.addMapLayer(c);wg.append(c)
+        c.setCustomProperty('integracao/uid',uid);c.setCustomProperty('integracao/base',base);c.setCustomProperty('integracao/grupo','wg');wg.append(publicar(c,projeto,'integrada',uid,base,nome,versao,'Elementos WaterGEMS'))
     for c in camadas_integradas(pacote):
-        c.setCustomProperty('integracao/base',base);projeto.addMapLayer(c)
+        c.setCustomProperty('integracao/base',base);publicar(c,projeto,'integrada',uid,base,nome,versao)
     painel=PainelIntegrado(pacote,cs,wg,projeto,parent,canvas,base);painel.show();return painel

@@ -113,7 +113,9 @@ class Janela(QDialog):
                 r['resumo']['diagnosticos']=dict(Counter(d['codigo'] for d in r['diagnosticos']))
                 m['referencia_espacial']=dict(crs=crs,fator=self.fator.value(),fonte=self.fonte.text(),distancia=self.distancia.value())
             novas=camadas(m,r,g,crs)
-            for c in novas:QgsProject.instance().addMapLayer(c)
+            from auditoria_fronteiras.organizacao_camadas import publicar
+            from .bases import assinatura_modelo
+            for c in novas:publicar(c,QgsProject.instance(),'wg',assinatura_modelo(m,'ESTRUTURAL'),nome='Topologia WaterGEMS')
             self.modelo,self.resultado,self.camadas=m,r,novas
             import json
             self.resumo.setPlainText(json.dumps(r['resumo'],ensure_ascii=False,indent=2)+'\n'+r['aviso']+'\nESTADOS_DO_CENARIO e validação WaterGEMS desktop: PENDENTES.\n'+ '\n'.join(m['avisos']))

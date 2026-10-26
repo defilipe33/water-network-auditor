@@ -79,6 +79,11 @@ def publicar(d,base,projeto,camadas=None):
             compartilhavel=(str(x.customProperty(PREFIXO+'base',''))==str(base or '') and
                 papel in ('apresentacao','tecnica') and
                 x.customProperty(PREFIXO+'assinatura_eventos','')==assinatura)
+            if (mesma or compartilhavel) and x.providerType()=='memory' and x.featureCount()==0 and int(x.customProperty('wna/quantidade',-1))==c.featureCount() and x.fields().names()==c.fields().names():
+                from qgis.core import QgsFeature
+                ok,_=x.dataProvider().addFeatures([QgsFeature(f) for f in c.getFeatures()])
+                if not ok:raise ValueError('Falha ao restaurar representação da auditoria persistida')
+                x.updateExtents()
             if (mesma or compartilhavel) and x.featureCount()==c.featureCount() and x.fields().names()==c.fields().names():
                 encontrados.append(x)
         escolhido=encontrados[0] if encontrados else c
@@ -88,7 +93,8 @@ def publicar(d,base,projeto,camadas=None):
         escolhido.setCustomProperty(PREFIXO+'assinatura_eventos',assinatura)
         saida.append(escolhido)
     aplicar_revisoes(saida,d)
-    carregar_no_projeto(saida,projeto)
+    controle=d.get('controle_versao',{})
+    carregar_no_projeto(saida,projeto,dict(uid=uid,base=base or '',nome=controle.get('projeto') or controle.get('nome','Auditoria GIS'),versao=controle.get('versao',1)))
     return r,a,saida
 
 

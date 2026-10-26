@@ -119,6 +119,9 @@ Instruções para revisão de publicação: [segurança](SECURITY.md).
 
 ## Limitações atuais
 
+A versão 1.3.0 acrescenta [registros investigativos simples e organização de camadas](documentacao/publica/FLUXO_INVESTIGATIVO.md),
+com fechamento automático do assistente espacial, anotações/preliminares e grupos por execução.
+
 A versão 1.2.1 corrige a [inicialização e recuperação do catálogo de bases](documentacao/publica/RECUPERACAO_CATALOGO.md),
 incluindo abertura do assistente com índice vazio e preservação das bases existentes.
 

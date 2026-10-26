@@ -1,5 +1,10 @@
 # Arquitetura topológica WaterGEMS
 
+Na 1.3.0, `organizacao_camadas.py` centraliza grupos por contexto e reutilização de
+representações próprias. `decisoes.py` acrescenta registros leves em `IGD_REGISTROS`
+sem converter o histórico anterior. O formulário simplifica o uso cotidiano e conserva
+as validações de confirmação. Guia: [investigação e camadas](FLUXO_INVESTIGATIVO.md).
+
 `indice_bases.py` centraliza a verificação idempotente do esquema, migração, backup
 e erros de acesso do catálogo operacional. `gerenciamento.Catalogo` conserva sua API
 e reconstrói o índice a partir das identidades internas das bases. Operações opcionais

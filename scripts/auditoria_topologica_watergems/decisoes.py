@@ -16,6 +16,7 @@ CONCLUSOES=('NÃO AVALIADO','CONECTIVIDADE CORRETA','DESCONEXÃO INTENCIONAL',
     'NECESSITA CONFIRMAÇÃO CADASTRAL','NECESSITA CONFIRMAÇÃO OPERACIONAL','NECESSITA VERIFICAÇÃO DE CAMPO','NÃO APLICÁVEL')
 FONTES=('Análise do cadastro GIS','Análise do WaterGEMS','Projeto ou desenho técnico','Informação operacional','Verificação de campo','Outra fonte identificada')
 NATUREZAS=('INDEFINIDO','DOCUMENTAL','OPERACIONAL','CAMPO','HIPOTESE')
+PRELIMINARES=('Possível conexão faltante','Possível desconexão intencional','Possível conexão indevida','Possível problema cadastral','Necessita conferência no WaterGEMS','Necessita confirmação operacional','Necessita confirmação de campo')
 TIPOS_PROPOSTA=('Conectar dois nós','Corrigir vínculo Start/Stop Node','Verificar ou eliminar nó duplicado',
     'Dividir tubulação para inserir conexão','Remover conexão indevida','Corrigir vínculo de válvula',
     'Corrigir vínculo de bomba','Alterar topologia ativa','Corrigir correspondência cadastral GIS × WaterGEMS','Outra intervenção')
@@ -105,6 +106,30 @@ def historico(base,ig,occ,modo):
         if not existe(con):return []
         con.row_factory=sqlite3.Row
         return [dict(r) for r in con.execute('SELECT * FROM IGD_REVISOES WHERE ig_uid=? AND occ_uid=? AND modo=? ORDER BY rowid',(ig,occ,modo))]
+
+def registros(base,ig,occ=None,modo=None):
+    with abrir_ro(base) as con:
+        if not con.execute("SELECT 1 FROM sqlite_master WHERE name='IGD_REGISTROS'").fetchone():return []
+        con.row_factory=sqlite3.Row
+        return [dict(r) for r in con.execute('SELECT * FROM IGD_REGISTROS WHERE ig_uid=? ORDER BY rowid',(ig,)) if (not occ or r['occ_uid']==occ) and (not modo or r['modo']==modo)]
+
+def salvar_registro(base,pacote,caso,modo,observacao,classificacao=None,responsavel=''):
+    if not observacao.strip():raise ValueError('Escreva uma observação não vazia')
+    if classificacao is not None and classificacao not in PRELIMINARES:raise ValueError('Classificação preliminar inválida')
+    preparar_base(base,pacote)
+    with abrir_ro(base) as verificacao:precisa_backup=not verificacao.execute("SELECT 1 FROM sqlite_master WHERE name='IGD_REGISTROS'").fetchone()
+    if precisa_backup:
+        backup=Path(base).with_name(Path(base).stem+'_antes_anotacoes_'+uuid4().hex[:12]+'.gpkg')
+        exportar_gpkg(backup,pacote['dossie'],base_origem=base)
+        with abrir_ro(backup) as verificacao:
+            if verificacao.execute('PRAGMA integrity_check').fetchone()[0]!='ok' or verificacao.execute('PRAGMA foreign_key_check').fetchall():raise ValueError('Backup de anotações não íntegro')
+    with conectar(base) as con:
+        con.execute('BEGIN IMMEDIATE');ig=_registrar(con,pacote,caso,modo)
+        con.execute('CREATE TABLE IF NOT EXISTS IGD_REGISTROS(reg_uid TEXT PRIMARY KEY,ig_uid TEXT NOT NULL,occ_uid TEXT NOT NULL,modo TEXT NOT NULL,tipo TEXT NOT NULL,classificacao TEXT,observacao TEXT NOT NULL,responsavel TEXT NOT NULL,data_utc TEXT NOT NULL,assinatura TEXT NOT NULL,FOREIGN KEY(ig_uid,occ_uid,modo) REFERENCES IGD_OCORRENCIAS(ig_uid,occ_uid,modo))')
+        con.execute("INSERT OR IGNORE INTO gpkg_contents(table_name,data_type,identifier) VALUES('IGD_REGISTROS','attributes','IGD_REGISTROS')")
+        for acao in ('UPDATE','DELETE'):con.execute(f"CREATE TRIGGER IF NOT EXISTS IGD_REGISTROS_{acao}_imutavel BEFORE {acao} ON IGD_REGISTROS BEGIN SELECT RAISE(ABORT,'Histórico imutável'); END")
+        uid=uuid4().hex;con.execute('INSERT INTO IGD_REGISTROS VALUES(?,?,?,?,?,?,?,?,?,?)',(uid,ig,caso['uid'],modo,'PRELIMINAR' if classificacao else 'ANOTACAO',classificacao,observacao,responsavel,agora(),Contextos(pacote).assinatura(caso,modo)))
+        return uid
 
 
 def salvar_decisao(base,pacote,caso,modo,situacao='PENDENTE',conclusao='NÃO AVALIADO',justificativa='',responsavel='',fonte='',natureza='INDEFINIDO',evidencia='',esperada=None):
