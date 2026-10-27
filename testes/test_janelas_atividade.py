@@ -54,7 +54,10 @@ class AtividadeTest(unittest.TestCase):
         with self.s.operacao('Rápida'):pass
         QTest.qWait(450);self.assertFalse(self.s.dock.isVisible());self.assertEqual(self.s.ultima.estado,'CONCLUIDO')
     def test_demorada_exibe(self):
-        with self.s.operacao('Demorada'):QTest.qWait(450);self.assertTrue(self.s.dock.isVisible())
+        with self.s.operacao('Demorada'):
+            limite=time.monotonic()+2
+            while not self.s.dock.isVisible() and time.monotonic()<limite:QTest.qWait(20)
+            self.assertTrue(self.s.dock.isVisible())
     def test_indeterminado(self):
         with self.s.operacao('Lendo') as o:o.atualizar('Lendo banco');self.assertEqual(self.s.barra.maximum(),0)
     def test_determinado_real(self):

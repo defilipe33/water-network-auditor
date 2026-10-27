@@ -103,7 +103,7 @@ class DialogExportarDecisoes(QDialog):
         self.xlsx=QCheckBox('XLSX e tabelas de acompanhamento');self.xlsx.setChecked(True);v.addWidget(self.xlsx)
         self.gpkg=QCheckBox('Cópia completa GPKG com históricos');v.addWidget(self.gpkg)
         self.shp=QCheckBox('SHP de ocorrências espaciais — sem intervenções');v.addWidget(self.shp)
-        b=QPushButton('Escolher pasta e gerar nova exportação…');b.clicked.connect(self.exportar);v.addWidget(b)
+        b=QPushButton('Escolher pasta e gerar nova exportação…');b.clicked.connect(lambda checked=False:self.exportar());v.addWidget(b)
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
     from auditoria_fronteiras.atividade import acompanhada

@@ -18,7 +18,7 @@ class ConsultaBase(QDialog):
             b=QPushButton(nome);b.clicked.connect(lambda _,d=delta:self.mudar(d));l.addWidget(b)
         self.rodape=QLabel();l.addWidget(self.rodape)
         self.tipo.currentIndexChanged.connect(self.resetar);self.modo.currentIndexChanged.connect(self.resetar);self.atualizar()
-        b=QPushButton('Carregar representação desta versão no mapa');b.clicked.connect(self.carregar_mapa);v.addWidget(b)
+        b=QPushButton('Carregar representação desta versão no mapa');b.clicked.connect(lambda checked=False:self.carregar_mapa());v.addWidget(b)
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
     def resetar(self):self.pagina=0;self.atualizar()

@@ -1,5 +1,12 @@
 # Histórico técnico publicável
 
+## 1.4.1 — exportação pelos botões Qt
+
+Correção das conexões clicked(bool) de comandos decorados de exportação, consulta e
+comparação. Argumentos legítimos do decorador preservados. Regressões por clique,
+formatos individuais/combinados, cancelamento, erro e reabertura.
+[Detalhes e roteiro](CORRECAO_EXPORTACAO_1_4_1.md).
+
 ## 1.4.0 — janelas e acompanhamento
 
 Menu de recuperação de interfaces por identidade, diálogos irmãos do QGIS e aviso

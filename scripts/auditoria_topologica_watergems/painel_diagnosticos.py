@@ -86,7 +86,7 @@ class PainelDiagnosticos(QDockWidget):
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
         for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes)]:
-            b=QPushButton(nome);b.clicked.connect(acao);fv.addWidget(b)
+            b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
         configurar=QPushButton('Abrir seleção de auditorias e fontes…');fv.addWidget(configurar)
         configurar.clicked.connect(self.configurar)
         self.modo.currentIndexChanged.connect(self.trocar_modo)

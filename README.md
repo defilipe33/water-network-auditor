@@ -10,6 +10,9 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.4.1** corrige os sinais dos botões de exportação e mantém o acompanhamento
+de atividades. Veja a [correção e roteiro de validação](documentacao/publica/CORRECAO_EXPORTACAO_1_4_1.md).
+
 A versão **1.4.0** acrescenta [recuperação de janelas e acompanhamento compartilhado](documentacao/publica/JANELAS_E_ATIVIDADES.md),
 reutilizando os workers e preservando as guardas de saída e os resultados anteriores.
 
