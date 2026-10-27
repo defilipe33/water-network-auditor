@@ -225,8 +225,8 @@ class FluxoOperacionalTest(unittest.TestCase):
     def test_cancelamento_em_processamento_retorna_configuracao(self):
         self.configurar()
         def cancelar():
-            for d in self.j.findChildren(QProgressDialog):
-                d.cancel()
+            from auditoria_fronteiras.atividade import sistema
+            sistema(self.j).atual.cancelar()
         with patch.object(self.j,'confirmar_processamento',return_value=True):
             QTimer.singleShot(0,cancelar);self.j.executar_auditoria()
         self.assertEqual(self.j.estado,Estado.CONFIGURANDO);self.assertIsNone(self.j.dossie)

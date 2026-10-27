@@ -3,6 +3,7 @@ import json
 from qgis.PyQt.QtWidgets import QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QPushButton,QLabel,QTableWidget,QTableWidgetItem,QAbstractItemView
 from auditoria_fronteiras.versoes import abrir_ro
 from auditoria_topologica_watergems import bases
+from auditoria_fronteiras.atividade import acompanhada,falha
 
 
 class ConsultaBase(QDialog):
@@ -21,6 +22,7 @@ class ConsultaBase(QDialog):
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
     def resetar(self):self.pagina=0;self.atualizar()
+    @acompanhada('Recuperando camadas da versão WaterGEMS')
     def carregar_mapa(self):
         from qgis.core import QgsProject
         from qgis.PyQt.QtWidgets import QMessageBox
@@ -30,8 +32,9 @@ class ConsultaBase(QDialog):
             t=bases.restaurar(self.base);m=t['meta_base']
             if not t['metrica']:raise ValueError('Consulta topológica disponível; confirme CRS/unidade antes de carregar geometrias no mapa.')
             for c in camadas(t['modelo'],t['estrutural'],t['geometrias'],m['crs']):publicar(c,QgsProject.instance(),'wg',m['uuid'],self.base,m['projeto'] or m['nome'],m['versao'],None if c.isSpatial() else 'Diagnósticos e auxiliares')
-        except Exception as e:QMessageBox.warning(self,'Camadas não carregadas',str(e))
+        except Exception as e:falha(self,e);QMessageBox.warning(self,'Camadas não carregadas',str(e))
     def mudar(self,delta):self.pagina=max(0,self.pagina+delta);self.atualizar()
+    @acompanhada('Consultando página da base WaterGEMS')
     def atualizar(self):
         with abrir_ro(self.base) as c:
             if self.tipo.currentIndex()==0:

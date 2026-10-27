@@ -1,5 +1,11 @@
 # Arquitetura topológica WaterGEMS
 
+Na 1.4.0, `janelas.py` centraliza recuperação e propriedade visual; `atividade.py`
+reutiliza `Trabalho` e integra indicadores, checkpoints e ciclo de vida dos workers.
+Leitura de investigação e comparação de bases executam cálculo em segundo plano;
+publicação de camadas permanece na GUI. Os algoritmos não foram reescritos. Veja
+[arquitetura, cobertura por operação e limites](JANELAS_E_ATIVIDADES.md).
+
 Na 1.3.1, o bloqueador do complemento implementa `allowExit()` e delega ao controlador.
 `abrir_diagnosticos(..., gerenciar_saida=False)` evita um segundo registro no fluxo
 gerenciado. O padrão independente mantém a guarda para uso pelo console. O descarte

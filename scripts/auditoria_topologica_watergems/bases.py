@@ -60,11 +60,13 @@ def assinatura_modelo(modelo,modo):
     return h.hexdigest()
 
 
-def extrair(fonte,cenario,modo,pasta,nome,projeto,anterior=None,referencia=None,cancelar=None):
+def extrair(fonte,cenario,modo,pasta,nome,projeto,anterior=None,referencia=None,cancelar=None,progresso=None):
     if modo not in MODOS:raise ValueError('Hipótese não validada')
     pasta=Path(pasta);pasta.mkdir(parents=True,exist_ok=False);verificar(cancelar)
+    if progresso:progresso(0,'Criando cópia consistente do SQLite WaterGEMS')
     origem=snapshot(fonte,pasta/'fonte_consistente.sqlite',cancelar)
     banco=Banco(pasta/'fonte_consistente.sqlite')
+    if progresso:progresso(0,'Lendo elementos, cenário e alternativas')
     try:modelo=banco.ler(cenario)
     finally:banco.close()
     modelo['banco']=origem['fonte']
@@ -75,7 +77,10 @@ def extrair(fonte,cenario,modo,pasta,nome,projeto,anterior=None,referencia=None,
     if antes and antes['assinatura']==assinatura:
         (pasta/'SEM_ALTERACAO.json').write_text(texto(dict(origem=origem,base_reutilizada=str(anterior),assinatura=assinatura)),encoding='utf8')
         return dict(sem_alteracao=True,base=str(Path(anterior).resolve()),meta=antes)
-    estrutural=analisar(modelo);verificar(cancelar);potencial=analisar(modelo,MODOS[1]);verificar(cancelar)
+    if progresso:progresso(0,'Construindo componentes da perspectiva estrutural')
+    estrutural=analisar(modelo);verificar(cancelar)
+    if progresso:progresso(0,'Construindo componentes da hipótese de válvulas abertas')
+    potencial=analisar(modelo,MODOS[1]);verificar(cancelar)
     meta=dict(uuid=uuid4().hex,tipo='TOPOLOGIA_WG',nome=nome,projeto=projeto,modelo_uid=modelo['projeto'],
         versao=antes['versao']+1 if antes else 1,anterior=antes['uuid'] if antes else None,
         base_anterior=str(Path(anterior).resolve()) if anterior else None,data=datetime.now(timezone.utc).isoformat(),
@@ -175,8 +180,12 @@ def restaurar(base,cancelar=None):
     return dict(modelo=m,estrutural=r,potencial=p,geometrias=gs,crs=crs,metrica=bool(meta['referencia_espacial']),meta_base=meta,persistido=dict(modelo={k:v for k,v in m.items() if k!='elementos'},resultado=salvos[MODOS[0]],execucao_uid=meta['uuid']))
 
 
-def comparar(antes,depois):
-    a=restaurar(antes);b=restaurar(depois)
+def comparar(antes,depois,cancelar=None,progresso=None):
+    if progresso:progresso(0,'Recuperando e conferindo a versão anterior')
+    a=restaurar(antes,cancelar);verificar(cancelar)
+    if progresso:progresso(0,'Recuperando e conferindo a versão atual')
+    b=restaurar(depois,cancelar);verificar(cancelar)
+    if progresso:progresso(0,'Comparando elementos, contexto e composição dos componentes')
     return comparar_contextos(a,b)
 
 

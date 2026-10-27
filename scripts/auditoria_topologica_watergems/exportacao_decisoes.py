@@ -106,11 +106,15 @@ class DialogExportarDecisoes(QDialog):
         b=QPushButton('Escolher pasta e gerar nova exportação…');b.clicked.connect(self.exportar);v.addWidget(b)
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
+    from auditoria_fronteiras.atividade import acompanhada
+    @acompanhada('Exportando acompanhamento e históricos')
     def exportar(self):
         if not any(w.isChecked() for w in (self.xlsx,self.gpkg,self.shp)):QMessageBox.warning(self,'Formato','Selecione pelo menos um formato.');return
         pasta=QFileDialog.getExistingDirectory(self,'Pasta de destino')
-        if not pasta:return
+        if not pasta:return False
         try:
             destino=Path(pasta)/('acompanhamento_'+uuid4().hex[:10]);exportar_acompanhamento(self.painel.base,self.painel.pacote,destino,self.xlsx.isChecked(),self.gpkg.isChecked(),self.shp.isChecked())
             QMessageBox.information(self,'Exportação concluída',str(destino));self.accept()
-        except Exception as e:QMessageBox.warning(self,'Exportação incompleta',str(e))
+        except Exception as e:
+            from auditoria_fronteiras.atividade import falha
+            falha(self,e);QMessageBox.warning(self,'Exportação incompleta',str(e))

@@ -9,19 +9,18 @@ from auditoria_topologica_watergems import referencia_espacial as referencias
 from auditoria_fronteiras.ui_comum import adaptar_janela
 from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
 from .catalogo_ui import SeletorBases
+from auditoria_fronteiras.atividade import sistema,etapa,Trabalho,Progresso as QProgressDialog
+from qgis.PyQt import sip
 
 
-class Extracao(QThread):
-    pronto=pyqtSignal(object);erro=pyqtSignal(str)
-    def __init__(self,args,parent=None):super().__init__(parent);self.args=args
-    def run(self):
-        try:self.pronto.emit(bases.extrair(**self.args,cancelar=self.isInterruptionRequested))
-        except Exception as e:self.erro.emit(str(e))
+class Extracao(Trabalho):
+    def __init__(self,args,parent=None):
+        super().__init__(lambda cancelar,progresso:bases.extrair(**args,cancelar=cancelar,progresso=progresso),parent);self.args=args
 
 
 class WatergemsDialog(QDialog):
     def __init__(self,app):
-        super().__init__(app.geo);self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('WaterGEMS — modelo, correspondência e referência espacial');self.resize(860,650)
+        super().__init__(app.iface.mainWindow());self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('WaterGEMS — modelo, correspondência e referência espacial');self.resize(860,650)
         self._topologia=None;self._prova=None;self._referencia_confirmada=None;self._ref_pendente=False;self._carregando=False
         v=QVBoxLayout(self);self.geo_info=QLabel();self.geo_info.setWordWrap(True);v.addWidget(self.geo_info)
         self.tabs=QTabWidget();v.addWidget(self.tabs,1)
@@ -132,7 +131,7 @@ class WatergemsDialog(QDialog):
         if not self.base:return
         self.anterior=self.base;self.selecionar(True)
     def criar(self):
-        if self.ocupado:return
+        if self.ocupado or sistema(self).em_execucao():return
         if self.base:
             if self._ref_pendente:self.gravar_referencia()
             else:QMessageBox.information(self,'Base existente','Para alterar o modelo use ATUALIZAR BASE WATERGEMS. Para acrescentar CRS/unidade, valide a referência e salve uma nova versão.')
@@ -151,6 +150,9 @@ class WatergemsDialog(QDialog):
         pasta=Path(destino).parent/'_tecnicos'/uuid4().hex;pasta.parent.mkdir(parents=True,exist_ok=True)
         args=dict(fonte=self.fonte,cenario=self.cenario.currentData(),modo=self.modo.currentText(),pasta=pasta,nome=self.nome.text(),projeto=self.projeto.text(),anterior=self.anterior,referencia=ref)
         self.destino=destino;self.ocupado=True;self.trabalho=Extracao(args,self);self.trabalho.pronto.connect(self.pronto);self.trabalho.erro.connect(lambda e:self.informacao.setPlainText('Não publicado: '+e));self.trabalho.finished.connect(self.terminar)
+        self._atividade=sistema(self).iniciar('Analisando topologia WaterGEMS',self.nome.text()+' · '+self.projeto.text(),self.cancelar);self.trabalho.progresso.connect(self._atividade.sinal)
+        self.trabalho.detalhes.connect(lambda texto:setattr(self._atividade,'detalhes',texto))
+        self.trabalho.erro.connect(lambda e:self._atividade.finalizar('CANCELADO' if self.trabalho.isInterruptionRequested() else 'ERRO',e))
         for w in (self.nome,self.projeto,self.cenario,self.modo,self.unidade,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(False)
         self.informacao.setPlainText('Extraindo snapshot e cenários. Cancelar preserva versões anteriores.');self.trabalho.start()
     def pronto(self,dados):
@@ -161,15 +163,20 @@ class WatergemsDialog(QDialog):
                 resumo=f"Elementos adicionados: {len(r['adicionados'])}\nRemovidos: {len(r['removidos'])}\n"+'\n'.join(linhas)+f"\nComponentes divididos: {r['componentes_divididos']}\nFundidos: {r['componentes_fundidos']}\nConfirmar nova versão? A anterior permanece intacta."
                 if QMessageBox.question(self,'Alterações efetivamente detectadas',resumo,QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:
                     self.informacao.setPlainText('Publicação cancelada; snapshot técnico preservado.');return
-            p=bases.persistir(dados,self.destino,lambda:self.trabalho.isInterruptionRequested());self.usar_base(p)
+            self._atividade.atualizar('Gravando e validando nova base topológica')
+            def cancelar():return self._atividade.ponto() or self.trabalho.isInterruptionRequested()
+            p=bases.persistir(dados,self.destino,cancelar);self.usar_base(p)
             self.anterior=str(p)
             self.informacao.setPlainText('Conteúdo relevante inalterado; base anterior reutilizada, sem nova versão.' if dados['sem_alteracao'] else 'Nova versão validada e publicada. Fontes e versões anteriores intactas.')
-        except Exception as e:self.informacao.setPlainText('Não publicado: '+str(e))
+            self._atividade.finalizar(mensagem='Base validada e disponível para consulta')
+        except Exception as e:
+            self.informacao.setPlainText('Não publicado: '+str(e));self._atividade.finalizar('CANCELADO' if self.trabalho.isInterruptionRequested() else 'ERRO',str(e))
     def terminar(self):
+        if getattr(self,'_atividade',None) and self._atividade.estado in ('EM_ANDAMENTO','CANCELANDO'):self._atividade.finalizar('CANCELADO','Publicação não aplicada; versões anteriores preservadas')
         self.ocupado=False
         for w in (self.nome,self.projeto,self.cenario,self.modo,self.unidade,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(True)
     def cancelar(self):
-        if self.trabalho:self.trabalho.requestInterruption();self.informacao.setPlainText('Cancelamento solicitado; aguarde a etapa atual terminar.')
+        if self.trabalho and not sip.isdeleted(self.trabalho) and self.trabalho.isRunning():self.trabalho.requestInterruption();self.informacao.setPlainText('Cancelamento solicitado; aguarde a etapa atual terminar.')
     def comparar(self):
         if self.ocupado:return
         if not self.base:return
@@ -179,9 +186,12 @@ class WatergemsDialog(QDialog):
             if seletor.exec_()!=QDialog.Accepted:return
             anterior=seletor.selecionada['base']
         if Path(anterior).resolve()==Path(self.base).resolve():QMessageBox.information(self,'Comparação','Selecione duas versões distintas.');return
+        self.ocupado=True
+        def pronto(r):self.informacao.setPlainText(__import__('json').dumps(r,ensure_ascii=False,indent=2))
         try:
-            r=bases.comparar(anterior,self.base);self.informacao.setPlainText(__import__('json').dumps(r,ensure_ascii=False,indent=2))
-        except Exception as e:QMessageBox.warning(self,'Comparação',str(e))
+            self.trabalho=sistema(self).executar_thread('Comparando versões WaterGEMS',self.nome.text(),lambda cancelar,progresso:bases.comparar(anterior,self.base,cancelar,progresso),pronto,lambda e:QMessageBox.warning(self,'Comparação não concluída',e))
+            self.trabalho.finished.connect(self.terminar)
+        except Exception:self.ocupado=False;raise
     def integrar(self):
         if self.ocupado:return
         if not self.base:QMessageBox.information(self,'Primeiro passo','Crie ou abra uma base topológica antes de integrar. A criação não exige CRS.');return
@@ -267,12 +277,14 @@ class WatergemsDialog(QDialog):
                 crs=QgsCoordinateReferenceSystem(ref['crs'])
                 if not crs.isValid() or crs.isGeographic() or crs.mapUnits()!=QgsUnitTypes.DistanceMeters:raise ValueError('Para comparar coordenadas escolha um CRS projetado em metros, ou deixe o CRS vazio para prévia apenas cadastral.')
             progresso=QProgressDialog('Consultando colunas e comparando candidatos…','Cancelar',0,0,self);progresso.setWindowModality(Qt.ApplicationModal);progresso.show();self.ocupado=True
-            def cancelar():QApplication.processEvents();return progresso.wasCanceled()
+            def cancelar():return progresso.wasCanceled()
             try:
                 regs,avisos=registros_gis(d,mapa,ref['crs'] if ref else None,cancelar)
                 prova=referencias.previa(t['modelo'],regs,ref,self.tolerancia.value());prova['avisos']=avisos
                 if cancelar():raise InterruptedError('Prévia cancelada; contexto anterior preservado')
                 self._prova=prova
+                progresso.concluir()
+            except Exception as e:progresso.falhar(e);raise
             finally:self.ocupado=False;progresso.close()
             j=QDialog(self);j.setWindowTitle('Prévia GIS × Label — não altera nem conecta elementos');j.resize(900,600);v=QVBoxLayout(j)
             aviso=QLabel('Correspondência cadastral não equivale a vínculo inequívoco sem verificação de geometria. Coordenadas e distâncias desta prévia são candidatas ao CRS/fator escolhido; a confirmação exige fonte independente. Nulos, vazios e zero permanecem distintos.');aviso.setWordWrap(True);v.addWidget(aviso)
@@ -281,7 +293,7 @@ class WatergemsDialog(QDialog):
             amostras=TabelaConsulta(['Camada GIS','Campo GIS','Valor GIS bruto','Label WG','DomainElementID','Situação','Erro XY (m)','X GIS','Y GIS','X WG convertido','Y WG convertido','Geometria GIS','Geometria WG bruta']);amostras.preencher(prova['amostras'])
             for c in range(7,13):amostras.tabela.setColumnHidden(c,True)
             tabs.addTab(amostras,'Amostras e coordenadas (Colunas)')
-            b=QPushButton('Fechar prévia');b.clicked.connect(j.accept);v.addWidget(b);adaptar_janela(j);self._janela_previa=j;j.show()
+            b=QPushButton('Fechar prévia');b.clicked.connect(j.accept);v.addWidget(b);adaptar_janela(j);self._janela_previa=j;self.app.janelas.registrar('previa',j,'prévia cadastral e espacial');self.app.janelas.mostrar('previa')
             return True
         except Exception as e:QMessageBox.warning(self,'Prévia não concluída',str(e));return False
     def validar_espacial(self):
@@ -316,19 +328,20 @@ class WatergemsDialog(QDialog):
         if self.ocupado or not self.base:return
         from .consulta_base import ConsultaBase
         anterior=getattr(self,'consulta',None)
-        if anterior and anterior.base==self.base:anterior.show();anterior.raise_();return
+        if anterior and not sip.isdeleted(anterior) and anterior.base==self.base:self.app.janelas.mostrar('consulta');return
         if anterior:anterior.close()
-        self.consulta=ConsultaBase(self.base,self);self.consulta.show()
+        self.consulta=ConsultaBase(self.base,self);self.app.janelas.registrar('consulta',self.consulta,'consulta da base WaterGEMS');self.app.atividades.vincular(self.consulta);self.app.janelas.mostrar('consulta')
     def assistente_espacial(self):
         if self.ocupado:return
         anterior=getattr(self,'_assistente',None)
-        if anterior and anterior.isVisible():anterior.raise_();return
+        if anterior and not sip.isdeleted(anterior) and anterior.isVisible():anterior.raise_();return
         if not self.base:
             QMessageBox.information(self,'Base topológica necessária','Crie ou abra a base topológica na primeira aba. O assistente examina essa versão persistida sem reextrair o modelo original.');return
         if not self.app.geo.dossie:
             QMessageBox.information(self,'Referência GIS necessária','Abra uma auditoria GIS concluída para comparar as fontes. A consulta topológica continua disponível.');return
         from .assistente_espacial import AssistenteEspacial
-        try:self._assistente=AssistenteEspacial(self);self._assistente.show()
+        try:
+            self._assistente=AssistenteEspacial(self);self.app.janelas.registrar('assistente',self._assistente,'assistente espacial');self.app.atividades.vincular(self._assistente);self.app.janelas.mostrar('assistente')
         except Exception as e:QMessageBox.warning(self,'Assistente não iniciado','Não foi possível preparar o assistente: '+str(e)+'. O contexto atual e as bases anteriores foram preservados.')
     def closeEvent(self,e):
         if self.ocupado:self.cancelar();e.ignore()

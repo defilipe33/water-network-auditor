@@ -139,7 +139,9 @@ def salvar_gpkg(pacote,destino,cancelar=None):
     return destino
 
 
-def reabrir(gpkg,ig_uid=None):
+def reabrir(gpkg,ig_uid=None,cancelar=None,progresso=None):
+    checar_cancelamento(cancelar)
+    if progresso:progresso(0,'Lendo a investigação persistida e sua identidade')
     with abrir_ro(gpkg) as con:
         if ig_uid is None:
             ids=con.execute('SELECT ig_uid FROM IG_EXECUCOES').fetchall()
@@ -158,7 +160,12 @@ def reabrir(gpkg,ig_uid=None):
         g=QgsGeometry();g.fromWkb(bytes.fromhex(a.pop('geometria_wkb')));areas.append(dict(a,geometria=g))
     from auditoria_fronteiras.persistencia import carregar_execucao
     with abrir_ro(gpkg) as con:d=carregar_execucao(gpkg,s['resultado']['meta']['geo']['execucao_uid'],conexao=con)
-    t=dict(modelo=m,estrutural=analisar(m),potencial=analisar(m,'TODAS_VALVULAS_ABERTAS'),origem=s['topologia_origem'],crs=QgsCoordinateReferenceSystem(s['crs_topologico']),metrica=s['metrica'])
+    checar_cancelamento(cancelar)
+    if progresso:progresso(0,'Recuperando os componentes estruturais da versão selecionada')
+    estrutural=analisar(m);checar_cancelamento(cancelar)
+    if progresso:progresso(0,'Recuperando a hipótese de válvulas abertas')
+    potencial=analisar(m,'TODAS_VALVULAS_ABERTAS');checar_cancelamento(cancelar)
+    t=dict(modelo=m,estrutural=estrutural,potencial=potencial,origem=s['topologia_origem'],crs=QgsCoordinateReferenceSystem(s['crs_topologico']),metrica=s['metrica'])
     return dict(resultado=s['resultado'],dossie=d,topologia=t,geometrias=geoms or None,areas=areas)
 
 

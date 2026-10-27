@@ -72,7 +72,14 @@ class PainelIntegrado(PainelInspecao):
                 c.selectByIds([f.id() for f in c.getFeatures() if str(f['WG_ID'])==str(i)])
 
     def abrir_componentes(self):
-        self.componentes_dialog=DialogComponentes(self);self.componentes_dialog.show()
+        from qgis.PyQt import sip
+        from auditoria_fronteiras.janelas import registrar_auxiliar
+        anterior=getattr(self,'componentes_dialog',None)
+        if anterior is None or sip.isdeleted(anterior):self.componentes_dialog=DialogComponentes(self)
+        uid=self.pacote['resultado']['meta']['uid'];chave='componentes:'+uid
+        g=registrar_auxiliar(self,chave,self.componentes_dialog,'inventário de componentes · '+uid[:8])
+        if g:g.mostrar(chave)
+        else:self.componentes_dialog.show();self.componentes_dialog.raise_()
 
 
 class DialogComponentes(QDialog):

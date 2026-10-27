@@ -223,8 +223,8 @@ class InterfaceTest(unittest.TestCase):
     def test_cancelamento_modal_nao_publica_parcial(self):
         self.configurar()
         def cancelar():
-            for dialogo in self.janela.findChildren(QProgressDialog):
-                dialogo.cancel()
+            from auditoria_fronteiras.atividade import sistema
+            sistema(self.janela).atual.cancelar()
         QTimer.singleShot(0,cancelar)
         self.janela.executar_auditoria()
         self.critical.assert_not_called()

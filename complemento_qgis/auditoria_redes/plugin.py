@@ -1,7 +1,7 @@
 from pathlib import Path
 import sys
 from qgis.PyQt.QtGui import QIcon
-from qgis.PyQt.QtWidgets import QAction,QFileDialog,QMessageBox
+from qgis.PyQt.QtWidgets import QAction,QFileDialog,QMessageBox,QMenu
 from qgis.core import QgsSettings
 from qgis.gui import QgsApplicationExitBlockerInterface
 from qgis.PyQt import sip
@@ -15,10 +15,16 @@ class AuditoriaRedesPlugin:
         self.toolbar=self.iface.addToolBar('Auditoria de Redes');self.toolbar.setObjectName('AuditoriaRedesToolbar');self.toolbar.addAction(self.acao)
         self.iface.addPluginToMenu('&Auditoria de Redes',self.acao)
         self.acao_pasta=QAction('Alterar pasta de trabalho…',self.iface.mainWindow());self.acao_pasta.triggered.connect(self.alterar_pasta);self.iface.addPluginToMenu('&Auditoria de Redes',self.acao_pasta)
+        self.menu_janelas=QMenu('Janelas / painéis',self.iface.mainWindow());self.acao_janelas=self.menu_janelas.menuAction();self.iface.addPluginToMenu('&Auditoria de Redes',self.acao_janelas)
+        self.menu_janelas.aboutToShow.connect(self.atualizar_menu_janelas)
         plugin=self
         class Bloqueador(QgsApplicationExitBlockerInterface):
             def allowExit(self):return plugin.permitir_saida()
         self.bloqueador=Bloqueador();self.iface.registerApplicationExitBlocker(self.bloqueador)
+    def atualizar_menu_janelas(self):
+        if self.app:self.app.janelas.preencher_menu(self.menu_janelas)
+        else:
+            self.menu_janelas.clear();self.menu_janelas.addAction('Abrir ferramenta…',self.abrir)
     def permitir_saida(self):
         # QMessageBox executa um event loop: uma nova tentativa não pode entrar
         # recursivamente nem considerar a primeira autorização já concedida.
@@ -60,6 +66,7 @@ class AuditoriaRedesPlugin:
     def unload(self):
         if self.app and not self.app.encerrar():raise RuntimeError('Descarregamento cancelado: resolva alterações pendentes ou aguarde o processamento')
         if self.bloqueador:self.iface.unregisterApplicationExitBlocker(self.bloqueador);self.bloqueador=None
+        if getattr(self,'acao_janelas',None):self.iface.removePluginMenu('&Auditoria de Redes',self.acao_janelas);self.menu_janelas.deleteLater();self.acao_janelas=None
         if self.acao_pasta:self.iface.removePluginMenu('&Auditoria de Redes',self.acao_pasta);self.acao_pasta.deleteLater();self.acao_pasta=None
         if self.acao is not None:
             self.iface.removePluginMenu('&Auditoria de Redes',self.acao);self.toolbar.removeAction(self.acao);self.acao.deleteLater();self.acao=None

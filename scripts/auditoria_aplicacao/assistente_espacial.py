@@ -15,12 +15,7 @@ from auditoria_topologica_watergems.arquivos import hash_arquivo
 from auditoria_topologica_watergems.gerenciamento import registros_gis,sugestao
 
 
-class Trabalho(QThread):
-    pronto=pyqtSignal(object);erro=pyqtSignal(str);progresso=pyqtSignal(int,str)
-    def __init__(self,funcao,parent):super().__init__(parent);self.funcao=funcao
-    def run(self):
-        try:self.pronto.emit(self.funcao(self.isInterruptionRequested,self.progresso.emit))
-        except Exception as e:self.erro.emit(str(e))
+from auditoria_fronteiras.atividade import Trabalho,sistema
 
 
 def assinatura_gis(d,cancelar=None):
@@ -80,12 +75,23 @@ class AssistenteEspacial(QDialog):
         self.paginas.setEnabled(False)
         self.voltar.setEnabled(False);self.avancar.setEnabled(False);self.barra.setRange(0,0)
         self.trabalho=Trabalho(funcao,self);self.trabalho.progresso.connect(self.progresso)
+        self._atividade=sistema(self).iniciar('Validando referência espacial WaterGEMS',str(self.base),self.trabalho.requestInterruption)
+        self.trabalho.progresso.connect(self._atividade.sinal)
+        self.trabalho.detalhes.connect(lambda texto:setattr(self._atividade,'detalhes',texto))
         self.trabalho.pronto.connect(pronto);self.trabalho.erro.connect(self.erro);self.trabalho.finished.connect(self.terminou);self.trabalho.start()
-    def progresso(self,n,texto):self.barra.setRange(0,100);self.barra.setValue(n);self.estado.setText(texto)
+    def progresso(self,n,texto):self.barra.setRange(0,0);self.estado.setText(texto)
     def terminou(self):
-        self.pai.ocupado=False;self.paginas.setEnabled(True);self.barra.setRange(0,100);self.barra.setValue(100);self.voltar.setEnabled(self.paginas.currentIndex()>0);self.avancar.setEnabled(self.t is not None and self._publicacao is None)
-        if self.resultado:self.accept();self.pai.show();self.pai.raise_();self.pai.activateWindow()
-    def erro(self,erro):self.estado.setText('Operação não concluída: '+erro+'. A base e as fontes anteriores permanecem intactas.');self.aprovar.setChecked(False)
+        self.pai.ocupado=False;self.paginas.setEnabled(True);self.barra.setRange(0,100);self.barra.setValue(100 if self.resultado else 0);self.voltar.setEnabled(self.paginas.currentIndex()>0);self.avancar.setEnabled(self.t is not None and self._publicacao is None)
+        if getattr(self,'_atividade',None) and self._atividade.estado in ('EM_ANDAMENTO','CANCELANDO'):
+            estado='CANCELADO' if self.trabalho.isInterruptionRequested() else ('CONCLUIDO' if self.resultado else 'ETAPA_CONCLUIDA')
+            self._atividade.finalizar(estado,'Nova versão validada e publicada' if self.resultado else 'Etapa concluída; referência espacial ainda depende da conferência e aprovação técnica')
+        if self.resultado:
+            self.accept()
+            if hasattr(self.pai.app,'janelas'):self.pai.app.janelas.mostrar('watergems')
+            else:self.pai.show();self.pai.raise_();self.pai.activateWindow()
+    def erro(self,erro):
+        self.estado.setText('Operação não concluída: '+erro+'. A base e as fontes anteriores permanecem intactas.');self.aprovar.setChecked(False)
+        if getattr(self,'_atividade',None):self._atividade.finalizar('CANCELADO' if self.trabalho.isInterruptionRequested() else 'ERRO',erro)
     def detectar(self,cancelar,progresso):
         t=bases.restaurar(self.base,cancelar);progresso(10,'Lendo declarações espaciais e CRSs GIS')
         md=det.metadados_base(t,cancelar);gis=det.inventario_gis(self.d,self.crs_projeto,cancelar);assinatura=assinatura_gis(self.d,cancelar)

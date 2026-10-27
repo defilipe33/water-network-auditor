@@ -1,5 +1,14 @@
 # Histórico técnico publicável
 
+## 1.4.0 — janelas e acompanhamento
+
+Menu de recuperação de interfaces por identidade, diálogos irmãos do QGIS e aviso
+das transições intencionais. Indicador compartilhado por operação, cancelamento
+cooperativo, progresso real ou indeterminado e distinção de etapa/publicação.
+Reutilização do worker existente para reabrir investigações e comparar bases, com
+publicação cartográfica na GUI. Inventário auxiliar reutilizado; guardas de saída
+preservadas. [Uso, arquitetura e limitações](JANELAS_E_ATIVIDADES.md).
+
 ## 1.3.1 — estabilidade de saída e refinamento de uso
 
 Implementação de `allowExit()` com autorização positiva, guarda central para o fluxo

@@ -10,6 +10,7 @@ from .versoes import listar,abrir_ro,token,preparar_regeneracao,gravar_versao
 from .persistencia import carregar_execucao
 from .investigacao import OpcoesLocais
 from .estados import EstadoOperacional,Estado,EDITAVEIS,OCUPADOS
+from .atividade import acompanhada,Progresso
 
 MODALIDADES=('NOVA AUDITORIA','CONTINUAR AUDITORIA','REGERAR LOCAIS','REPROCESSAR AUDITORIA')
 
@@ -83,6 +84,7 @@ class FluxosAuditoria(EstadoOperacional):
         except Exception as erro:
             QMessageBox.warning(self,'Auditoria não aberta',str(erro))
 
+    @acompanhada('Reabrindo auditoria GIS e recuperando camadas')
     def abrir_auditoria(self,base,exe):
         if not self.resolver_pendencias():
             return False
@@ -218,8 +220,11 @@ class FluxosAuditoria(EstadoOperacional):
         botoes=QHBoxLayout();b=QPushButton(continuar);b.clicked.connect(dlg.accept)
         cancelar=QPushButton('Cancelar');cancelar.clicked.connect(dlg.reject)
         botoes.addWidget(b);botoes.addWidget(cancelar);layout.addLayout(botoes)
+        from .janelas import registrar_auxiliar
+        registrar_auxiliar(self,'comparacao_gis',dlg,'comparação da auditoria GIS')
         return dlg.exec()==QDialog.Accepted
 
+    @acompanhada('Validando e publicando versão da auditoria GIS')
     def salvar_operacao(self,preparada):
         cmp=preparada['comparacao'];origem=preparada['origem'];novo=preparada['novo']
         linhas=[f'{k}: {v}' for k,v in cmp.items() if k not in ('correspondencias','locais_herdaveis')]
@@ -294,12 +299,11 @@ class FluxosAuditoria(EstadoOperacional):
             QMessageBox.warning(self,'Operação não iniciada',str(erro))
             return
         from qgis.PyQt.QtWidgets import QProgressDialog
-        progresso=QProgressDialog('Reagrupando eventos persistidos…','Cancelar',0,0,self)
+        progresso=Progresso('Reagrupando eventos persistidos…','Cancelar',0,0,self)
         progresso.setWindowModality(Qt.ApplicationModal);progresso.show()
         self._executando=True
         self.definir_estado(Estado.PROCESSANDO)
         def cancelar():
-            QApplication.processEvents()
             return progresso.wasCanceled()
         try:
             preparada=preparar_regeneracao(self.base_origem,self.auditoria_origem['execucao_uid'],
@@ -307,6 +311,7 @@ class FluxosAuditoria(EstadoOperacional):
             progresso.close()
             self.salvar_operacao(preparada)
         except Exception as erro:
+            progresso.falhar(erro)
             from .modelos import Cancelado
             self.definir_estado(anterior if isinstance(erro,Cancelado) else Estado.ERRO)
             QMessageBox.warning(self,'Regeneração não gravada',str(erro)+'\nA versão anterior foi preservada.')

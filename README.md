@@ -10,6 +10,9 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.4.0** acrescenta [recuperação de janelas e acompanhamento compartilhado](documentacao/publica/JANELAS_E_ATIVIDADES.md),
+reutilizando os workers e preservando as guardas de saída e os resultados anteriores.
+
 A versão **1.3.1** corrige o contrato de encerramento do QGIS, centraliza a resolução
 de pendências e refina a navegação e o registro rápido. Consulte o
 [guia de estabilidade, roteiro de aceitação e plano de finalização](documentacao/publica/ESTABILIDADE_E_FINALIZACAO.md).

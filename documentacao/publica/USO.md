@@ -1,5 +1,10 @@
 # Instalação e operação
 
+Em **Janelas / painéis**, recupere auditoria GIS, configuração WaterGEMS, investigação
+e auxiliares existentes. Mostrar uma tela não reprocessa dados nem repõe rascunhos.
+O acompanhamento informa atividade, etapa, cancelamento e conclusão. Consulte
+[política de janelas, cobertura e limitações de progresso](JANELAS_E_ATIVIDADES.md).
+
 Na 1.3.1, as seis ações iniciais agrupam auditoria GIS, integração, continuidade,
 atualização WaterGEMS e comparação. No painel, **Anotar / decidir** e **Salvar observação
 e próxima ocorrência** agilizam o trabalho sem mudar a perspectiva ou impor zoom.

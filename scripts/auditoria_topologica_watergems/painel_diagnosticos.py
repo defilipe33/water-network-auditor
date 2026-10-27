@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import (QDockWidget,QWidget,QVBoxLayout,QHBoxLayout,QGr
 from qgis.PyQt import sip
 from .diagnosticos import catalogar,filtrar,contagens,CATEGORIAS,MODOS
 from .mapa_diagnosticos import MapaDiagnosticos
+from auditoria_fronteiras.atividade import acompanhada,falha
 
 
 class PainelDiagnosticos(QDockWidget):
@@ -298,10 +299,11 @@ class PainelDiagnosticos(QDockWidget):
             if self.legado.tem_edicoes():self.legado.atualizar()
         return True
 
+    @acompanhada('Comparando versões da investigação integrada')
     def comparar_versoes(self):
         if not self.resolver_alteracoes():return
         caminho,_=QFileDialog.getOpenFileName(self,'Auditoria integrada anterior','','GeoPackage (*.gpkg)')
-        if not caminho:return
+        if not caminho:return False
         try:
             from .comparacao_decisoes import comparar,salvar_comparacao,selecionar_integracao
             anterior=selecionar_integracao(caminho,self)
@@ -310,7 +312,7 @@ class PainelDiagnosticos(QDockWidget):
             resumo='\n'.join(f'{k}: {v}' for k,v in r['contagens'].items())+'\nNão transfere conclusões; ausência não comprova correção.'
             if QMessageBox.question(self,'Registrar comparação de versões',resumo,QMessageBox.Save|QMessageBox.Cancel,QMessageBox.Cancel)==QMessageBox.Save:
                 salvar_comparacao(self.base,self.pacote,r,caminho);QMessageBox.information(self,'Comparação registrada',resumo)
-        except Exception as e:QMessageBox.warning(self,'Comparação não registrada',str(e))
+        except Exception as e:falha(self,e);QMessageBox.warning(self,'Comparação não registrada',str(e))
 
     def exportar_decisoes(self):
         if not self.resolver_alteracoes():return

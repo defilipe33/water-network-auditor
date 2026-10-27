@@ -23,6 +23,7 @@ from .visualizacao import (MARCA_RESULTADO, carregar_no_projeto,
                            criar_camadas_temporarias, texto_resumo)
 from .fluxos import FluxosAuditoria
 from .estados import Estado,EDITAVEIS,OCUPADOS
+from .atividade import Progresso as QProgressDialog,acompanhada,falha
 
 
 class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
@@ -308,12 +309,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
         progresso.setAutoClose(False)
         progresso.setAutoReset(False)
         progresso.show()
-        ultima_atualizacao = [0.]
         def cancelar():
-            agora = perf_counter()
-            if agora - ultima_atualizacao[0] >= .05:
-                ultima_atualizacao[0] = agora
-                QApplication.processEvents()
             return progresso.wasCanceled()
         def avancar(n, total):
             if n < total:
@@ -324,7 +320,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
                 progresso.setRange(0, 0)
                 progresso.setLabelText('Investigando continuidades potenciais…')
         try:
-            QApplication.processEvents()
+            cancelar()
             self.resultado = auditar(redes, limites, parametros, cancelar, avancar)
             self.resumo.setPlainText(texto_resumo(self.resultado))
             if self.resultado.cancelado or cancelar():
@@ -377,13 +373,16 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
                                 f'{len(self.resultado.problemas)} avisos. Feche ou minimize a janela para revisar o mapa.')
             if not self.resultado.ocorrencias:
                 self.status.setText('Processamento concluído e validado: nenhuma ocorrência encontrada (0 eventos).')
+            progresso.concluir()
         except Cancelado as erro:
+            progresso.falhar(erro)
             self.camadas_geradas,self.resultado,self.analise,self.dossie,self.base_revisao=anterior
             self.status.setText(str(erro))
             self.resumo.appendPlainText('\nCANCELADO: nenhuma camada desta execução foi carregada. '
                                         'Grupos anteriores foram preservados.')
             self.definir_estado(self._estado_antes_processar)
         except Exception as erro:
+            progresso.falhar(erro)
             self.camadas_geradas,self.resultado,self.analise,self.dossie,self.base_revisao=anterior
             self.status.setText('Falha: ' + str(erro))
             self.resumo.appendPlainText('\nFalha: ' + str(erro))
@@ -400,6 +399,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
                 self.definir_estado(self._estado_antes_processar)
             self.aplicar_estado()
 
+    @acompanhada('Gerando relatório Excel da auditoria GIS')
     def gerar_relatorio(self):
         if self.estado in OCUPADOS or self._executando or not self.camadas_geradas or not self.resultado or self.resultado.cancelado:
             return
@@ -409,7 +409,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
         nome = 'AUDITORIA_FRONTEIRAS_' + datetime.now().strftime('%Y%m%d_%H%M%S') + '.xlsx'
         caminho, _ = QFileDialog.getSaveFileName(self,'Salvar relatório Excel',nome,'Excel (*.xlsx)')
         if not caminho:
-            return
+            return False
         if not caminho.lower().endswith('.xlsx'):
             caminho += '.xlsx'
         try:
@@ -419,6 +419,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
             self.resumo.appendPlainText('\nExcel: ' + arquivos['xlsx'] + '\nRastreabilidade: ' + arquivos['tecnico'])
             self.status.setText('Relatório salvo. As camadas temporárias permanecem disponíveis.')
         except Exception as erro:
+            falha(self,erro)
             self.resumo.appendPlainText('\nRelatório não salvo: ' + str(erro))
             QMessageBox.warning(self,'Relatório Excel',str(erro) + '\nAs camadas temporárias permanecem disponíveis.')
 
@@ -439,6 +440,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
         self.painel.revisao_salva.connect(self.vincular_base)
         self.painel.show()
 
+    @acompanhada('Exportando resultados da auditoria GIS')
     def exportar_formatos(self):
         if self.estado in OCUPADOS or self._executando:
             return
@@ -465,10 +467,10 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
         b.clicked.connect(dialogo.accept)
         layout.addWidget(b)
         if dialogo.exec()!=QDialog.Accepted or not any(w.isChecked() for w in opcoes.values()):
-            return
+            return False
         destino=QFileDialog.getExistingDirectory(self,'Pasta de destino',preferencias.get('pasta',''))
         if not destino:
-            return
+            return False
         from pathlib import Path
         from datetime import datetime
         pasta=Path(destino)/('AUDITORIA_'+datetime.now().strftime('%Y%m%d_%H%M%S_%f'))
@@ -496,6 +498,7 @@ class AuditoriaFronteirasDialog(FluxosAuditoria,QDialog):
             self.resumo.appendPlainText('\nEntrega exportada: '+str(pasta))
             self.registrar_exportacao([n for n,w in opcoes.items() if w.isChecked()],str(pasta))
         except Exception as erro:
+            falha(self,erro)
             QMessageBox.warning(self,'Exportação incompleta',str(erro)+'\nVerifique os arquivos já produzidos em '+str(pasta))
 
     def reabrir_execucao(self):
