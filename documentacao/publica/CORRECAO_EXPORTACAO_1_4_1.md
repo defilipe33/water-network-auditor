@@ -37,6 +37,8 @@ quando já o eram; cancelamento não é prometido dentro de gravações indivis�
 
 O histórico público permite recuperar versões do código e reconstruir seus ZIPs
 com `testes/empacotar_plugin.py`. Resultados operacionais, bases e evidências privadas
-nunca são enviados ao GitHub. Portanto, um resultado privado único exige outro
-destino de backup antes de ser eliminado do computador. A limpeza local remove
-temporários de ensaio e pacotes comprovadamente reconstruíveis, sem apagar fontes.
+não fazem parte do repositório público de código. Seu arquivamento exige um destino
+privado autorizado, com controle de acesso e integridade, antes de eliminar cópias
+locais. Uma alternativa é um repositório privado separado, com arquivos de release
+e manifestos de recuperação. A limpeza local remove temporários e cópias cujo backup
+foi conferido, sem apagar as fontes originais.
