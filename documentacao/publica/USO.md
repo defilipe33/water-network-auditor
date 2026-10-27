@@ -1,5 +1,10 @@
 # Instalação e operação
 
+Na 1.3.1, as seis ações iniciais agrupam auditoria GIS, integração, continuidade,
+atualização WaterGEMS e comparação. No painel, **Anotar / decidir** e **Salvar observação
+e próxima ocorrência** agilizam o trabalho sem mudar a perspectiva ou impor zoom.
+Consulte [encerramento, opções avançadas e aceitação](ESTABILIDADE_E_FINALIZACAO.md).
+
 Gerar o ZIP com `testes/empacotar_plugin.py` e instalar pelo gerenciador do QGIS,
 conforme o README principal. Os fontes canônicos são incorporados em `_biblioteca`
 com manifesto SHA256; não há uma segunda implementação dos algoritmos no plugin.

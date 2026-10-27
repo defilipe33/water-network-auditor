@@ -214,7 +214,7 @@ class DecisoesTest(unittest.TestCase):
         canvas=QgsMapCanvas();iface=MagicMock()
         with patch('qgis.utils.iface',iface):j=abrir_diagnosticos(self.p,self.base,canvas=canvas)
         self.janelas.append(j);self.assertIsNotNone(j._bloqueador)
-        with patch.object(j,'resolver_alteracoes',return_value=False):self.assertTrue(j._bloqueador.exitBlocked())
+        with patch.object(j,'resolver_alteracoes',return_value=False):self.assertFalse(j._bloqueador.allowExit())
         j.close();self.assertTrue(iface.unregisterApplicationExitBlocker.called);canvas.close()
 
 

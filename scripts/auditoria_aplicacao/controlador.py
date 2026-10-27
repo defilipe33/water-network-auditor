@@ -1,9 +1,10 @@
 """Unificação operacional; reaproveita as janelas e suas guardas de estado."""
 from pathlib import Path
 from uuid import uuid4
-from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy,QCheckBox
+from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy,QCheckBox,QGroupBox
 from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsProject
+from qgis.PyQt import sip
 from auditoria_fronteiras.interface import AuditoriaFronteirasDialog
 from auditoria_fronteiras.estados import Estado,OCUPADOS
 from auditoria_fronteiras.persistencia import exportar_gpkg
@@ -16,18 +17,37 @@ from .watergems_ui import WatergemsDialog
 
 class Aplicacao:
     def __init__(self,iface,raiz):
-        self.iface=iface;self.catalogo=Catalogo(raiz);self.painel=None;self.wg=None;self.ocupado=False
+        self.iface=iface;self.catalogo=Catalogo(raiz);self.painel=None;self.wg=None;self.ocupado=False;self._resolvendo_saida=False
         self.geo=AuditoriaFronteirasDialog(iface.mainWindow(),QgsProject.instance());self.geo.setWindowTitle('Auditoria de Redes — GIS & WaterGEMS')
         self._catalogo_antigo=None
         import auditoria_fronteiras.catalogo as cat
         self._catalogo_antigo=cat.CATALOGO_APLICACAO;cat.CATALOGO_APLICACAO=self.catalogo.raiz/'auditorias_recentes.json'
-        w=QWidget();linha=QGridLayout(w)
-        for i,(texto,acao) in enumerate([('ANALISAR COM WATERGEMS…',self.analisar),('Catálogo / continuar investigação…',self.catalogar),('Base WaterGEMS / versões…',self.bases)]):
-            b=QPushButton(texto);b.clicked.connect(acao);b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred);b.setToolTip(texto);linha.addWidget(b,i//2,i%2)
+        w=QGroupBox('Iniciar ou continuar');linha=QGridLayout(w);self.navegacao={}
+        for i,(texto,acao,ajuda) in enumerate([
+            ('Nova auditoria GIS',lambda:self.operacao_gis(0),'Analisa novas entradas. Alterações pendentes são resolvidas antes de trocar o contexto.'),
+            ('Continuar auditoria GIS…',lambda:self.operacao_gis(1),'Reabre eventos, locais e revisões sem recalcular.'),
+            ('Analisar com WaterGEMS…',self.analisar,'Associa a auditoria GIS à topologia persistida do modelo; não altera o WaterGEMS.'),
+            ('Continuar investigação integrada…',lambda:self.catalogar('INTEGRADA'),'Reabre diagnósticos, anotações, conclusões e propostas existentes.'),
+            ('Bases WaterGEMS / atualizar…',self.bases,'Uma base topológica é uma cópia de consulta. Atualizar cria outra versão; preserva a anterior e não transfere conclusões automaticamente.'),
+            ('Comparar versões…',self.comparar,'Confronta investigações ou versões WaterGEMS. Uma ocorrência ausente não é uma correção comprovada.')]):
+            b=QPushButton(texto);b.clicked.connect(acao);b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred);b.setToolTip(ajuda);linha.addWidget(b,i//2,i%2);self.navegacao[texto]=b
         self.geo.layout().insertWidget(0,w)
         self.limpar_ao_sair=QCheckBox('Remover somente temporárias da ferramenta ao encerrar');self.limpar_ao_sair.setToolTip('Opcional: remove representações de validação marcadas pela ferramenta; não apaga arquivos ou camadas persistentes.');self.geo.layout().insertWidget(1,self.limpar_ao_sair)
     def abrir(self):self.geo.show();self.geo.raise_()
-    def resolver(self):return not self.painel or self.painel.resolver_alteracoes()
+    def operacao_gis(self,modo):
+        if self.ocupado or (self.wg and self.wg.ocupado) or not self.resolver():return
+        self.geo.iniciar_operacao(modo,usar_ativa=False)
+    def comparar(self):
+        if self.ocupado or self.geo._executando or not self.resolver():return
+        if self.painel and self.painel._ativo:self.painel.comparar_versoes()
+        else:
+            self.bases()
+            if self.wg and not self.wg.ocupado:
+                if not self.wg.base:self.wg.abrir_base()
+                if self.wg.base:self.wg.comparar()
+    def resolver(self):
+        if self.painel is not None and sip.isdeleted(self.painel):self.painel=None
+        return not self.painel or self.painel.resolver_alteracoes()
     def validar_geo(self):
         g=self.geo
         if self.ocupado or g._executando or g.estado in OCUPADOS:raise ValueError('Aguarde ou cancele o processamento em andamento')
@@ -58,9 +78,9 @@ class Aplicacao:
         if self.ocupado or self.geo._executando:return
         if self.wg is None:self.wg=WatergemsDialog(self)
         self.wg.atualizar_geo();self.wg.show();self.wg.raise_()
-    def catalogar(self):
+    def catalogar(self,tipo=None):
         if self.ocupado or not self.resolver() or self.geo._executando:return
-        d=SeletorBases(self.catalogo,self.geo)
+        d=SeletorBases(self.catalogo,self.geo,tipo=tipo)
         if d.exec_()!=QDialog.Accepted:return
         r=d.selecionada
         try:
@@ -81,7 +101,7 @@ class Aplicacao:
         # O fluxo existente resolve rascunhos e mantém o contexto ao cancelar.
         if not self.geo.abrir_auditoria(str(base),pacote['dossie']['execucao_uid']):return False
         self.geo.voltar_inspecao()
-        try:novo=abrir_diagnosticos(pacote,base,QgsProject.instance(),self.iface.mainWindow(),self.iface.mapCanvas())
+        try:novo=abrir_diagnosticos(pacote,base,QgsProject.instance(),self.iface.mainWindow(),self.iface.mapCanvas(),gerenciar_saida=False)
         except Exception as e:
             if anterior:self.geo.abrir_auditoria(*anterior)
             QMessageBox.warning(self.geo,'Investigação não aberta',str(e)+'\nAs versões anteriores foram preservadas. Reabra a fonte correta ou restaure uma cópia íntegra.');return False
@@ -122,10 +142,19 @@ class Aplicacao:
         cat.CATALOGO_APLICACAO=self._catalogo_antigo
         return True
     def preparar_saida(self):
-        if self.ocupado or self.geo._executando or (self.wg and self.wg.ocupado):return False
-        if not self.resolver() or not self.geo.resolver_pendencias():return False
-        if self.geo.pendente():
-            f=self.geo._formulario_resultado if self.geo.dossie else self.geo._config_inicial
-            if f:self.geo.restaurar_formulario(f)
-            self.geo._config_inicial=self.geo.formulario()
-        return True
+        if self._resolvendo_saida:return False
+        self._resolvendo_saida=True
+        try:
+            if self.wg is not None and sip.isdeleted(self.wg):self.wg=None
+            if self.ocupado or self.geo._executando or (self.wg and self.wg.ocupado):
+                texto='Encerramento adiado: aguarde a conclusão ou cancele o processamento na janela correspondente e tente sair novamente. Nenhuma gravação foi interrompida.'
+                self.geo.status.setText(texto)
+                if hasattr(self.iface,'messageBar'):self.iface.messageBar().pushWarning('Water Network Auditor',texto)
+                return False
+            if not self.resolver() or not self.geo.resolver_pendencias():return False
+            if self.geo.pendente():
+                f=self.geo._formulario_resultado if self.geo.dossie else self.geo._config_inicial
+                if f:self.geo.restaurar_formulario(f)
+                self.geo._config_inicial=self.geo.formulario()
+            return True
+        finally:self._resolvendo_saida=False

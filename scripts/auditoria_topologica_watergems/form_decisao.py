@@ -22,6 +22,7 @@ class AnaliseDecisao(QWidget):
         f=pagina('Decisão técnica');self.situacao=combo(db.SITUACOES);f.addRow('Situação administrativa',self.situacao)
         self.anotacao=QPlainTextEdit();self.anotacao.setMaximumHeight(95);self.anotacao.setPlaceholderText('Observação rápida: exige somente texto.');f.addRow('Anotação rápida',self.anotacao)
         b=QPushButton('Salvar anotação');b.clicked.connect(lambda:self.salvar_registro(False));f.addRow(b)
+        b=QPushButton('Salvar observação e próxima ocorrência');b.setToolTip('Salva o texto e a classificação preliminar, se escolhida. Outras edições continuam protegidas por Salvar / Descartar / Cancelar.');b.clicked.connect(self.salvar_e_proxima);f.addRow(b)
         self.preliminar=QComboBox();self.preliminar.addItem('Sem interpretação preliminar',None)
         for c in db.PRELIMINARES:self.preliminar.addItem(c,c)
         f.addRow('Classificação preliminar opcional',self.preliminar)
@@ -75,6 +76,8 @@ class AnaliseDecisao(QWidget):
         self.setEnabled(False)
 
     def valores_decisao(self):return (self.situacao.currentText(),self.conclusao.currentData(),self.justificativa.toPlainText(),self.responsavel.text(),self.fonte.currentText(),self.natureza.currentText(),self.evidencia.toPlainText())
+    def salvar_e_proxima(self):
+        if self.salvar_registro(self.preliminar.currentData() is not None):self.painel.proxima();self.anotacao.setFocus()
     def valores_proposta(self):return (self.tipo.currentText(),self.descricao.toPlainText(),self.ids.text(),self.elementos_confirmados.isChecked(),self.prop_just.toPlainText(),self.requisitos.toPlainText(),self.prop_resp.text(),self.prop_evid.toPlainText(),self.prop_estado.currentText(),self.confirmacao.isChecked(),self.verificacao_manual.isChecked())
     def valores(self):return self.valores_decisao(),self.valores_proposta(),(self.anotacao.toPlainText(),self.preliminar.currentData())
     def tem_edicoes(self):return self.chave is not None and self._baseline is not None and self.valores()!=self._baseline
@@ -175,7 +178,7 @@ class AnaliseDecisao(QWidget):
 
     def resolver_edicoes(self):
         if not self.tem_edicoes():return True
-        escolha=QMessageBox.question(self,'Alterações topológicas não salvas','Salvar decisão e proposta alteradas antes de mudar de contexto?',QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
+        escolha=QMessageBox.question(self,'Alterações não salvas','Salvar as anotações, decisões ou propostas alteradas antes de sair deste contexto? Cancelar mantém o texto e a investigação abertos.',QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
         if escolha==QMessageBox.Cancel:return False
         if escolha==QMessageBox.Discard:self.carregar(self.caso,self.modo,True);return True
         if (self.anotacao.toPlainText(),self.preliminar.currentData())!=self._baseline[2] and not self.salvar_registro(self.preliminar.currentData() is not None):return False

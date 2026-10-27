@@ -1,5 +1,12 @@
 # Arquitetura topológica WaterGEMS
 
+Na 1.3.1, o bloqueador do complemento implementa `allowExit()` e delega ao controlador.
+`abrir_diagnosticos(..., gerenciar_saida=False)` evita um segundo registro no fluxo
+gerenciado. O padrão independente mantém a guarda para uso pelo console. O descarte
+espacial é consumido antes dos eventos de fechamento; referências fracas, verificação
+de objetos destruídos e cancelamento do registro protegem o ciclo de vida Qt.
+Detalhes e limites: [estabilidade e finalização](ESTABILIDADE_E_FINALIZACAO.md).
+
 Na 1.3.0, `organizacao_camadas.py` centraliza grupos por contexto e reutilização de
 representações próprias. `decisoes.py` acrescenta registros leves em `IGD_REGISTROS`
 sem converter o histórico anterior. O formulário simplifica o uso cotidiano e conserva

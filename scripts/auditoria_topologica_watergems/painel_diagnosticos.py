@@ -31,6 +31,7 @@ class PainelDiagnosticos(QDockWidget):
         for k,n in CATEGORIAS.items():self.categoria.addItem(f"{n} ({numeros.get(k,0)})",k)
         self.modo=QComboBox();self.modo.addItem('Estrutural',MODOS[0]);self.modo.addItem('Potencial · válvulas abertas',MODOS[1])
         self.modo.addItem('Estados do cenário · indisponível','ESTADOS_DO_CENARIO');self.modo.model().item(2).setEnabled(False)
+        self.modo.setToolTip('Estrutural: relações cadastradas, inclusive inativos identificados. Válvulas abertas: hipótese que respeita Active Topology e restrições de dispositivos; não demonstra a operação real. Estados do cenário ainda não estão validados.')
         self.componente=QComboBox();self.regiao=QComboBox();self.revisao=QComboBox();self.fonte=QComboBox();self.prioridade=QComboBox();self.busca=QLineEdit()
         self.busca.setPlaceholderText('Label, ID cadastral, local ou elemento…')
         limpar=QPushButton('Limpar filtros');limpar.clicked.connect(self.limpar_filtros);filtros.addWidget(limpar,10,0,1,2)
@@ -50,9 +51,15 @@ class PainelDiagnosticos(QDockWidget):
         self.lista=QTableWidget(0,3);self.lista.setHorizontalHeaderLabels(['Situação investigável','Prioridade','Revisão topológica'])
         self.lista.setSelectionBehavior(QAbstractItemView.SelectRows);self.lista.setSelectionMode(QAbstractItemView.SingleSelection);self.lista.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.lista.setColumnWidth(1,70);self.lista.setColumnWidth(2,130);self.lista.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
-        self.lista.setMaximumHeight(130);layout.addWidget(self.lista)
-        self.cartao=QTextBrowser();self.cartao.setOpenExternalLinks(False);layout.addWidget(self.cartao,1)
-        self.detalhes=QTreeWidget();self.detalhes.setHeaderLabels(['Detalhes expansíveis','Informação']);self.detalhes.setColumnWidth(0,180);self.detalhes.setWordWrap(True);self.detalhes.setMaximumHeight(100);layout.addWidget(self.detalhes)
+        self.investigacao=QSplitter(Qt.Vertical);layout.addWidget(self.investigacao,1);self.investigacao.addWidget(self.lista)
+        self.lista.setMinimumHeight(75)
+        self.cartao=QTextBrowser();self.cartao.setOpenExternalLinks(False);self.investigacao.addWidget(self.cartao)
+        self.detalhes=QTreeWidget();self.detalhes.setHeaderLabels(['Detalhes expansíveis','Informação']);self.detalhes.setColumnWidth(0,180);self.detalhes.setWordWrap(True);self.investigacao.addWidget(self.detalhes)
+        self.investigacao.setSizes([140,340,100]);self.investigacao.setStretchFactor(1,2)
+        self.mostrar_detalhes=QCheckBox('Informações avançadas da ocorrência');self.mostrar_detalhes.toggled.connect(self.detalhes.setVisible);layout.addWidget(self.mostrar_detalhes);self.detalhes.hide()
+        linha=QHBoxLayout();layout.addLayout(linha)
+        for texto,acao in [('Anotar / decidir',self.anotar),('Próxima ocorrência',self.proxima)]:
+            b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
         linha=QHBoxLayout();layout.addLayout(linha)
         for texto,acao in [('Aproximar mapa',self.aproximar),('Destacar componentes',self.componentes),('Selecionar GIS original',self.origens)]:
             b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
@@ -187,7 +194,7 @@ class PainelDiagnosticos(QDockWidget):
             return raiz
         elementos=c['tubos_gis']+c['elementos']
         evidencias=c['evidencias'] or ['Dados insuficientes para uma interpretação inequívoca.']
-        situacao=c['revisao']+' · revisão espacial do local' if c['local_uid'] else 'Sem revisão persistente por ocorrência nesta entrega.'
+        situacao=c['revisao']+' · revisão espacial do local' if c['local_uid'] else 'Não se aplica a um local geométrico único.'
         decisao=self.analise.head
         conclusao=(decisao['situacao']+' · '+decisao['conclusao']) if decisao else 'Conclusão técnica ainda não registrada; use ANÁLISE E DECISÃO.'
         partes=[f"<h3>{escape(c['titulo'])}</h3>",f"<p>{escape(c['resumo'])}</p>"]
@@ -204,6 +211,7 @@ class PainelDiagnosticos(QDockWidget):
         for m in MODOS:
             p=c['perspectivas'][m];linhas.append(('Estrutural' if m==MODOS[0] else 'Todas válvulas abertas')+': '+p['texto']);linhas+=p['avisos']
         linhas.append('Active Topology e restrições de dispositivos podem alterar componentes. Sem evidência específica não atribuir a diferença a válvulas fechadas. Estados do cenário indisponíveis.')
+        linhas.append('Conexão direta: elementos compartilham um nó cadastrado. Mesmo componente: existe um caminho no grafo, que pode passar por outros trechos e dispositivos. Nenhum desses resultados comprova a operação real.')
         grupo('Comparar perspectivas',linhas,False)
         tecnico=grupo('Detalhamento técnico',[f"Ocorrência {c['uid']}",f"Origem {c['tipo']} / {c['chave']}",f"Elementos nativos: {c['wg_ids']}",f"Identidades GIS: {c['gis_uids']}",*elementos],False)
         for n,t in c['tecnico']:QTreeWidgetItem(tecnico,[n,t])
@@ -234,7 +242,16 @@ class PainelDiagnosticos(QDockWidget):
     def abrir_legado(self):
         if self.atual and self.atual['local_uid']:
             self.legado.locais.setCurrentIndex(self.legado.locais.findData(self.atual['local_uid']));self.legado.show();self.legado.raise_()
-        else:self.aviso.setText('A revisão existente pertence a locais geométricos. Este caso não tem local único; a conclusão por ocorrência será implementada na segunda entrega.')
+        else:self.aviso.setText('Este caso não tem um local geométrico único. Use Anotar / decidir para registrar a investigação topológica da ocorrência.')
+
+    def anotar(self):
+        if self.atual:self.tabs.setCurrentWidget(self.analise);self.analise.tabs.setCurrentIndex(0);self.analise.anotacao.setFocus()
+
+    def proxima(self):
+        if self.lista.rowCount()==0:return
+        linha=self.lista.currentRow()+1
+        if linha>=self.lista.rowCount():self.aviso.setText('Fim da lista filtrada. Ajuste os filtros para consultar outros casos.');return
+        self.lista.selectRow(linha)
 
     def inversa(self,camada):
         if not self._ativo or self._sincronizando:return
@@ -259,7 +276,8 @@ class PainelDiagnosticos(QDockWidget):
 
     def desativar(self):
         self._ativo=False;self.mapa.fechar()
-        if self._iface and self._bloqueador:self._iface.unregisterApplicationExitBlocker(self._bloqueador);self._bloqueador=None
+        if self._iface and self._bloqueador:
+            self._iface.unregisterApplicationExitBlocker(self._bloqueador);self._bloqueador.registrado=False;self._bloqueador=None
         for c,fn in self._conexoes:
             if not sip.isdeleted(c):
                 try:c.selectionChanged.disconnect(fn)
@@ -267,12 +285,18 @@ class PainelDiagnosticos(QDockWidget):
         self._conexoes=[];self.legado.desativar();self.hide()
 
     def closeEvent(self,event):
-        if not self.analise.resolver_edicoes():event.ignore();return
+        if not self.resolver_alteracoes():event.ignore();return
         if not self.legado.close():event.ignore();return
         self.desativar();event.accept()
 
     def resolver_alteracoes(self):
-        return self.analise.resolver_edicoes() and (not self.legado.tem_edicoes() or self.legado.resolver_edicoes())
+        if not self.analise.resolver_edicoes():return False
+        if self.legado.tem_edicoes():
+            if not self.legado.resolver_edicoes():return False
+            # O formulário espacial legado retorna Descartar sem repor valores.
+            # Consuma essa decisão uma vez, antes de closeEvent/unload.
+            if self.legado.tem_edicoes():self.legado.atualizar()
+        return True
 
     def comparar_versoes(self):
         if not self.resolver_alteracoes():return
@@ -294,7 +318,7 @@ class PainelDiagnosticos(QDockWidget):
         self._exportacao=DialogExportarDecisoes(self);self._exportacao.exec_()
 
 
-def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None):
+def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None,gerenciar_saida=True):
     from .painel_integrado import abrir_painel
     legado=abrir_painel(pacote,base,projeto,parent,canvas);legado.hide()
     painel=PainelDiagnosticos(legado,parent)
@@ -304,10 +328,34 @@ def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None):
             from qgis.utils import iface
             if iface:
                 iface.addDockWidget(Qt.RightDockWidgetArea,painel);painel.setMinimumWidth(0)
-                from qgis.gui import QgsApplicationExitBlockerInterface
-                class Bloqueador(QgsApplicationExitBlockerInterface):
-                    def exitBlocked(self):return not painel.resolver_alteracoes()
-                painel._iface=iface;painel._bloqueador=Bloqueador();iface.registerApplicationExitBlocker(painel._bloqueador)
+                painel._iface=iface
+                if gerenciar_saida:
+                    from qgis.gui import QgsApplicationExitBlockerInterface
+                    import weakref
+                    referencia=weakref.ref(painel)
+                    class Bloqueador(QgsApplicationExitBlockerInterface):
+                        verificando=False
+                        registrado=True
+                        def allowExit(self):
+                            p=referencia()
+                            if p is None or sip.isdeleted(p) or not p._ativo:return True
+                            if self.verificando:return False
+                            self.verificando=True
+                            try:return bool(p.resolver_alteracoes())
+                            except Exception:
+                                import traceback
+                                from qgis.core import QgsMessageLog,Qgis
+                                QgsMessageLog.logMessage(traceback.format_exc(),'Water Network Auditor',Qgis.Critical)
+                                QMessageBox.warning(p,'Encerramento adiado','Não foi possível resolver as alterações. O QGIS permanecerá aberto; salve seu trabalho e consulte o painel de mensagens Water Network Auditor.');return False
+                            finally:self.verificando=False
+                    painel._bloqueador=Bloqueador();iface.registerApplicationExitBlocker(painel._bloqueador)
+                    bloqueador=painel._bloqueador
+                    def destruido(*args):
+                        if bloqueador.registrado:
+                            bloqueador.registrado=False
+                            try:iface.unregisterApplicationExitBlocker(bloqueador)
+                            except RuntimeError:pass
+                    painel.destroyed.connect(destruido)
         except ImportError:pass
     painel.show()
     if painel._iface and not painel._iface.mainWindow().property('wna/dock_dimensionado'):

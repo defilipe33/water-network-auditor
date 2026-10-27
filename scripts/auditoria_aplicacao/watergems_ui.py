@@ -39,7 +39,10 @@ class WatergemsDialog(QDialog):
         ajuda=QLabel('CRS identifica a referência das coordenadas GIS; a unidade bruta pertence às coordenadas WaterGEMS. Selecione o CRS métrico confirmado e a conversão correta. Não deduza esses valores pelo município.\nUse evidência anterior compatível ou confira pares cadastrais, coordenadas e uma fonte independente antes de confirmar.');ajuda.setWordWrap(True);rv.addWidget(ajuda)
         b=QPushButton('VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS…');b.clicked.connect(self.assistente_espacial);rv.addWidget(b)
         self.estado_espacial=QLabel('PENDENTE · crie ou abra uma base topológica. Use o assistente para detectar dados antes de preencher opções avançadas abaixo.');self.estado_espacial.setWordWrap(True);rv.addWidget(self.estado_espacial)
-        f=QFormLayout();rv.addLayout(f)
+        from qgis.PyQt.QtWidgets import QGroupBox
+        self.opcoes_referencia=QGroupBox('Informações avançadas / evidência anterior');self.opcoes_referencia.setCheckable(True);self.opcoes_referencia.setChecked(False);rv.addWidget(self.opcoes_referencia)
+        conteudo_ref=QWidget();av=QVBoxLayout(self.opcoes_referencia);av.addWidget(conteudo_ref);av_ref=QVBoxLayout(conteudo_ref);conteudo_ref.setVisible(False);self.opcoes_referencia.toggled.connect(conteudo_ref.setVisible)
+        f=QFormLayout();av_ref.addLayout(f)
         self.espacial=QCheckBox('Referência espacial confirmada para esta composição do modelo');self.espacial.setEnabled(False);f.addRow(self.espacial)
         self.crs=QLineEdit();self.crs.setPlaceholderText('CRS projetado em metros, sem suposição automática')
         self.unidade=QComboBox()
@@ -51,7 +54,7 @@ class WatergemsDialog(QDialog):
         self.evidencia.setPlaceholderText('Documento, conferência independente ou validação anterior identificável')
         self.resp_evidencia=QLineEdit();f.addRow('Responsável pela confirmação',self.resp_evidencia)
         for texto,acao in [('Usar o CRS de processamento da auditoria GIS',self.usar_crs_gis),('Verificar evidência existente…',self.verificar_evidencia),('Validar correspondência espacial…',self.validar_espacial),('Consultar detalhes da validação',self.detalhes_validacao)]:
-            b=QPushButton(texto);b.clicked.connect(acao);rv.addWidget(b)
+            b=QPushButton(texto);b.clicked.connect(acao);av_ref.addWidget(b)
         rv.addStretch()
         mapage=QWidget();self.tabs.insertTab(1,mapage,'2 · Correspondência GIS × Label');pv=QVBoxLayout(mapage)
         ajuda=QLabel('Selecione a coluna da camada GIS que contém o mesmo identificador utilizado como Label da tubulação no WaterGEMS. Label é o identificador de apresentação do modelo, não DomainElementID. O campo da auditoria geométrica pode ser diferente. Nada é escolhido automaticamente.');ajuda.setWordWrap(True);pv.addWidget(ajuda)
@@ -74,7 +77,8 @@ class WatergemsDialog(QDialog):
         if uid!=self.geo_uid:
             self.mapeamento.setRowCount(0)
             self.mapas={};self.geo_uid=uid
-        self.geo_info.setText('Auditoria GIS: nenhuma concluída selecionada.' if not d else f"Auditoria GIS: {d.get('controle_versao',{}).get('nome','Auditoria')} · {d['execucao_uid']}\n{len(d['eventos'])} eventos / {len(d['locais'])} locais; configuração preservada.")
+        self.geo_info.setText('Auditoria GIS: nenhuma concluída selecionada.' if not d else f"Auditoria GIS: {d.get('controle_versao',{}).get('nome','Auditoria')}\n{len(d['eventos'])} eventos / {len(d['locais'])} locais; configuração preservada.")
+        self.geo_info.setToolTip('Execução GIS: '+str(uid or 'nenhuma')+'\nA auditoria GIS identifica situações espaciais; a investigação integrada consulta também a conectividade cadastrada no modelo.')
         if d:self.geo_info.setText(self.geo_info.text()+f"\nProjeto: {d.get('controle_versao',{}).get('projeto') or 'não informado'} · versão: {d.get('controle_versao',{}).get('versao',1)} · CRS de processamento: {d['contexto']['parametros']['crs']}")
         if d:
             if not self.base and not self.fonte:self.projeto.setText(d.get('controle_versao',{}).get('projeto',''))
@@ -114,7 +118,7 @@ class WatergemsDialog(QDialog):
             base=bases.importar_legado(base,destino,self.nome.text() or 'Modelo legado',self.projeto.text());m=bases.metadados(base)
         self.base=str(base);self.fonte=None;self._topologia=None;self._prova=None;self._carregando=True;self.nome.setText(m['nome']);self.projeto.setText(m['projeto'])
         self.cenario.clear();self.cenario.addItem('Cenário '+str(m['cenario']),m['cenario']);self.modo.setCurrentIndex(self.modo.findText(m['hipotese']))
-        self.identidade.setText(f"{m['nome']} · v{m['versao']:03} · {m['uuid']}\n{m['resumo']['componentes']} componentes estruturais / {m['resumo_potencial']['componentes']} na hipótese aberta.")
+        self.identidade.setText(f"{m['nome']} · v{m['versao']:03}\n{m['resumo']['componentes']} componentes estruturais / {m['resumo_potencial']['componentes']} na hipótese aberta.");self.identidade.setToolTip('Base topológica '+m['uuid']+'\n'+str(base)+'\nUma cópia persistente para consulta; o modelo original não é alterado.')
         ref=m['referencia_espacial'];self.crs.setText(ref.get('crs',''));self.fator.setValue(ref.get('fator',1));self.evidencia.setText(ref.get('fonte',''))
         unidade=ref.get('unidade_bruta') or (referencias.unidade_fator(ref['fator']) if ref else None);self.unidade.setCurrentIndex(max(0,self.unidade.findData(unidade)))
         self._carregando=False;self._ref_pendente=False;estado=referencias.estado_referencia(ref)

@@ -1,5 +1,14 @@
 # Histórico técnico publicável
 
+## 1.3.1 — estabilidade de saída e refinamento de uso
+
+Implementação de `allowExit()` com autorização positiva, guarda central para o fluxo
+integrado, proteção do uso independente, descarte sem repetição e prevenção de
+reentrada. Navegação por ações, opções avançadas recolhidas, divisores ajustáveis e
+salvamento rápido com avanço da lista. Algoritmos e estruturas persistidas preservados.
+O [plano de finalização](ESTABILIDADE_E_FINALIZACAO.md) distingue validação automatizada,
+aceitação humana e frentes futuras; a distribuição permanece experimental até aceite.
+
 Este registro conserva a evolução do software sem reproduzir diagnósticos ou
 identificadores de redes reais. Relatórios operacionais detalhados, exemplos reais
 e documentos de contexto permanecem preservados somente no ambiente local.

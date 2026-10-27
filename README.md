@@ -10,6 +10,10 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.3.1** corrige o contrato de encerramento do QGIS, centraliza a resolução
+de pendências e refina a navegação e o registro rápido. Consulte o
+[guia de estabilidade, roteiro de aceitação e plano de finalização](documentacao/publica/ESTABILIDADE_E_FINALIZACAO.md).
+
 - Múltiplas redes e limites, com campos e modos de análise configuráveis.
 - Transição entre regiões e perímetro individual, inclusive áreas aninhadas/sobrepostas.
 - Travessias, tangências, extremidades, coincidências, continuidades potenciais e ambiguidades.
