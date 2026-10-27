@@ -1,3 +1,12 @@
+# Fluxo vigente — 1.5.0
+
+O registro cotidiano usa resultados investigativos, motivos e observações opcionais,
+sem exigência de responsável, fonte, documento ou aprovação. A extensão operacional
+reutiliza IGD_OCORRENCIAS, assinaturas e a base integrada existente. Consulte
+[arquitetura, filtros e compatibilidade](ANALISE_OPERACIONAL_E_FILTROS.md).
+As regras formais descritas abaixo documentam o legado e suas APIs, preservados
+para histórico; não são requisitos do formulário principal.
+
 # Integração, diagnósticos e decisões
 
 O controlador `auditoria_aplicacao.controlador.Aplicacao` inicializa os componentes

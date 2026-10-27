@@ -1,5 +1,12 @@
 # Histórico técnico publicável
 
+## 1.5.0 — investigação operacional e filtros
+
+Resultado simples sem aprovação formal, motivos opcionais, fila de trabalho e
+prioridades sugerida/manual. Filtros tipados por atributos e polígonos, E/OU e
+qualquer/todos/nenhum, com estado indeterminado explícito. Extensão aditiva IGD,
+backup verificado e histórico preservado. [Uso e arquitetura](ANALISE_OPERACIONAL_E_FILTROS.md).
+
 ## 1.4.1 — exportação pelos botões Qt
 
 Correção das conexões clicked(bool) de comandos decorados de exportação, consulta e

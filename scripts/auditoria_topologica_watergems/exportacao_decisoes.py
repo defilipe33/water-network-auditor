@@ -56,6 +56,21 @@ def tabelas_decisoes(base,pacote):
     from .decisoes import registros
     rs=registros(base,ig)
     tabelas['ANOTACOES_PRELIMINARES']=(('REG_UID','OCC_UID','PERSPECTIVA','TIPO','CLASSIFICACAO','OBSERVACAO','RESPONSAVEL','DATA_UTC','ASSINATURA'),[tuple(r[k] for k in ('reg_uid','occ_uid','modo','tipo','classificacao','observacao','responsavel','data_utc','assinatura')) for r in rs])
+    from . import operacional as op
+    from .filtros import ContextoFiltros
+    hh=op.historico(base,ig);atuais_op={(h['occ_uid'],h['modo']):h for h in hh};contexto=ContextoFiltros(pacote);contexto.restaurar_persistidas(base)
+    campos=('UID','OCC_UID','PERSPECTIVA','ANTERIOR','RESULTADO','MOTIVO','OBSERVACAO','PRIOR_AUTO','CRITERIO','PRIOR_TRAB','TOPO_UID','CENARIO','DATA_UTC')
+    chaves=('uid','occ_uid','modo','anterior','resultado','motivo','observacao','prioridade_auto','criterio_auto','prioridade_trabalho','topo_uid','cenario','data_utc')
+    tabelas['HIST_ANALISES']=(campos,[tuple(h[k] for k in chaves) for h in hh])
+    linhas=[];res=[]
+    for modo in MODOS:
+        for caso in casos:
+            h=atuais_op.get((caso['uid'],modo),{});sugestao,criterio=op.sugerir(caso,contexto)
+            linhas.append((caso['uid'],caso['titulo'],modo,op.estado(h),h.get('resultado','PENDENTE'),h.get('motivo',''),h.get('observacao',''),h.get('prioridade_auto',sugestao),h.get('criterio_auto',criterio),h.get('prioridade_trabalho'),h.get('data_utc','')))
+        res.extend((modo,estado,sum(op.estado(atuais_op.get((caso['uid'],modo)))==estado for caso in casos)) for estado in op.ESTADOS)
+    tabelas['RESULTADOS_INVESTIGATIVOS']=(('OCC_UID','DIAGNOSTICO','PERSPECTIVA','ANDAMENTO','RESULTADO','MOTIVO','OBSERVACAO','PRIOR_AUTO','CRITERIO','PRIOR_TRAB','DATA_UTC'),linhas)
+    tabelas['RESUMO_ANALISES']=(('PERSPECTIVA','ESTADO','QUANTIDADE'),res)
+    tabelas['RELACOES_PARA_FILTROS']=(('LOCAL_UID','AREA_UID','EVENTO_UID','RELACAO','ORIGEM'),[(r['local'],r['area'],r['evento'],r['relacao'],r['origem']) for r in contexto.relacoes])
     return tabelas
 
 
@@ -74,8 +89,10 @@ def exportar_acompanhamento(base,pacote,pasta,xlsx=True,gpkg=False,shp=False):
         from qgis.PyQt.QtCore import QVariant
         from .saidas import exportar_geografico
         c=QgsVectorLayer('Point?crs='+pacote['dossie']['contexto']['parametros']['crs'],'DECISOES_OCORRENCIAS','memory')
-        c.dataProvider().addAttributes([QgsField(n,QVariant.String,len=l) for n,l in [('FEAT_UID',80),('OCC_UID',80),('IG_UID',40),('MODO',30),('SITUACAO',30),('CONCLUSAO',80)]]);c.updateFields()
+        c.dataProvider().addAttributes([QgsField(n,QVariant.String,len=l) for n,l in [('FEAT_UID',80),('OCC_UID',80),('IG_UID',40),('MODO',30),('SITUACAO',80),('CONCLUSAO',80)]]);c.updateFields()
         locais={l['uid']:l for l in pacote['resultado']['locais']};casos={o['uid']:o for o in catalogar(pacote)};fs=[]
+        from .operacional import indice,estado
+        resultados_op=indice(base,pacote['resultado']['meta']['uid'])
         for row in novas['DECISOES_TOPOLOGICAS'][1]:
             o=casos[row[0]];g=None
             if o['local_uid']:
@@ -89,9 +106,9 @@ def exportar_acompanhamento(base,pacote,pasta,xlsx=True,gpkg=False,shp=False):
                 if gs:g=QgsGeometry.collectGeometry(gs).centroid()
             if g is None or g.isEmpty():avisos.append('Sem representação espacial segura: '+row[0]+' / '+row[2]);continue
             from .decisoes import digest
-            f=QgsFeature(c.fields());f.setGeometry(g);f.setAttributes([digest([row[0],row[2]]),row[0],pacote['resultado']['meta']['uid'],row[2],row[3],row[4]]);fs.append(f)
+            f=QgsFeature(c.fields());f.setGeometry(g);h=resultados_op.get((row[0],row[2]));f.setAttributes([digest([row[0],row[2]]),row[0],pacote['resultado']['meta']['uid'],row[2],estado(h) if h else row[3],h['resultado'] if h else row[4]]);fs.append(f)
         c.dataProvider().addFeatures(fs);c.updateExtents();exportar_geografico([c],pasta/'SHP','SHP',campo_chave='FEAT_UID')
-        (pasta/'SHP/DICIONARIO_DECISOES.json').write_text(json.dumps(dict(FEAT_UID='Chave desta representação',OCC_UID='Ocorrência investigativa',IG_UID='Execução integrada',MODO='Perspectiva',SITUACAO='Andamento administrativo topológico',CONCLUSAO='Conclusão declarada pelo engenheiro',geometria='Ponto original do local ou centroide de elementos com CRS validado. Auditoria, sem alterações hidráulicas.'),ensure_ascii=False,indent=2),encoding='utf8')
+        (pasta/'SHP/DICIONARIO_DECISOES.json').write_text(json.dumps(dict(FEAT_UID='Chave desta representação',OCC_UID='Ocorrência investigativa',IG_UID='Execução integrada',MODO='Perspectiva',SITUACAO='Andamento investigativo; legado administrativo quando não houver novo registro',CONCLUSAO='Resultado investigativo ou conclusão histórica; não comprova condição hidráulica',geometria='Ponto original do local ou centroide de elementos com CRS validado. Auditoria, sem alterações hidráulicas.'),ensure_ascii=False,indent=2),encoding='utf8')
     (pasta/'METADADOS.json').write_text(json.dumps(dict(execucao=pacote['resultado']['meta']['uid'],data=datetime.now().astimezone().isoformat(),avisos=avisos,intervencoes_executadas=False),ensure_ascii=False,indent=2),encoding='utf8')
     return pasta
 

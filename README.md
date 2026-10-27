@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.5.0** oferece [resultado da análise sem exigências formais e filtros genéricos](documentacao/publica/ANALISE_OPERACIONAL_E_FILTROS.md): atributos GIS/WaterGEMS, grupos E/OU, relações por polígonos e prioridade de trabalho. O histórico anterior é preservado.
+
 A versão **1.4.1** corrige os sinais dos botões de exportação e mantém o acompanhamento
 de atividades. Veja a [correção e roteiro de validação](documentacao/publica/CORRECAO_EXPORTACAO_1_4_1.md).
 
@@ -83,8 +85,10 @@ bilateral e compatibilidade geométrica; candidatos ambíguos não são escolhid
 automaticamente. A investigação resultante conserva as versões exatas de origem.
 
 No painel, selecione uma ocorrência e consulte mapa, resumo e detalhes expansíveis.
-Em **ANÁLISE E DECISÃO**, registre situação administrativa, conclusão explícita,
-justificativa e evidências. Propostas possuem aprovação e validação independentes.
+Em **RESULTADO DA ANÁLISE**, escolha um resultado e salve, ou escreva somente uma
+observação. Motivo é opcional; responsável, fonte e evidência não são exigidos. Use
+Salvar e próxima para continuar a lista filtrada. Propostas opcionais e registros
+anteriores permanecem em HISTÓRICO E PROPOSTAS.
 `VERIFICADO` não significa problema corrigido; `APLICACAO_INFORMADA` apenas declara
 uma intervenção externa. Reabra a mesma investigação pelo catálogo para continuar.
 

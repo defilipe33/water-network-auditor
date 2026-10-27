@@ -117,7 +117,7 @@ def ler_areas(configuracoes,crs_destino):
             if c.crs().authid()!=crs_destino:g.transform(transformacao)
             resultado.append(dict(uid=uid,origem=origem,camada=c.name(),id_original=attrs[idcampo],
                 exibicao=legivel(attrs[nomecampo] if attrs[nomecampo] not in (None,'') else attrs[idcampo]),
-                tipo=config.get('tipo') or c.name(),campo_id=idcampo,campo_nome=nomecampo,geometria=g,
+                tipo=config.get('tipo') or c.name(),campo_id=idcampo,campo_nome=nomecampo,geometria=g,atributos_originais=attrs,crs_origem=c.crs().toWkt(),crs_comparacao=crs_destino,
                 substituicao_exibicao=nomecampo!=idcampo and attrs[nomecampo] in (None,'')))
         fontes.append(dict(origem=origem,fonte=c.source(),provedor=c.providerType(),camada=c.name(),campo_id=idcampo,
             campo_nome=nomecampo,tipo=config.get('tipo') or c.name(),assinatura=digest(sorted(assinaturas)),

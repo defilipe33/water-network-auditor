@@ -72,7 +72,14 @@ def resumo_revisoes(base,ig,modo,total):
         hs={r['occ_uid']:dict(r) for r in con.execute('SELECT * FROM IGD_REVISOES WHERE ig_uid=? AND modo=? ORDER BY rowid',(ig,modo))}
         props=con.execute('SELECT count(DISTINCT occ_uid) FROM IGD_PROPOSTAS WHERE ig_uid=? AND modo=?',(ig,modo)).fetchone()[0]
         revisados=sum(h['situacao']!='PENDENTE' for h in hs.values())
-        return dict(casos=total,revisados=revisados,pendentes=total-revisados,corretos=sum(h['conclusao']=='CONECTIVIDADE CORRETA' for h in hs.values()),com_proposta=props)
+        from .operacional import indice,pendente,RESULTADOS
+        novos={u:h for (u,m),h in indice(base,ig).items() if m==modo}
+        if novos:
+            efetivos={u for u,h in hs.items() if h['situacao']!='PENDENTE' and u not in novos}|{u for u,h in novos.items() if not pendente(h)}
+            revisados=len(efetivos)
+        resumo=dict(casos=total,revisados=revisados,pendentes=total-revisados,corretos=sum(h['conclusao']=='CONECTIVIDADE CORRETA' for h in hs.values()),com_proposta=props)
+        if novos:resumo.update(resultados_investigativos=len(novos),manter_configuracao=sum(h['resultado'] in RESULTADOS[1:3] for h in novos.values()),correcao_necessaria=sum(h['resultado']==RESULTADOS[3] for h in novos.values()))
+        return resumo
 
 
 def avaliar_proposta(proposta,antigo,novo):

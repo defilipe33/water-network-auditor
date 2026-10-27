@@ -67,7 +67,7 @@ class DiagnosticosTest(unittest.TestCase):
         c=next(c for c in catalogar(self.p) if c['tipo']=='LOCAL');self.assertIn('insuficiente',c['perspectivas'][MODOS[0]]['texto'])
     def test_conclusao_tecnica_nao_herda_status_espacial(self):
         self.p['dossie']['locais'][0]['revisao']['situacao']='VERIFICADO'
-        j=self.painel();self.assertIn('Conclusão técnica ainda não registrada',j.cartao.toPlainText())
+        j=self.painel();self.assertIn('Sem resultado investigativo',j.cartao.toPlainText())
     def test_fechar_desconecta_navegacao(self):
         j=self.painel();j.close();self.assertFalse(j._ativo);self.assertFalse(j._conexoes)
     def test_categoria_depende_da_perspectiva(self):

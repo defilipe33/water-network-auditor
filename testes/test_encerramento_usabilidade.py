@@ -99,7 +99,7 @@ class SaidaIntegradaTest(unittest.TestCase):
         self.j.close();sip.delete(self.j);self.assertTrue(self.app.resolver());self.assertIsNone(self.app.painel);self.j=self.app.painel=None
     def test_informacoes_avancadas_recolhidas(self):self.assertFalse(self.j.mostrar_detalhes.isChecked());self.assertTrue(self.j.detalhes.isHidden())
     def test_anotar_leva_ao_campo_sem_mudar_modo(self):
-        m=self.j.modo.currentData();self.j.anotar();self.assertIs(self.j.tabs.currentWidget(),self.j.analise);self.assertEqual(self.j.modo.currentData(),m)
+        m=self.j.modo.currentData();self.j.anotar();self.assertEqual(self.j.tabs.currentIndex(),0);self.assertEqual(self.j.modo.currentData(),m);self.assertIsNotNone(self.j.resultado_analise.observacoes)
     def test_proxima_cancelada_mantem_caso(self):
         self.j.limpar_filtros();self.j.lista.selectRow(0);uid=self.j.atual['uid'];self.j.analise.anotacao.setPlainText('Pendente')
         with patch.object(QMessageBox,'question',return_value=QMessageBox.Cancel):self.j.proxima()

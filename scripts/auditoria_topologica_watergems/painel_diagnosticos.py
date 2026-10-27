@@ -7,6 +7,8 @@ from qgis.PyQt.QtWidgets import (QDockWidget,QWidget,QVBoxLayout,QHBoxLayout,QGr
     QLabel,QComboBox,QLineEdit,QTableWidget,QTableWidgetItem,QAbstractItemView,
     QTreeWidget,QTreeWidgetItem,QPushButton,QTabWidget,QSplitter,QScrollArea,QTextBrowser,QHeaderView,QCheckBox,QMessageBox,QFileDialog)
 from qgis.PyQt import sip
+from .filtros import ContextoFiltros
+from . import operacional as op
 from .diagnosticos import catalogar,filtrar,contagens,CATEGORIAS,MODOS
 from .mapa_diagnosticos import MapaDiagnosticos
 from auditoria_fronteiras.atividade import acompanhada,falha
@@ -16,7 +18,7 @@ class PainelDiagnosticos(QDockWidget):
     def __init__(self,legado,parent=None):
         super().__init__('Diagnósticos GIS × WaterGEMS',parent)
         self.legado=legado;self.pacote=legado.pacote;self.base=legado.base;self._ativo=True;self._sincronizando=False
-        self.casos=catalogar(self.pacote);self.atual=None;self._inversos=None;self._conexoes=[]
+        self.casos=catalogar(self.pacote);self.indice_atributos=ContextoFiltros(self.pacote);self.indice_atributos.restaurar_persistidas(self.base);self._analises=op.indice(self.base,self.pacote['resultado']['meta']['uid']);self._generico_estavel=None;self._fila_estavel=0;self._resultado_estavel=0;self._filtros_sessao={};self._pagina=0;self._tamanho_pagina=200;self._itens_pagina=[];self.atual=None;self._inversos=None;self._conexoes=[]
         self._filtros_estaveis=None;self._modo_estavel='ESTRUTURAL';self._bloqueador=None;self._iface=None
         self.mapa=MapaDiagnosticos(self.pacote,legado.projeto,legado.canvas)
         w=QWidget();self.setWidget(w);v=QVBoxLayout(w);self.resize(920,720)
@@ -24,8 +26,8 @@ class PainelDiagnosticos(QDockWidget):
         self.tabs=QTabWidget();v.addWidget(self.tabs);diag=QWidget();self.tabs.addTab(diag,'DIAGNÓSTICOS');layout=QVBoxLayout(diag)
         self.resumo=QLabel();self.resumo.setWordWrap(True);layout.addWidget(self.resumo)
         self.mostrar_filtros=QPushButton('Filtros ▾');self.mostrar_filtros.setCheckable(True);self.mostrar_filtros.setChecked(True);layout.addWidget(self.mostrar_filtros)
-        self.bloco_filtros=QWidget();filtros=QGridLayout(self.bloco_filtros);layout.addWidget(self.bloco_filtros)
-        self.mostrar_filtros.toggled.connect(self.bloco_filtros.setVisible)
+        self.bloco_filtros=QWidget();filtros=QGridLayout(self.bloco_filtros);self.rolagem_filtros=QScrollArea();self.rolagem_filtros.setWidgetResizable(True);self.rolagem_filtros.setWidget(self.bloco_filtros);self.rolagem_filtros.setMaximumHeight(240);self.rolagem_filtros.setMinimumHeight(70);layout.addWidget(self.rolagem_filtros)
+        self.mostrar_filtros.toggled.connect(self.rolagem_filtros.setVisible)
         self.filtros_ativos=QLabel();self.filtros_ativos.setWordWrap(True);layout.addWidget(self.filtros_ativos)
         self.categoria=QComboBox();self.categoria.addItem('Todos os tipos',None)
         numeros=contagens(self.casos)['categorias']
@@ -47,19 +49,19 @@ class PainelDiagnosticos(QDockWidget):
         for nome,valor in [('Fonte: qualquer',None),('Com reservatório/tanque',True),('Sem reservatório/tanque',False)]:self.fonte.addItem(nome,valor)
         self.prioridade.addItem('Qualquer prioridade',None)
         for n in ('Alta','Média','Baixa'):self.prioridade.addItem(n,n)
-        for k,(nome,widget) in enumerate([('Tipo',self.categoria),('Perspectiva',self.modo),('Componente',self.componente),('Região',self.regiao),('Revisão espacial',self.revisao),('Fonte cadastrada',self.fonte),('Prioridade',self.prioridade),('Elemento',self.busca),('Revisão topológica',self.revisao_topo)]):
+        for k,(nome,widget) in enumerate([('Tipo',self.categoria),('Perspectiva',self.modo),('Componente',self.componente),('Texto de região (legado)',self.regiao),('Revisão espacial',self.revisao),('Fonte cadastrada',self.fonte),('Prioridade',self.prioridade),('Elemento',self.busca),('Revisão topológica',self.revisao_topo)]):
             linha=(k//2)*2;col=k%2;filtros.addWidget(QLabel(nome),linha,col);filtros.addWidget(widget,linha+1,col)
-        self.lista=QTableWidget(0,3);self.lista.setHorizontalHeaderLabels(['Situação investigável','Prioridade','Revisão topológica'])
+        self.lista=QTableWidget(0,5);self.lista.setHorizontalHeaderLabels(['Ocorrência / diagnóstico','Prioridade','Andamento','Regiões','Resultado da análise'])
         self.lista.setSelectionBehavior(QAbstractItemView.SelectRows);self.lista.setSelectionMode(QAbstractItemView.SingleSelection);self.lista.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.lista.setColumnWidth(1,70);self.lista.setColumnWidth(2,130);self.lista.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
-        self.investigacao=QSplitter(Qt.Vertical);layout.addWidget(self.investigacao,1);self.investigacao.addWidget(self.lista)
+        self.investigacao=QSplitter(Qt.Vertical);self.area_trabalho=QSplitter(Qt.Horizontal);layout.addWidget(self.area_trabalho,1);self.area_trabalho.addWidget(self.investigacao);pagina_widget=QWidget();pv=QVBoxLayout(pagina_widget);pv.setContentsMargins(0,0,0,0);pv.addWidget(self.lista,1);nav=QHBoxLayout();self.pagina_anterior=QPushButton('Anterior');self.pagina_seguinte=QPushButton('Próxima página');self.contagem_pagina=QLabel();nav.addWidget(self.pagina_anterior);nav.addWidget(self.contagem_pagina);nav.addWidget(self.pagina_seguinte);pv.addLayout(nav);self.pagina_anterior.clicked.connect(lambda checked=False:self.mudar_pagina(-1));self.pagina_seguinte.clicked.connect(lambda checked=False:self.mudar_pagina(1));self.investigacao.addWidget(pagina_widget)
         self.lista.setMinimumHeight(75)
         self.cartao=QTextBrowser();self.cartao.setOpenExternalLinks(False);self.investigacao.addWidget(self.cartao)
         self.detalhes=QTreeWidget();self.detalhes.setHeaderLabels(['Detalhes expansíveis','Informação']);self.detalhes.setColumnWidth(0,180);self.detalhes.setWordWrap(True);self.investigacao.addWidget(self.detalhes)
         self.investigacao.setSizes([140,340,100]);self.investigacao.setStretchFactor(1,2)
         self.mostrar_detalhes=QCheckBox('Informações avançadas da ocorrência');self.mostrar_detalhes.toggled.connect(self.detalhes.setVisible);layout.addWidget(self.mostrar_detalhes);self.detalhes.hide()
         linha=QHBoxLayout();layout.addLayout(linha)
-        for texto,acao in [('Anotar / decidir',self.anotar),('Próxima ocorrência',self.proxima)]:
+        for texto,acao in [('Analisar / anotar',self.anotar),('Próxima ocorrência',self.proxima)]:
             b=QPushButton(texto);b.clicked.connect(acao);linha.addWidget(b)
         linha=QHBoxLayout();layout.addLayout(linha)
         for texto,acao in [('Aproximar mapa',self.aproximar),('Destacar componentes',self.componentes),('Selecionar GIS original',self.origens)]:
@@ -80,7 +82,18 @@ class PainelDiagnosticos(QDockWidget):
         QTreeWidgetItem(informacoes,['Configuração preservada','Esta tela não reprocessa, não muda agrupamentos e não altera as fontes.'])
         QTreeWidgetItem(informacoes,['Conclusões e propostas','Análise topológica própria, histórico anexado, propostas sob controle humano; não altera o WaterGEMS.'])
         from .form_decisao import AnaliseDecisao
-        self.analise=AnaliseDecisao(self);self.tabs.insertTab(1,self.analise,'ANÁLISE E DECISÃO')
+        self.analise=AnaliseDecisao(self);self.tabs.insertTab(1,self.analise,'HISTÓRICO E PROPOSTAS')
+        # O formulário formal legado permanece somente para APIs/histórico antigos.
+        self.analise.tabs.setTabVisible(0,False);self.analise.tabs.setCurrentIndex(2);self.analise.salvar_fixo_decisao.hide()
+        from .form_operacional import FormResultado,EditorFiltros
+        self.resultado_analise=FormResultado(self);self.resultado_scroll=QScrollArea();self.resultado_scroll.setWidgetResizable(True);self.resultado_scroll.setWidget(self.resultado_analise);direita=QWidget();dv=QVBoxLayout(direita);dv.setContentsMargins(0,0,0,0);dv.addWidget(self.resultado_scroll,1);acoes_resultado=QHBoxLayout();acoes_resultado.addWidget(self.resultado_analise.salvar_botao);acoes_resultado.addWidget(self.resultado_analise.proxima_botao);dv.addLayout(acoes_resultado);self.area_trabalho.addWidget(direita);self.area_trabalho.setSizes([500,420])
+        self.fila=QComboBox()
+        for nome,codigo in [('Pendentes e em análise','PENDENTES'),('Todos os casos','TODOS'),('Analisados','ANALISADOS'),('Necessita conferência','CONFERENCIA')]:self.fila.addItem(nome,codigo)
+        filtros.addWidget(QLabel('Fila de trabalho'),11,0);filtros.addWidget(self.fila,11,1)
+        self.resultado_filtro=QComboBox();self.resultado_filtro.addItem('Qualquer resultado',None)
+        for resultado in op.RESULTADOS:self.resultado_filtro.addItem(resultado,resultado)
+        filtros.addWidget(QLabel('Resultado da análise'),12,0);filtros.addWidget(self.resultado_filtro,12,1);self.resultado_filtro.currentIndexChanged.connect(self.filtrar_resultado)
+        self.editor_filtros=EditorFiltros(self);filtros.addWidget(self.editor_filtros,13,0,1,2);self.editor_filtros.alterado.connect(self.filtrar);self.fila.currentIndexChanged.connect(self.filtrar)
         from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
         self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
@@ -94,7 +107,6 @@ class PainelDiagnosticos(QDockWidget):
         self.busca.textChanged.connect(self.filtrar);self.lista.itemSelectionChanged.connect(self.selecionar)
         legado.revisao_salva.connect(self.revisao_atualizada)
         self.trocar_modo()
-        if any('AUSENTE' in c['categorias'] for c in self.casos):self.categoria.setCurrentIndex(self.categoria.findData('AUSENTE'))
         for c in legado.projeto.mapLayers().values():
             if c.customProperty('integracao/uid')==meta['uid'] and c.customProperty('integracao/base')==str(Path(self.base).resolve()):
                 callback=lambda *args,c=c:self.inversa(c)
@@ -111,7 +123,7 @@ class PainelDiagnosticos(QDockWidget):
         self.filtrar()
 
     def trocar_modo(self):
-        if hasattr(self,'analise') and self.analise.tem_edicoes() and not self.analise.resolver_edicoes():
+        if hasattr(self,'analise') and self.tem_edicoes() and not self.resolver_formularios():
             self.modo.blockSignals(True);self.modo.setCurrentIndex(self.modo.findData(self._modo_estavel));self.modo.blockSignals(False);return
         if self.modo.currentData() not in MODOS:
             self.modo.blockSignals(True);self.modo.setCurrentIndex(self.modo.findData(self._modo_estavel));self.modo.blockSignals(False);return
@@ -119,48 +131,85 @@ class PainelDiagnosticos(QDockWidget):
         self.componente.blockSignals(True);self.componente.clear();self.componente.addItem('Todos os componentes',None)
         modo=self.modo.currentData();nome='componentes' if modo==MODOS[0] else 'componentes_potenciais'
         for c in self.pacote['resultado'][nome]:self.componente.addItem(f"Componente {c['numero']} · {c['n_tubos']} tubos",c['uid'])
-        self.componente.blockSignals(False);self.filtrar()
+        self.componente.blockSignals(False)
+        salvos=self._filtros_sessao.get(modo) or op.carregar_filtros(self.base,self.pacote,modo)
+        if hasattr(self,'editor_filtros'):
+            self.editor_filtros.carregar(salvos or {'operador':'E','condicoes':[]})
+            for widget,key,default in [(self.fila,'fila','PENDENTES'),(self.resultado_filtro,'resultado',None)]:
+                widget.blockSignals(True);widget.setCurrentIndex(max(0,widget.findData((salvos or {}).get(key,default))));widget.blockSignals(False)
+        self.filtrar()
         modo=self.modo.currentData()
         for k,n in CATEGORIAS.items():self.categoria.setItemText(self.categoria.findData(k),f"{n} ({len(filtrar(self.casos,categoria=k,modo=modo))})")
 
     def filtrar(self):
         if not self._ativo:return
         self._inversos=None
+        for c in self.casos:
+            h=self._analises.get((c['uid'],self.modo.currentData()),{});sugestao,criterio=op.sugerir(c,self.indice_atributos);c['prioridade_sugerida']=h.get('prioridade_auto',sugestao);c['motivo_prioridade']=h.get('criterio_auto',criterio);c['prioridade_trabalho']=h.get('prioridade_trabalho')
         novos=filtrar(self.casos,self.categoria.currentData(),self.componente.currentData(),self.regiao.currentData(),self.revisao.currentData(),self.modo.currentData(),self.busca.text(),self.fonte.currentData(),self.prioridade.currentData())
         from .decisoes import indice_revisoes,registros
         self._revisoes_topologicas=indice_revisoes(self.base,self.pacote['resultado']['meta']['uid'])
         rr=registros(self.base,self.pacote['resultado']['meta']['uid'],modo=self.modo.currentData());analisados={r['occ_uid'] for r in rr}|{u for u,m in self._revisoes_topologicas if m==self.modo.currentData()}
         if self.revisao_topo.currentData()=='ANALISADOS':novos=[c for c in novos if c['uid'] in analisados]
         elif self.revisao_topo.currentData():novos=[c for c in novos if self._revisoes_topologicas.get((c['uid'],self.modo.currentData()),{}).get('situacao','PENDENTE')==self.revisao_topo.currentData()]
-        if hasattr(self,'analise') and self.analise.tem_edicoes() and self.atual and not any(c['uid']==self.atual['uid'] for c in novos):
-            if not self.analise.resolver_edicoes():
+        if hasattr(self,'editor_filtros'):
+            novos,self._filtros_indeterminados=self.indice_atributos.filtrar(novos,self.editor_filtros.configuracao(),self.modo.currentData())
+            escolhido=self.resultado_filtro.currentData()
+            if escolhido:novos=[c for c in novos if self._analises.get((c['uid'],self.modo.currentData()),{}).get('resultado','PENDENTE')==escolhido]
+            fila=self.fila.currentData()
+            if fila=='PENDENTES':novos=[c for c in novos if op.pendente(self._analises.get((c['uid'],self.modo.currentData())))]
+            elif fila=='ANALISADOS':novos=[c for c in novos if not op.pendente(self._analises.get((c['uid'],self.modo.currentData())))]
+            elif fila=='CONFERENCIA':novos=[c for c in novos if op.estado(self._analises.get((c['uid'],self.modo.currentData())))=='NECESSITA CONFERÊNCIA']
+        if hasattr(self,'analise') and self.tem_edicoes() and self.atual and not any(c['uid']==self.atual['uid'] for c in novos):
+            if not self.resolver_formularios():
                 if self._filtros_estaveis:
                     for w,valor in self._filtros_estaveis:
                         w.blockSignals(True)
                         if isinstance(w,QComboBox):w.setCurrentIndex(w.findData(valor))
                         else:w.setText(valor)
                         w.blockSignals(False)
+                if hasattr(self,'editor_filtros') and self._generico_estavel is not None:self.editor_filtros.carregar(self._generico_estavel)
+                if hasattr(self,'fila'):self.fila.blockSignals(True);self.fila.setCurrentIndex(self._fila_estavel);self.fila.blockSignals(False)
+                self.resultado_filtro.blockSignals(True);self.resultado_filtro.setCurrentIndex(self._resultado_estavel);self.resultado_filtro.blockSignals(False)
                 return
+        if hasattr(self,'editor_filtros'):self._resultado_estavel=self.resultado_filtro.currentIndex();self._generico_estavel=self.editor_filtros.configuracao();self._fila_estavel=self.fila.currentIndex()
+        if hasattr(self,'editor_filtros'):
+            self._filtros_sessao[self.modo.currentData()]=dict(self.editor_filtros.configuracao(),fila=self.fila.currentData(),resultado=self.resultado_filtro.currentData())
+        novos.sort(key=lambda c:({'Alta':0,'Média':1,'Baixa':2}.get(c.get('prioridade_trabalho') or c.get('prioridade_sugerida',c['prioridade']),1),c['titulo'],c['uid']))
         self.visiveis=novos
         self._filtros_estaveis=[(w,w.currentData() if isinstance(w,QComboBox) else w.text()) for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade,self.busca)]
         ativos=[w.currentText() for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade) if w.currentIndex()>0]
         if self.busca.text():ativos.append('Elemento: '+self.busca.text())
+        if hasattr(self,'editor_filtros') and self.editor_filtros.arvore.topLevelItem(0).childCount():ativos.append('Condições genéricas: '+str(self.editor_filtros.arvore.topLevelItem(0).childCount()))
         self.filtros_ativos.setText('Filtros: '+('; '.join(ativos) or 'nenhum')+' · '+self.modo.currentText())
         self.preencher()
 
+    def filtrar_resultado(self):
+        if self.resultado_filtro.currentData() in op.RESULTADOS[1:4]+(op.RESULTADOS[5],):
+            self.fila.blockSignals(True);self.fila.setCurrentIndex(self.fila.findData('TODOS'));self.fila.blockSignals(False)
+        self.filtrar()
+
     def limpar_filtros(self):
+        if hasattr(self,'editor_filtros'):self.editor_filtros.carregar({'operador':'E','condicoes':[]})
+        if hasattr(self,'fila'):self.fila.blockSignals(True);self.fila.setCurrentIndex(0);self.fila.blockSignals(False)
+        if hasattr(self,'resultado_filtro'):self.resultado_filtro.blockSignals(True);self.resultado_filtro.setCurrentIndex(0);self.resultado_filtro.blockSignals(False)
         for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade,self.busca):w.blockSignals(True)
         for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade):w.setCurrentIndex(0)
         self.busca.clear()
         for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade,self.busca):w.blockSignals(False)
         self.filtrar()
 
-    def preencher(self,selecionar_primeiro=True):
+    def preencher(self,selecionar_primeiro=True,preservar=True):
         anterior=self.atual['uid'] if self.atual else None
-        self.lista.blockSignals(True);self.lista.setRowCount(len(self.visiveis))
-        for n,c in enumerate(self.visiveis):
+        if preservar:self._pagina=next((i//self._tamanho_pagina for i,c in enumerate(self.visiveis) if c['uid']==anterior),0)
+        self._pagina=max(0,min(self._pagina,max(0,(len(self.visiveis)-1)//self._tamanho_pagina)))
+        offset=self._pagina*self._tamanho_pagina;self._itens_pagina=self.visiveis[offset:offset+self._tamanho_pagina]
+        self.contagem_pagina.setText(f'{offset+1 if self.visiveis else 0}–{offset+len(self._itens_pagina)} de {len(self.visiveis)}');self.pagina_anterior.setEnabled(self._pagina>0);self.pagina_seguinte.setEnabled(offset+len(self._itens_pagina)<len(self.visiveis))
+        self.lista.blockSignals(True);self.lista.setRowCount(len(self._itens_pagina))
+        for n,c in enumerate(self._itens_pagina):
             situacao=self._revisoes_topologicas.get((c['uid'],self.modo.currentData()),{}).get('situacao','PENDENTE')
-            for col,texto in enumerate((c['titulo'],c['prioridade'],situacao)):
+            h=self._analises.get((c['uid'],self.modo.currentData()));andamento=op.estado(h)
+            for col,texto in enumerate((c['titulo'],c.get('prioridade_trabalho') or c.get('prioridade_sugerida',c['prioridade']),andamento,'; '.join(c['regioes']),h['resultado'] if h else 'Sem resultado; histórico anterior disponível')):
                 item=QTableWidgetItem(texto);item.setToolTip(texto);item.setData(Qt.UserRole,c['uid']);self.lista.setItem(n,col,item)
         self.lista.blockSignals(False)
         self.resumo.setText(f"{len(self.visiveis)} casos exibidos / {len(self.casos)} casos únicos. Prioridade é triagem. A lista mostra andamento topológico; a revisão espacial é preservada separadamente.")
@@ -169,26 +218,37 @@ class PainelDiagnosticos(QDockWidget):
         vistos={r['occ_uid'] for r in rs}|{r['occ_uid'] for r in hs};prelim={r['occ_uid'] for r in rs if r['tipo']=='PRELIMINAR'};confirmados=sum(r['conclusao'] in CONCLUSOES[1:6] for r in hs)
         self.execucao.setText(f"{meta.get('projeto') or meta.get('nome','Investigação')} · {self.modo.currentText()}\nGIS {meta['geo']['execucao_uid'][:8]} · WaterGEMS {meta['topologia']['execucao_uid'][:8]} · cenário {meta['topologia'].get('cenario')}")
         self.execucao.setToolTip(f"Investigação {meta['uid']}\nGIS {meta['geo']['execucao_uid']}\nWaterGEMS {meta['topologia']['execucao_uid']}\nVersões e fontes completas na aba CONFIGURAÇÕES E FONTES")
-        self.resumo.setText(self.resumo.text()+f"\nSem registro: {len(self.casos)-len(vistos)} · com análise/anotação: {len(vistos)} · preliminares: {len(prelim)} · confirmadas: {confirmados} · propostas: {len(propostas(self.base,meta['uid'],modo=modo))}. Categorias podem se sobrepor; não são contagens de erros comprovados.")
+        self.resumo.setText(self.resumo.text()+f"\nHistórico legado: {len(vistos)} casos · anotações preliminares antigas: {len(prelim)} · conclusões antigas: {confirmados} · propostas: {len(propostas(self.base,meta['uid'],modo=modo))}. Categorias podem se sobrepor; não são contagens de erros comprovados.")
+        if hasattr(self,'editor_filtros'):
+            hs=list(self._analises.values());self.resumo.setText(self.resumo.text()+f"\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} casos indeterminados nos filtros (não incluídos). Resultados investigativos: {len([h for h in hs if h['modo']==modo])}.")
+        texto_detalhado=self.resumo.text();self.resumo.setToolTip(texto_detalhado)
+        pendentes=sum(op.pendente(self._analises.get((caso['uid'],modo))) for caso in self.casos)
+        self.resumo.setText(f"{len(self.visiveis)} de {len(self.casos)} ocorrências · {pendentes} pendentes · {len(self.casos)-pendentes} analisadas\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} indeterminadas nos filtros. Prioridade não confirma defeito.")
+        self.execucao.setText(f"{meta.get('projeto') or meta.get('nome','Investigação')} · {self.modo.currentText()}\nCenário {meta['topologia'].get('cenario')} · versões e fontes disponíveis na aba de configuração")
         if self.visiveis and selecionar_primeiro:
-            indice=next((i for i,c in enumerate(self.visiveis) if c['uid']==anterior),0);self.lista.selectRow(indice);self.selecionar()
+            indice=next((i for i,c in enumerate(self._itens_pagina) if c['uid']==anterior),0);self.lista.selectRow(indice);self.selecionar()
         else:
             self.lista.clearSelection();self.lista.setCurrentCell(-1,-1);self.atual=None;self.detalhes.clear();self.cartao.clear();self.mapa.limpar()
             self.analise.carregar(None,self.modo.currentData())
+            self.resultado_analise.carregar(None,self.modo.currentData())
             self.elementos_tabela.preencher([])
             self.aviso.setText('Escolha um dos casos relacionados.' if self.visiveis else 'Nenhum caso atende aos filtros. Isso não comprova ausência de problemas na rede.')
 
     def selecionar(self):
         row=self.lista.currentRow()
-        if not self._ativo or row<0 or row>=len(self.visiveis):return
-        destino=self.visiveis[row]
-        if self.atual and (destino['uid'],self.modo.currentData())!=self.analise.chave and self.analise.tem_edicoes() and not self.analise.resolver_edicoes():
-            anterior=next((i for i,c in enumerate(self.visiveis) if c['uid']==self.atual['uid']),-1)
+        if not self._ativo or row<0 or row>=len(self._itens_pagina):return
+        destino=self._itens_pagina[row]
+        if self.atual and (destino['uid'],self.modo.currentData())!=self.analise.chave and self.tem_edicoes() and not self.resolver_formularios():
+            anterior=next((i for i,c in enumerate(self._itens_pagina) if c['uid']==self.atual['uid']),-1)
             self.lista.blockSignals(True);self.lista.selectRow(anterior);self.lista.blockSignals(False);return
-        self.atual=self.visiveis[row];c=self.atual;self.detalhes.clear();modo=self.modo.currentData()
+        self.atual=self._itens_pagina[row];c=self.atual;self.detalhes.clear();modo=self.modo.currentData()
         self.analise.carregar(c,modo)
+        self.resultado_analise.carregar(c,modo)
         from .inspecao_tabular import elementos_caso
         self.elementos_tabela.preencher(elementos_caso(self.pacote,c,modo,self.analise.head.get('situacao','PENDENTE') if self.analise.head else 'PENDENTE'))
+        evidencias_filtro=[]
+        if hasattr(self,'editor_filtros'):self.indice_atributos.avaliar(c,self.editor_filtros.configuracao(),modo,evidencias_filtro)
+        self._evidencias_filtro=evidencias_filtro
         def grupo(titulo,textos,expandido=True):
             raiz=QTreeWidgetItem(self.detalhes,[titulo]);raiz.setExpanded(expandido)
             for texto in textos:QTreeWidgetItem(raiz,['',str(texto)])
@@ -198,6 +258,9 @@ class PainelDiagnosticos(QDockWidget):
         situacao=c['revisao']+' · revisão espacial do local' if c['local_uid'] else 'Não se aplica a um local geométrico único.'
         decisao=self.analise.head
         conclusao=(decisao['situacao']+' · '+decisao['conclusao']) if decisao else 'Conclusão técnica ainda não registrada; use ANÁLISE E DECISÃO.'
+        h=self._analises.get((c['uid'],modo))
+        if h:conclusao=op.estado(h)+' · '+h['resultado']+' · '+h['motivo']+' · '+h['observacao']
+        elif not decisao:conclusao='Sem resultado investigativo. Escolha um resultado ou registre uma observação no formulário ao lado.'
         partes=[f"<h3>{escape(c['titulo'])}</h3>",f"<p>{escape(c['resumo'])}</p>"]
         resumo_elementos=(c['tubos_gis'][:4] if c['tubos_gis'] else c['elementos'][:4])
         tipos=self.pacote['topologia']['modelo']['elementos']
@@ -214,6 +277,8 @@ class PainelDiagnosticos(QDockWidget):
         linhas.append('Active Topology e restrições de dispositivos podem alterar componentes. Sem evidência específica não atribuir a diferença a válvulas fechadas. Estados do cenário indisponíveis.')
         linhas.append('Conexão direta: elementos compartilham um nó cadastrado. Mesmo componente: existe um caminho no grafo, que pode passar por outros trechos e dispositivos. Nenhum desses resultados comprova a operação real.')
         grupo('Comparar perspectivas',linhas,False)
+        if self._evidencias_filtro:
+            grupo('Atributos avaliados pelos filtros',[str(e['camada'].get('nome') if e['camada'] else 'Fonte ausente')+' · '+ ' / '.join(e['campo'])+' = '+str(e['valor'])+' · atende: '+str(e['atende'])+' · '+str(e['proveniencia']) for e in self._evidencias_filtro],False)
         tecnico=grupo('Detalhamento técnico',[f"Ocorrência {c['uid']}",f"Origem {c['tipo']} / {c['chave']}",f"Elementos nativos: {c['wg_ids']}",f"Identidades GIS: {c['gis_uids']}",*elementos],False)
         for n,t in c['tecnico']:QTreeWidgetItem(tecnico,[n,t])
         for m,us in c['componentes'].items():QTreeWidgetItem(tecnico,[m,'; '.join(us)])
@@ -223,6 +288,14 @@ class PainelDiagnosticos(QDockWidget):
             for col in range(2):item.setToolTip(col,item.text(col))
             pend.extend(item.child(i) for i in range(item.childCount()))
         n=self.mapa.destacar(c,modo)
+        # Contexto comprovado dos filtros, sem alterar o pacote/estilos aprovados.
+        regionais=[]
+        for area in self.indice_atributos.locais.get(c['local_uid'],{}):
+            a=self.indice_atributos.areas[area];regionais.append(a['camada']+' · '+str(a.get('exibicao') if a.get('exibicao') is not None else a['chave'])+' · '+', '.join(sorted(self.indice_atributos.locais[c['local_uid']][area])))
+            g=self.indice_atributos._contexto_geometrico.get(area)
+            if g is not None and not (area.startswith('CTX:') and area[4:] in c['area_uids']):self.mapa.adicionar(g,'#887100',foco=False)
+        if regionais:grupo('Regiões com relação identificada',regionais,False)
+        n=len(self.mapa.geometrias)
         self.aviso.setText(f"{n} destaques temporários. Azul: tubos; verde: nós; magenta: dispositivos; ocre: limites; laranja tracejado: hipótese espacial, sem criar conexão. Aproximação é explícita." if n else 'Geometria ou CRS insuficiente; consulta técnica disponível, sem posicionamento inventado.')
 
     def configurar(self):
@@ -246,17 +319,29 @@ class PainelDiagnosticos(QDockWidget):
         else:self.aviso.setText('Este caso não tem um local geométrico único. Use Anotar / decidir para registrar a investigação topológica da ocorrência.')
 
     def anotar(self):
-        if self.atual:self.tabs.setCurrentWidget(self.analise);self.analise.tabs.setCurrentIndex(0);self.analise.anotacao.setFocus()
+        if self.atual:self.tabs.setCurrentIndex(0);self.resultado_analise.observacoes.setFocus()
+
+    def mudar_pagina(self,delta):
+        if not self.resolver_formularios():return
+        self._pagina+=delta;self.preencher(preservar=False)
+
+    def selecionar_uid(self,uid):
+        i=next((i for i,c in enumerate(self.visiveis) if c['uid']==uid),None)
+        if i is None:return
+        self._pagina=i//self._tamanho_pagina;self.preencher(preservar=False);self.lista.selectRow(i%self._tamanho_pagina)
 
     def proxima(self):
         if self.lista.rowCount()==0:return
         linha=self.lista.currentRow()+1
-        if linha>=self.lista.rowCount():self.aviso.setText('Fim da lista filtrada. Ajuste os filtros para consultar outros casos.');return
+        if linha>=self.lista.rowCount():
+            if (self._pagina+1)*self._tamanho_pagina<len(self.visiveis):self.mudar_pagina(1)
+            else:self.aviso.setText('Fim da lista filtrada. Ajuste os filtros para consultar outros casos.')
+            return
         self.lista.selectRow(linha)
 
     def inversa(self,camada):
         if not self._ativo or self._sincronizando:return
-        if self.analise.tem_edicoes() and not self.analise.resolver_edicoes():return
+        if self.tem_edicoes() and not self.resolver_formularios():return
         fs=camada.selectedFeatures()
         if len(fs)!=1:return
         f=fs[0];campos=camada.fields().names();candidatos=[]
@@ -290,8 +375,15 @@ class PainelDiagnosticos(QDockWidget):
         if not self.legado.close():event.ignore();return
         self.desativar();event.accept()
 
+    def tem_edicoes(self):
+        return self.analise.tem_edicoes() or (hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes())
+
+    def resolver_formularios(self):
+        if hasattr(self,'resultado_analise') and not self.resultado_analise.resolver_edicoes():return False
+        return self.analise.resolver_edicoes()
+
     def resolver_alteracoes(self):
-        if not self.analise.resolver_edicoes():return False
+        if not self.resolver_formularios():return False
         if self.legado.tem_edicoes():
             if not self.legado.resolver_edicoes():return False
             # O formulário espacial legado retorna Descartar sem repor valores.

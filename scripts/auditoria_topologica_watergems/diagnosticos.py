@@ -141,7 +141,7 @@ def filtrar(casos,categoria=None,componente=None,regiao=None,revisao=None,modo='
     return [c for c in casos if (not categoria or categoria in c.get('categorias_por_modo',{}).get(modo,c['categorias']))
         and (not componente or componente in c['componentes'][modo]) and (not regiao or regiao in c['regioes'])
         and (not revisao or revisao==c['revisao']) and (not elemento or elemento.casefold() in c['busca'])
-        and (fonte is None or c['fontes'][modo] is fonte) and (not prioridade or prioridade==c['prioridade'])]
+        and (fonte is None or c['fontes'][modo] is fonte) and (not prioridade or prioridade==(c.get('prioridade_trabalho') or c.get('prioridade_sugerida',c['prioridade'])))]
 
 
 def contagens(casos):
