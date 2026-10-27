@@ -18,13 +18,23 @@ class PainelDiagnosticos(QDockWidget):
     def __init__(self,legado,parent=None):
         super().__init__('Diagnósticos GIS × WaterGEMS',parent)
         self.legado=legado;self.pacote=legado.pacote;self.base=legado.base;self._ativo=True;self._sincronizando=False
-        self.casos=catalogar(self.pacote);self.indice_atributos=ContextoFiltros(self.pacote);self.indice_atributos.restaurar_persistidas(self.base);self._analises=op.indice(self.base,self.pacote['resultado']['meta']['uid']);self._generico_estavel=None;self._fila_estavel=0;self._resultado_estavel=0;self._filtros_sessao={};self._pagina=0;self._tamanho_pagina=200;self._itens_pagina=[];self.atual=None;self._inversos=None;self._conexoes=[]
+        self.casos=catalogar(self.pacote);self.indice_atributos=ContextoFiltros(self.pacote);self.indice_atributos.restaurar_persistidas(self.base)
+        from .locais_manuais import casos as casos_manuais
+        self.casos+=casos_manuais(self.base,self.pacote,self.indice_atributos)
+        self._redes_ui=None;self._ferramenta_manual=None
+        self._analises=op.indice(self.base,self.pacote['resultado']['meta']['uid']);self._generico_estavel=None;self._fila_estavel=0;self._resultado_estavel=0;self._filtros_sessao={};self._pagina=0;self._tamanho_pagina=200;self._itens_pagina=[];self.atual=None;self._inversos=None;self._conexoes=[]
         self._filtros_estaveis=None;self._modo_estavel='ESTRUTURAL';self._bloqueador=None;self._iface=None
         self.mapa=MapaDiagnosticos(self.pacote,legado.projeto,legado.canvas)
         w=QWidget();self.setWidget(w);v=QVBoxLayout(w);self.resize(920,720)
         self.execucao=QLabel('Auditoria integrada · '+self.pacote['resultado']['meta']['uid'][:12]+' · detectar → localizar → investigar');self.execucao.setWordWrap(True);v.addWidget(self.execucao)
         self.tabs=QTabWidget();v.addWidget(self.tabs);diag=QWidget();self.tabs.addTab(diag,'DIAGNÓSTICOS');layout=QVBoxLayout(diag)
         self.resumo=QLabel();self.resumo.setWordWrap(True);layout.addWidget(self.resumo)
+        acoes_manuais=QHBoxLayout();layout.addLayout(acoes_manuais)
+        self.origem_filtro=QComboBox();self.origem_filtro.addItem('Todas as origens',None);self.origem_filtro.addItem('Automática','AUTOMATICA');self.origem_filtro.addItem('Manual','MANUAL');acoes_manuais.addWidget(self.origem_filtro)
+        from .ferramentas_investigacao_ui import iniciar_local
+        for nome,acao in [('Adicionar local',lambda:iniciar_local(self)),('A partir da seleção',lambda:iniciar_local(self,por_selecao=True)),('Editar local manual',lambda:iniciar_local(self,editar=True)),('Redes principais…',self.abrir_redes)]:
+            b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());acoes_manuais.addWidget(b)
+        self.origem_filtro.currentIndexChanged.connect(self.filtrar)
         self.mostrar_filtros=QPushButton('Filtros ▾');self.mostrar_filtros.setCheckable(True);self.mostrar_filtros.setChecked(True);layout.addWidget(self.mostrar_filtros)
         self.bloco_filtros=QWidget();filtros=QGridLayout(self.bloco_filtros);self.rolagem_filtros=QScrollArea();self.rolagem_filtros.setWidgetResizable(True);self.rolagem_filtros.setWidget(self.bloco_filtros);self.rolagem_filtros.setMaximumHeight(240);self.rolagem_filtros.setMinimumHeight(70);layout.addWidget(self.rolagem_filtros)
         self.mostrar_filtros.toggled.connect(self.rolagem_filtros.setVisible)
@@ -100,6 +110,8 @@ class PainelDiagnosticos(QDockWidget):
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
         for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
+        for nome,acao in [('Excluir logicamente local manual',self.excluir_manual),('Restaurar local manual excluído…',self.restaurar_manual),('Recuperar locais manuais de outra investigação…',self.importar_manuais)]:
+            b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
         configurar=QPushButton('Abrir seleção de auditorias e fontes…');fv.addWidget(configurar)
         configurar.clicked.connect(self.configurar)
         self.modo.currentIndexChanged.connect(self.trocar_modo)
@@ -107,6 +119,8 @@ class PainelDiagnosticos(QDockWidget):
         self.busca.textChanged.connect(self.filtrar);self.lista.itemSelectionChanged.connect(self.selecionar)
         legado.revisao_salva.connect(self.revisao_atualizada)
         self.trocar_modo()
+        from .representacoes_manuais import carregar_manuais
+        carregar_manuais(self)
         for c in legado.projeto.mapLayers().values():
             if c.customProperty('integracao/uid')==meta['uid'] and c.customProperty('integracao/base')==str(Path(self.base).resolve()):
                 callback=lambda *args,c=c:self.inversa(c)
@@ -118,6 +132,8 @@ class PainelDiagnosticos(QDockWidget):
     def revisao_atualizada(self,*args):
         if not self._ativo:return
         self.casos=catalogar(self.pacote)
+        from .locais_manuais import casos
+        self.casos+=casos(self.base,self.pacote,self.indice_atributos)
         for c in self.casos:
             if self.revisao.findData(c['revisao'])<0:self.revisao.addItem(c['revisao'],c['revisao'])
         self.filtrar()
@@ -147,6 +163,7 @@ class PainelDiagnosticos(QDockWidget):
         for c in self.casos:
             h=self._analises.get((c['uid'],self.modo.currentData()),{});sugestao,criterio=op.sugerir(c,self.indice_atributos);c['prioridade_sugerida']=h.get('prioridade_auto',sugestao);c['motivo_prioridade']=h.get('criterio_auto',criterio);c['prioridade_trabalho']=h.get('prioridade_trabalho')
         novos=filtrar(self.casos,self.categoria.currentData(),self.componente.currentData(),self.regiao.currentData(),self.revisao.currentData(),self.modo.currentData(),self.busca.text(),self.fonte.currentData(),self.prioridade.currentData())
+        if self.origem_filtro.currentData():novos=[c for c in novos if c.get('origem','AUTOMATICA')==self.origem_filtro.currentData()]
         from .decisoes import indice_revisoes,registros
         self._revisoes_topologicas=indice_revisoes(self.base,self.pacote['resultado']['meta']['uid'])
         rr=registros(self.base,self.pacote['resultado']['meta']['uid'],modo=self.modo.currentData());analisados={r['occ_uid'] for r in rr}|{u for u,m in self._revisoes_topologicas if m==self.modo.currentData()}
@@ -361,6 +378,12 @@ class PainelDiagnosticos(QDockWidget):
         self.aviso.setText('Seleção do mapa: caso identificado inequivocamente.' if len(candidatos)==1 else f'{len(candidatos)} casos relacionados à seleção. Escolha um caso; nenhuma correspondência é presumida.')
 
     def desativar(self):
+        if self._ferramenta_manual and self.legado.canvas:
+            ferramenta,anterior=self._ferramenta_manual
+            if self.legado.canvas.mapTool() is ferramenta:
+                self.legado.canvas.setMapTool(anterior) if anterior else self.legado.canvas.unsetMapTool(ferramenta)
+            self._ferramenta_manual=None
+        if self._redes_ui:self._redes_ui.close()
         self._ativo=False;self.mapa.fechar()
         if self._iface and self._bloqueador:
             self._iface.unregisterApplicationExitBlocker(self._bloqueador);self._bloqueador.registrado=False;self._bloqueador=None
@@ -370,15 +393,62 @@ class PainelDiagnosticos(QDockWidget):
                 except (TypeError,RuntimeError):pass
         self._conexoes=[];self.legado.desativar();self.hide()
 
+    def recarregar_manuais(self,uid=None):
+        from .locais_manuais import casos
+        from .representacoes_manuais import carregar_manuais
+        self.indice_atributos._cache.clear();self.casos=[c for c in self.casos if c['tipo']!='MANUAL']+casos(self.base,self.pacote,self.indice_atributos)
+        self.filtrar();carregar_manuais(self)
+        if uid:
+            caso=next((c for c in self.casos if c.get('manual_uid')==uid),None)
+            if caso:self.selecionar_uid(caso['uid'])
+
+    def abrir_redes(self):
+        from .ferramentas_investigacao_ui import DialogoRedes
+        if self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and self._redes_ui.modo!=self.modo.currentData():
+            if not self._redes_ui.close():return
+            self._redes_ui.deleteLater();self._redes_ui=None
+        if self._redes_ui is None or sip.isdeleted(self._redes_ui):self._redes_ui=DialogoRedes(self)
+        self._redes_ui.show();self._redes_ui.raise_();self._redes_ui.activateWindow()
+
+    def excluir_manual(self):
+        if not self.atual or self.atual['tipo']!='MANUAL':return
+        if not self.resolver_formularios():return
+        if QMessageBox.question(self,'Excluir local manual','Excluir da lista ativa preservando todos os vínculos e o histórico?',QMessageBox.Yes|QMessageBox.Cancel)!=QMessageBox.Yes:return
+        from .conjuntos_investigacao import salvar
+        r=self.atual['manual_registro'];salvar(self.base,self.pacote,'LOCAL_MANUAL',r['dados'],r['vinculos'],uid=r['obj_uid'],esperada=r['uid'],modo=r['modo'],excluido=True);self.recarregar_manuais()
+
+    def importar_manuais(self):
+        if not self.resolver_formularios():return
+        from .conjuntos_investigacao import importar
+        fonte,_=QFileDialog.getOpenFileName(self,'Recuperar locais manuais','','GeoPackage (*.gpkg)')
+        if fonte:
+            try:
+                from .saidas_integracao import reabrir
+                pacote=reabrir(fonte);r=importar(fonte,pacote,self.base,self.pacote);self.recarregar_manuais();QMessageBox.information(self,'Recuperação conservadora',str(r)+'\nResultados anteriores não foram transferidos; consulte o histórico na origem.')
+            except Exception as e:QMessageBox.warning(self,'Recuperação não aplicada',str(e))
+
+    def restaurar_manual(self):
+        if not self.resolver_formularios():return
+        from .conjuntos_investigacao import atuais,salvar
+        from qgis.PyQt.QtWidgets import QInputDialog
+        rs=[r for r in atuais(self.base,self.pacote,'LOCAL_MANUAL',True) if r['excluido']]
+        if not rs:QMessageBox.information(self,'Restaurar','Não há locais manuais excluídos nesta investigação.');return
+        nomes=[r['dados'].get('titulo','Local manual')+' · '+r['obj_uid'][:8] for r in rs];nome,ok=QInputDialog.getItem(self,'Restaurar local','Escolha um local',nomes,0,False)
+        if ok:
+            r=rs[nomes.index(nome)]
+            try:salvar(self.base,self.pacote,'LOCAL_MANUAL',r['dados'],r['vinculos'],uid=r['obj_uid'],esperada=r['uid'],modo=r['modo']);self.recarregar_manuais(r['obj_uid'])
+            except Exception as e:QMessageBox.warning(self,'Restauração não aplicada',str(e))
+
     def closeEvent(self,event):
         if not self.resolver_alteracoes():event.ignore();return
         if not self.legado.close():event.ignore();return
         self.desativar();event.accept()
 
     def tem_edicoes(self):
-        return self.analise.tem_edicoes() or (hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes())
+        return self.analise.tem_edicoes() or (hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes()) or (self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and self._redes_ui.tem_edicoes())
 
     def resolver_formularios(self):
+        if self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and not self._redes_ui.resolver():return False
         if hasattr(self,'resultado_analise') and not self.resultado_analise.resolver_edicoes():return False
         return self.analise.resolver_edicoes()
 

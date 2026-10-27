@@ -80,3 +80,8 @@ GPKG conserva a estrutura completa. SHP é uma visão simplificada com campos DB
 compatíveis e tabelas auxiliares; XLSX permite análise e detalhamento expansível.
 Escolher formatos e destinos pelos controles existentes. Reimportar e conferir CRS,
 chaves, vínculos e avisos. Nenhuma saída é uma instrução automática de intervenção.
+
+
+## Locais manuais e conjuntos — 1.6.0
+
+Extensão aditiva IGD com geometrias históricas e visão de locais ativos, associações manuais, recuperação transacional e conjuntos por critérios cadastrais/estruturais. Guia: LOCAIS_MANUAIS_E_REDES.md

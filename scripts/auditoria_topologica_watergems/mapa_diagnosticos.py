@@ -40,6 +40,15 @@ class MapaDiagnosticos:
         # Um destaque por família/tipo, evitando milhares de itens de canvas
         # quando o engenheiro solicita um componente extenso completo.
         grupos={}
+        if caso.get('manual_posicao'):
+            d=caso['manual_posicao'];g=QgsGeometry.fromWkt(f"POINT({d['x']} {d['y']})")
+            origem=QgsCoordinateReferenceSystem(d['crs']);destino=QgsCoordinateReferenceSystem(self.pacote['dossie']['contexto']['parametros']['crs'])
+            if origem!=destino:g.transform(QgsCoordinateTransform(origem,destino,self.projeto))
+            self.adicionar(g,'#dd5500');self.centro_local=g
+            for v in caso['manual_registro']['vinculos']:
+                wkb=v['dados'].get('geometria_wkb')
+                if v['origem']=='GIS' and wkb:
+                    linha=QgsGeometry();linha.fromWkb(bytes.fromhex(wkb));self.adicionar(linha,'#1464dc')
         for i in sorted(ids):
             g=gs.get(i)
             if g and not g.isEmpty():
@@ -75,6 +84,10 @@ class MapaDiagnosticos:
         from auditoria_fronteiras.painel import localizar_tubulacoes
         d=self.pacote['dossie'];t=[t for t in d['tubulacoes'] if t['uid'] in caso['gis_uids']]
         encontrados,avisos=localizar_tubulacoes(d,t,self.projeto)
+        if caso.get('manual_registro'):
+            from .locais_manuais import redes_gis
+            for v,g,cid,fid in redes_gis(self.pacote,self.projeto):
+                if v['chave'] in caso['gis_uids']:encontrados.setdefault(cid,[]).append(fid)
         for u,ids in encontrados.items():
             c=self.projeto.mapLayer(u)
             if ids:

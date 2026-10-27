@@ -76,3 +76,8 @@ O original pode estar indisponível; divergências semânticas bloqueiam reprodu
 
 O Model Builder Composer é referência externa de validação; não é dependência
 runtime nem código incorporado. Ver [atribuições](../../THIRD_PARTY_NOTICES.md).
+
+
+## Locais manuais e conjuntos — 1.6.0
+
+Extensão aditiva IGD com geometrias históricas e visão de locais ativos, associações manuais, recuperação transacional e conjuntos por critérios cadastrais/estruturais. Guia: LOCAIS_MANUAIS_E_REDES.md

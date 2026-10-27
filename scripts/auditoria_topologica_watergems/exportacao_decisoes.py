@@ -15,6 +15,9 @@ from .saidas import exportar_tabelas_xlsx
 
 def tabelas_decisoes(base,pacote):
     ig=pacote['resultado']['meta']['uid'];casos=catalogar(pacote)
+    from .locais_manuais import casos as casos_manuais
+    from .conjuntos_investigacao import historico,atuais as objetos_atuais
+    casos+=casos_manuais(base,pacote)
     with abrir_ro(base) as con:
         con.row_factory=__import__('sqlite3').Row
         hs=[dict(r) for r in con.execute('SELECT * FROM IGD_REVISOES WHERE ig_uid=? ORDER BY rowid',(ig,))] if existe(con) else []
@@ -71,6 +74,16 @@ def tabelas_decisoes(base,pacote):
     tabelas['RESULTADOS_INVESTIGATIVOS']=(('OCC_UID','DIAGNOSTICO','PERSPECTIVA','ANDAMENTO','RESULTADO','MOTIVO','OBSERVACAO','PRIOR_AUTO','CRITERIO','PRIOR_TRAB','DATA_UTC'),linhas)
     tabelas['RESUMO_ANALISES']=(('PERSPECTIVA','ESTADO','QUANTIDADE'),res)
     tabelas['RELACOES_PARA_FILTROS']=(('LOCAL_UID','AREA_UID','EVENTO_UID','RELACAO','ORIGEM'),[(r['local'],r['area'],r['evento'],r['relacao'],r['origem']) for r in contexto.relacoes])
+    objetos=historico(base,pacote)
+    tabelas['HIST_LOCAIS_CONJUNTOS']=(('OBJ_UUID','HIST_UUID','TIPO','ANTERIOR','TOPO_UID','PERSPECTIVA','EXCLUIDO','DATA','TITULO_NOME'),[(r['obj_uid'],r['uid'],r['tipo'],r['anterior'],r['topo_uid'],r['modo'],r['excluido'],r['data_utc'],r['dados'].get('nome',r['dados'].get('titulo',''))) for r in objetos])
+    partes=[]
+    for r in objetos:
+        texto=json.dumps(r['dados'],ensure_ascii=False,default=str);total=max(1,(len(texto)+29999)//30000)
+        partes.extend((r['uid'],n+1,total,texto[n*30000:(n+1)*30000]) for n in range(total))
+    tabelas['DADOS_OBJETOS_PARTES']=(('HIST_UUID','PARTE','TOTAL','JSON_TEXTO'),partes)
+    tabelas['VINCULOS_MANUAIS_CONJUNTOS']=(('HIST_UUID','ORIGEM','CHAVE','NATUREZA','LABEL','TIPO','CAMADA','WG_UID'),[(r['uid'],v['origem'],v['chave'],v['natureza'],v['dados'].get('label'),v['dados'].get('tipo'),v['dados'].get('camada'),v['dados'].get('uid')) for r in objetos for v in r['vinculos']])
+    tabelas['LOCAIS_MANUAIS']=(('LOCAL_UUID','TITULO','OBSERVACOES','X','Y','CRS','N_VINCULOS'),[(r['obj_uid'],r['dados'].get('titulo'),r['dados'].get('observacoes'),r['dados']['x'],r['dados']['y'],r['dados']['crs'],len(r['vinculos'])) for r in objetos_atuais(base,pacote,'LOCAL_MANUAL')])
+    tabelas['CONJUNTOS_REDES']=(('CONJ_UUID','NOME','TOPO_UID','PERSPECTIVA','N_ELEMENTOS'),[(r['obj_uid'],r['dados']['nome'],r['topo_uid'],r['modo'],len(r['vinculos'])) for r in objetos_atuais(base,pacote,'REDE_PRINCIPAL')])
     return tabelas
 
 
@@ -90,12 +103,16 @@ def exportar_acompanhamento(base,pacote,pasta,xlsx=True,gpkg=False,shp=False):
         from .saidas import exportar_geografico
         c=QgsVectorLayer('Point?crs='+pacote['dossie']['contexto']['parametros']['crs'],'DECISOES_OCORRENCIAS','memory')
         c.dataProvider().addAttributes([QgsField(n,QVariant.String,len=l) for n,l in [('FEAT_UID',80),('OCC_UID',80),('IG_UID',40),('MODO',30),('SITUACAO',80),('CONCLUSAO',80)]]);c.updateFields()
-        locais={l['uid']:l for l in pacote['resultado']['locais']};casos={o['uid']:o for o in catalogar(pacote)};fs=[]
+        from .locais_manuais import casos as casos_manuais
+        locais={l['uid']:l for l in pacote['resultado']['locais']};casos={o['uid']:o for o in catalogar(pacote)+casos_manuais(base,pacote)};fs=[]
         from .operacional import indice,estado
         resultados_op=indice(base,pacote['resultado']['meta']['uid'])
         for row in novas['DECISOES_TOPOLOGICAS'][1]:
             o=casos[row[0]];g=None
-            if o['local_uid']:
+            if o.get('manual_posicao'):
+                from qgis.core import QgsCoordinateReferenceSystem,QgsCoordinateTransform,QgsProject
+                pos=o['manual_posicao'];g=QgsGeometry.fromWkt(f"POINT({pos['x']} {pos['y']})");g.transform(QgsCoordinateTransform(QgsCoordinateReferenceSystem(pos['crs']),c.crs(),QgsProject.instance()))
+            elif o['local_uid']:
                 rr=locais[o['local_uid']]['registro'];g=QgsGeometry.fromWkt(f"POINT({rr['X']} {rr['Y']})")
             elif o['tipo']=='GIS':
                 pend=next((p for p in pacote['resultado']['pendencias'] if p['gis_uid']==o['chave']),None)

@@ -1,5 +1,9 @@
 # Histórico técnico publicável
 
+## 1.6.0 — locais manuais e conjuntos de redes
+
+Pontos sem eventos automáticos, associações explícitas, histórico e recuperação conservadora. Seleções cadastrais, pontes estruturais e corredores dirigidos, critérios combinados e conjuntos editáveis. Exportação CSV de identidades e seleção QGIS; criação nativa de Selection Sets no WaterGEMS ainda requer conferência. [Guia e limitações](LOCAIS_MANUAIS_E_REDES.md).
+
 ## 1.5.0 — investigação operacional e filtros
 
 Resultado simples sem aprovação formal, motivos opcionais, fila de trabalho e

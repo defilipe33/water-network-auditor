@@ -151,6 +151,14 @@ class Aplicacao:
             progresso.setLabelText('Gravando e validando a nova investigação integrada')
             progresso.show()
             salvar_gpkg(pacote,p,cancelar)
+            # Somente na criação de nova investigação, nunca ao abrir uma versão
+            # histórica: preserva manuais e sinaliza vínculos a reconciliar.
+            if self.painel:
+                from auditoria_topologica_watergems.conjuntos_investigacao import importar
+                from auditoria_topologica_watergems.decisoes import digest
+                origem=self.painel.pacote
+                if digest(origem['topologia']['modelo']['projeto'])==digest(pacote['topologia']['modelo']['projeto']):
+                    importar(self.painel.base,origem,p,pacote)
             if self.publicar(pacote,p,modo):progresso.concluir()
         except Exception as e:progresso.falhar(e);raise
         finally:self.ocupado=False;progresso.close()
