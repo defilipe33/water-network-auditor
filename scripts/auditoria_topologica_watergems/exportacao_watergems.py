@@ -12,6 +12,10 @@ def preparar(pacote,registro):
     modo=registro['modo'];meta=pacote['resultado']['meta'];topo=meta['topologia']['execucao_uid']
     if modo not in MODOS or registro['topo_uid']!=topo:raise ValueError('Conjunto pertence a outra versão/perspectiva; abra a fonte correspondente.')
     el=pacote['topologia']['modelo']['elementos'];g=pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial']['grafo']
+    criterios=registro['dados'].get('criterios',{});criterios=criterios if isinstance(criterios,dict) else {}
+    if criterios.get('restricoes') is not None:
+        from .restricoes_percurso import normalizar,grafo_trabalho
+        g=grafo_trabalho(pacote,modo,normalizar(pacote,criterios['restricoes']))['grafo']
     selecionados={};avisos=[];distintos={};ordens=[]
     for v in registro['vinculos']:
         i=int(v['chave']);e=el.get(i)
@@ -54,7 +58,7 @@ def preparar(pacote,registro):
         if len(mantidos)!=len(rota.get('tubulacoes',[])):avisos.append('Rota '+str(rota['uid'])+': segmentos fora da seleção final omitidos; não se presume continuidade após edição.')
     if not ordens:avisos.append('Sem percurso ordenado persistido; extremidades vêm do grafo, sem sequência inventada.')
     for r in distintos.values():r['Origem']='; '.join(r['Origem'])
-    return dict(elementos=list(distintos.values()),percursos=ordens,contagens=dict(Counter(r['Tipo'] for r in distintos.values())),avisos=avisos,conjunto=registro['obj_uid'],versao=topo,modo=modo)
+    return dict(elementos=list(distintos.values()),percursos=ordens,contagens=dict(Counter(r['Tipo'] for r in distintos.values())),avisos=avisos,conjunto=registro['obj_uid'],versao=topo,modo=modo,restricoes=criterios.get('restricoes'),comparacao_restricoes=criterios.get('comparacao_restricoes'))
 
 
 def consultas(dados,modelo,campo='Label',campo_id=None,validado=False,max_itens=100,max_caracteres=4000):
@@ -129,6 +133,7 @@ def exportar(pasta,pacote,registro,opcoes=None):
             for q,r in zip(qs,indice):(tmp/r['Arquivo']).write_text(q['expressao'],encoding='utf8')
             manifesto=dict(conjunto=dados['conjunto'],versao=dados['versao'],perspectiva=dados['modo'],consultas=indice,sha256={r['Arquivo']:hashlib.sha256((tmp/r['Arquivo']).read_bytes()).hexdigest() for r in indice})
             (tmp/'MANIFESTO_QUERIES.json').write_text(json.dumps(manifesto,ensure_ascii=False,indent=2),encoding='utf8')
+        if dados.get('restricoes') is not None:(tmp/'RESTRICOES_PERCURSO.json').write_text(json.dumps(dict(conjunto=dados['conjunto'],versao=dados['versao'],modo=dados['modo'],restricoes=dados['restricoes'],comparacao=dados['comparacao_restricoes']),ensure_ascii=False,indent=2),encoding='utf8')
         if opcoes.get('conferencia',True):(tmp/'CONFERENCIA.json').write_text(json.dumps(dados,ensure_ascii=False,indent=2),encoding='utf8')
         if opcoes.get('instrucoes',True):(tmp/'LEIA_ME.txt').write_text('1. Abra o modelo e cenário de origem indicados no índice.\n2. No Query Manager crie uma Query do tipo indicado em INDICE_QUERIES.csv.\n3. Cole a expressão do arquivo daquele tipo/lote e confira o campo no Query Builder.\n4. Execute e confira a quantidade do lote.\n5. Crie um Selection Set ESTÁTICO ou acrescente ao conjunto em trabalho. Uma Query pode substituir a seleção anterior: não presuma adição automática.\n6. Repita para os outros lotes e tipos, conferindo a união.\n7. Compare o total distinto e os IDs/tipos/Labels com ELEMENTOS.csv e o conferidor.\nIN documentado pela Bentley: '+FONTE_QUERY+'\nOs limites de lote são conservadores configuráveis, sem limite máximo comprovado do produto. Consulta dinâmica pode mudar com o modelo. Selection by Query não importa CSV. Find Adjacent Nodes só auxilia: confira os nós contra a lista. Criação nativa e sintaxe local permanecem pendentes de teste no WaterGEMS desktop. Nenhum SQLite original foi alterado.\n',encoding='utf8')
         os.rename(tmp,pasta)

@@ -86,7 +86,7 @@ def vinculo_wg(pacote,i,natureza='MANUAL'):
 
 
 def salvar(base,pacote,tipo,dados,vinculos=(),uid=None,esperada=None,modo='ESTRUTURAL',excluido=False):
-    if tipo not in ('LOCAL_MANUAL','REDE_PRINCIPAL'):raise ValueError('Tipo de objeto inválido')
+    if tipo not in ('LOCAL_MANUAL','REDE_PRINCIPAL','PERFIL_RESTRICOES'):raise ValueError('Tipo de objeto inválido')
     if modo not in db.MODOS:raise ValueError('Perspectiva indisponível')
     dados=dict(dados)
     if tipo=='LOCAL_MANUAL':

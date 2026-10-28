@@ -1,5 +1,9 @@
 # Histórico técnico publicável
 
+## 1.9.0 — restrições de percurso
+
+Regras por tipo e equipamento, preferências lexicográficas, bloqueios em cópia do grafo, direção obrigatória das retenções, estados manuais identificados como hipóteses, perfis versionados e comparação/exportação completa. [Guia](RESTRICOES_CORREDORES.md).
+
 ## 1.8.1 — relatórios, Queries e acompanhamento
 
 Relatório offline por padrão, prévia de um caso, fontes locais e alternativas seguras para serviços externos; localização cadastral/logradouros; Queries com nomes por tipo e índice. RESOLVIDO independente de diagnóstico, prioridade e resultado técnico, com fila Em aberto, resolver/avançar/reabrir, histórico, comparação conservadora e relatórios. [Guia](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).

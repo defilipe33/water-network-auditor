@@ -1,5 +1,7 @@
 # Instalação e operação
 
+Na **1.9.0**, expanda RESTRIÇÕES DE PERCURSO no módulo de corredores para permitir, evitar ou bloquear equipamentos. Exceções podem ser escolhidas por mapa, seleção QGIS ou tabela. [Guia, critérios e aceitação](RESTRICOES_CORREDORES.md).
+
 Na **1.8.1**, use **✓ Marcar como resolvido** ou **Resolvido e próxima** para retirar um caso da fila Em aberto sem alterar sua interpretação técnica. Em Resolvidas, use Reabrir investigação. Relatórios funcionam offline por padrão, com filtro de resolvidas e prévia de um caso. [Instruções e roteiro de aceitação](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).
 
 Em **Janelas / painéis**, recupere auditoria GIS, configuração WaterGEMS, investigação

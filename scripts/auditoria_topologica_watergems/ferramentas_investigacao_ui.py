@@ -169,6 +169,8 @@ class DialogoRedes(QDialog):
         from .terminais_ui import SeletorTerminais
         self.origem_ui=SeletorTerminais(self,'Origens · pontos iniciais escolhidos','#009050');self.destino_ui=SeletorTerminais(self,'Destinos','#d52f3f');v.addWidget(self.origem_ui);v.addWidget(self.destino_ui)
         self.regioes_botao=QPushButton('Adicionar destinos dos polígonos selecionados no QGIS');self.regioes_botao.clicked.connect(self.destino_ui.adicionar_regioes);v.addWidget(self.regioes_botao)
+        from .restricoes_ui import RestricoesPercurso
+        self.restricoes=RestricoesPercurso(self);v.addWidget(self.restricoes)
         self.orientacao=QLabel();self.orientacao.setWordWrap(True);v.addWidget(self.orientacao)
         linha=QHBoxLayout();v.addLayout(linha)
         for nome,fn in [('Identificar',self.calcular),('Recuperar conjunto',self.recuperar),('Comparar com conjunto',self.comparar),('Acrescentar selecionadas',self.acrescentar),('Destacar selecionadas',self.destacar)]:
@@ -213,20 +215,23 @@ class DialogoRedes(QDialog):
             pacote=self.painel.pacote
             from .corredores import calcular,comprimentos_metricos
             comprimentos=comprimentos_metricos(pacote)
-            assinatura_calculo=self.parametros_assinatura()
+            assinatura_calculo=self.parametros_assinatura();regras=self.restricoes.config()
             def trabalho(cancelar,progresso):
                 cb=lambda etapa,n,total:progresso(0,etapa)
                 if metodo in ('CORREDORES','CAMINHO','COMBINADO_CORREDORES'):
-                    r=calcular(pacote,modo,origens,destinos,criterio,alternativas,'CAMINHO' if metodo=='CAMINHO' else 'CORREDORES',comprimentos,cb,cancelar)
+                    r=calcular(pacote,modo,origens,destinos,criterio,alternativas,'CAMINHO' if metodo=='CAMINHO' else 'CORREDORES',comprimentos,cb,cancelar,restricoes=regras)
                     if metodo=='COMBINADO_CORREDORES':
-                        cadastro=identificar(pacote,modo,'CADASTRAL',condicao,progresso=cb,cancelado=cancelar);a={v['chave']:v for v in r['elementos']};b={v['chave']:v for v in cadastro['elementos']};chaves=set(a)&set(b) if combinacao=='E' else set(a)|set(b)
+                        cadastro=identificar(pacote,modo,'CADASTRAL',condicao,progresso=cb,cancelado=cancelar)
+                        from .restricoes_percurso import grafo_trabalho,normalizar
+                        g=grafo_trabalho(pacote,modo,normalizar(pacote,regras),cancelar)['grafo'];disponiveis={d['elemento'] for _,_,d in g.edges(data=True) if d['natureza']=='TUBULACAO'}
+                        a={v['chave']:v for v in r['elementos']};b={v['chave']:v for v in cadastro['elementos'] if int(v['chave']) in disponiveis};chaves=set(a)&set(b) if combinacao=='E' else set(a)|set(b)
                         r['elementos']=[a.get(i,b.get(i)) for i in sorted(chaves)];r['criterios']={i:r['criterios'].get(i,[])+cadastro['criterios'].get(i,[]) for i in chaves};r['metodo']='COMBINADO_CORREDORES';r['combinacao']=combinacao;r['condicao']=condicao;r['aviso_continuidade']='A seleção combinada pode remover conectores ou incluir tubos cadastrais fora das rotas. Componentes das rotas não representam necessariamente a seleção editada.'
                     return r
                 r=identificar(pacote,modo,'CADASTRAL' if metodo=='CADASTRAL' else 'TOPOLOGICO',condicao,progresso=cb,cancelado=cancelar);r['metodo']=metodo;return r
             def pronto(r):
                 self.gerado=r;self.registro=None;self._parametros_calculados=assinatura_calculo
                 for e in r['elementos']:e['dados']['criterios']=r['criterios'][e['chave']]
-                r['regioes_destinos']=getattr(self,'_regioes_destinos',[]);self.preencher(r['elementos']);self.apresentar_rotas();self.destacar()
+                r['regioes_destinos']=getattr(self,'_regioes_destinos',[]);self.preencher(r['elementos']);self.apresentar_rotas();self.restricoes.apresentar(r);self.destacar()
             self.worker=sistema(self.painel).executar_thread('Identificando redes principais',modo,
                 trabalho,pronto,
                 lambda texto:self.estado.setText(texto+' · conjunto anterior preservado'))
@@ -246,10 +251,14 @@ class DialogoRedes(QDialog):
             if self.gerado and getattr(self,'_parametros_calculados',None)!=self.parametros_assinatura():raise ValueError('Origens, destinos ou parâmetros foram alterados. Recalcule antes de salvar; o conjunto anterior foi preservado.')
             criterios=self.gerado or (self.registro['dados'].get('criterios') if self.registro else {})
             estruturados=criterios if isinstance(criterios,dict) else {}
+            trabalho=None
+            if estruturados.get('restricoes') is not None:
+                from .restricoes_percurso import validar_selecao
+                trabalho=validar_selecao(self.painel.pacote,self.modo,estruturados['restricoes'],self.escolhidos())['grafo']
             escolhidos=self.escolhidos();algoritmo=set(estruturados.get('criterios',{}));finais={v['chave'] for v in escolhidos}
             if estruturados.get('metodo') in ('CORREDORES','CAMINHO','COMBINADO_CORREDORES'):
                 from .corredores import resumir_selecao
-                criterios=dict(criterios,continuidade_selecao=resumir_selecao(self.painel.pacote,self.modo,[int(v['chave']) for v in escolhidos],criterios.get('origens',[]),criterios.get('destinos',[])))
+                criterios=dict(criterios,continuidade_selecao=resumir_selecao(self.painel.pacote,self.modo,[int(v['chave']) for v in escolhidos],criterios.get('origens',[]),criterios.get('destinos',[]),grafo=trabalho))
             dados=dict(nome=self.nome.text(),criterios=criterios,edicoes_manuais=dict(incluidos=sorted(finais-algoritmo),removidos=sorted(algoritmo-finais)))
             uid,h=storage.salvar(self.painel.base,self.painel.pacote,'REDE_PRINCIPAL',dados,self.escolhidos(),
                 uid=self.registro['obj_uid'] if self.registro else None,esperada=self.registro['uid'] if self.registro else None,modo=self.modo)
@@ -264,9 +273,9 @@ class DialogoRedes(QDialog):
         if ok:
             if not self.resolver():return
             self.registro=rs[nomes.index(nome)];self.nome.setText(self.registro['dados']['nome']);self.gerado=None
-            self.origem_ui.fechar_captura();self.destino_ui.fechar_captura();self.modo=self.registro['modo']
+            self.origem_ui.fechar_captura();self.destino_ui.fechar_captura();self.restricoes.seletor.fechar_captura();self.modo=self.registro['modo']
             if hasattr(self,'_catalogo_terminais'):del self._catalogo_terminais
-            self.restaurar_parametros(self.registro['dados'].get('criterios') or {});self.preencher(self.registro['vinculos']);self.apresentar_rotas();self.baseline=self.assinatura()
+            self.restaurar_parametros(self.registro['dados'].get('criterios') or {});self.preencher(self.registro['vinculos']);self.apresentar_rotas();self.restricoes.apresentar(self.criterios_estruturados());self.baseline=self.assinatura()
             self.metodo_alterado();self.setWindowTitle('Corredores e conjuntos · '+self.modo)
 
     def comparar(self):
@@ -279,6 +288,8 @@ class DialogoRedes(QDialog):
             self.estado.setText(f"Mantidos: {len(r['mantidos'])}; incluídos: {len(r['incluidos'])}; removidos: {len(r['removidos'])}. Mesma versão: {r['mesma_versao']}.")
 
     def destacar(self):
+        if self.criterios_estruturados().get('restricoes') is not None and not self.painel.pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):
+            self.estado.setText('Corredor calculado. Valide CRS/unidades para os destaques; a lista topológica continua disponível.');return
         self.painel.mapa.limpar()
         criterios=self.criterios_estruturados();metricas=criterios.get('metricas',{})
         for rota in criterios.get('rotas_alternativas',[]):
@@ -325,18 +336,19 @@ class DialogoRedes(QDialog):
         if self.worker and not sip.isdeleted(self.worker) and self.worker.isRunning():
             QMessageBox.information(self,'Operação em andamento','Aguarde ou cancele pelo painel Atividade antes de fechar.');event.ignore();return
         if not self.resolver():event.ignore();return
-        self.origem_ui.fechar_captura();self.destino_ui.fechar_captura()
+        self.origem_ui.fechar_captura();self.destino_ui.fechar_captura();self.restricoes.seletor.fechar_captura()
         event.accept()
 
     def metodo_alterado(self):
         m=self.metodo.currentData();rotas=m in ('CORREDORES','CAMINHO','COMBINADO_CORREDORES')
-        for w in (self.origem_ui,self.destino_ui,self.regioes_botao,self.criterio_caminho,self.alternativas):w.setVisible(rotas)
+        for w in (self.origem_ui,self.destino_ui,self.regioes_botao,self.criterio_caminho,self.alternativas,self.restricoes):w.setVisible(rotas)
         self.combinacao.setVisible(m=='COMBINADO_CORREDORES')
         for w in (self.criterio_caminho,self.alternativas,self.combinacao):self._form_metodo.labelForField(w).setVisible(w.isVisibleTo(self))
         self.orientacao.setText('Perspectiva: '+self.modo+'. '+('Escolha origens e destinos (Junctions permitidas). Origem não implica fonte real. Corredores são união das rotas escolhidas, sem pontes periféricas automáticas.' if rotas else 'Cadastro usa os filtros ativos. Pontes/cortes são propriedades estruturais globais, não corredores alimentadores nem criticidade hidráulica.'))
 
     def restaurar_parametros(self,r):
         r=r if isinstance(r,dict) else {}
+        self.restricoes.carregar(r.get('restricoes'))
         m=r.get('metodo');idx=self.metodo.findData(m)
         if idx<0:
             if self.metodo.findData('LEGADO')<0:self.metodo.addItem('Conjunto legado · consultar critérios históricos','LEGADO')
@@ -352,12 +364,12 @@ class DialogoRedes(QDialog):
 
     def parametros_assinatura(self):
         from .decisoes import digest
-        return digest([self.metodo.currentData(),self.origem_ui.valores(),self.destino_ui.valores(),self.origens.text(),self.destinos.text(),self.criterio_caminho.currentData(),self.alternativas.currentData(),self.combinacao.currentText(),self.painel.editor_filtros.configuracao() if self.metodo.currentData() in ('CADASTRAL','COMBINADO_CORREDORES') else None])
+        return digest([self.metodo.currentData(),self.origem_ui.valores(),self.destino_ui.valores(),self.origens.text(),self.destinos.text(),self.criterio_caminho.currentData(),self.alternativas.currentData(),self.combinacao.currentText(),self.restricoes.config(),self.painel.editor_filtros.configuracao() if self.metodo.currentData() in ('CADASTRAL','COMBINADO_CORREDORES') else None])
 
     def apresentar_rotas(self):
         r=self.criterios_estruturados();rotas=r.get('rotas',[])+r.get('rotas_alternativas',[]);falhas=r.get('destinos_inalcancaveis',[]);self.rotas_tabela.setRowCount(len(rotas)+len(falhas))
         for n,t in enumerate(rotas):
-            for c,v in enumerate((t['uid']+(' alternativa' if t['alternativa'] else ''),str(t['origem'])+' → '+str(t['destino']),t['custo'],t['comprimento_m'],str(len(t['tubulacoes']))+' / '+str(len(t['dispositivos'])))):self.rotas_tabela.setItem(n,c,QTableWidgetItem(str(v)))
+            for c,v in enumerate((t['uid']+(' alternativa' if t['alternativa'] else ''),str(t['origem'])+' → '+str(t['destino']),(str(t['custo_lexicografico'][0])+' evitados / '+str(t['custo']) if t.get('custo_lexicografico') else t['custo']),t['comprimento_m'],str(len(t['tubulacoes']))+' / '+str(len(t['dispositivos'])))):self.rotas_tabela.setItem(n,c,QTableWidgetItem(str(v)))
             self.rotas_tabela.item(n,0).setData(Qt.UserRole,t)
         for n,t in enumerate(falhas,len(rotas)):
             for c,v in enumerate(('INALCANÇÁVEL',str(t['destino']),'—','—',t['motivo'])):
@@ -384,7 +396,13 @@ class DialogoRedes(QDialog):
         if n<0:return
         t=self.rotas_tabela.item(n,0).data(Qt.UserRole)
         if not t:QMessageBox.information(self,'Interrupção','Selecione uma linha INALCANÇÁVEL; não será inventado um ponto de ruptura.');return
+        if not self.painel.pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):QMessageBox.information(self,'Referência espacial','Valide CRS/unidades antes de localizar uma interrupção no mapa.');return
         d=t['destino'];i=d['id'] if isinstance(d,dict) else d[0] if isinstance(d,(tuple,list)) else d;g=(self.painel.pacote.get('geometrias') or {}).get(i)
+        if t.get('barreiras'):
+            from qgis.PyQt.QtWidgets import QInputDialog
+            escolhas=[('Destino',i)]+[(str(self.painel.pacote['topologia']['modelo']['elementos'][j].get('label'))+' ['+str(j)+']',j) for j in t['barreiras']];escolha,ok=QInputDialog.getItem(self,'Interrupção investigativa','Localizar uma barreira candidata ou o destino (não é causa única comprovada):',[a for a,b in escolhas],0,False)
+            if not ok:return
+            i=dict(escolhas)[escolha];g=(self.painel.pacote.get('geometrias') or {}).get(i)
         if g is None:QMessageBox.information(self,'Geometria indisponível','Crie um local pelo mapa; não há geometria validada para este destino.');return
         p=g.centroid().asPoint();dialogo=DialogoLocal(self.painel,dict(x=p.x(),y=p.y(),crs=self.painel.pacote['dossie']['contexto']['parametros']['crs']))
         dialogo.navegar=False;dialogo.titulo.setText('Investigar destino sem caminho cadastrado');dialogo.obs.setPlainText(t['motivo']);dialogo.exec_()
@@ -406,7 +424,7 @@ class DialogoRedes(QDialog):
 
     def assinatura(self):
         from .decisoes import digest
-        return digest([self.nome.text(),self.escolhidos()])
+        return digest([self.nome.text(),self.escolhidos(),self.restricoes.config()])
 
     def tem_edicoes(self):return bool(self.vinculos or self.registro) and self.assinatura()!=self.baseline
 

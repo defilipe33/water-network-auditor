@@ -46,9 +46,9 @@ def buscar_terminais(pacote,modo,texto='',limite=200):
     return saida
 
 
-def resumir_selecao(pacote,modo,ids,origens=(),destinos=()):
+def resumir_selecao(pacote,modo,ids,origens=(),destinos=(),grafo=None):
     """Componentes fracos da seleção efetiva, após combinações/edição manual."""
-    g=pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial']['grafo'];ids=set(ids);s=nx.Graph();pipes=[]
+    g=grafo if grafo is not None else pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial']['grafo'];ids=set(ids);s=nx.Graph();pipes=[]
     for a,b,d in g.edges(data=True):
         if d.get('natureza')=='TUBULACAO' and d['elemento'] in ids:s.add_edge(a,b);pipes.append((a,b,d['elemento']))
     for a,b,d in g.edges(data=True):
@@ -61,7 +61,10 @@ def resumir_selecao(pacote,modo,ids,origens=(),destinos=()):
 
 
 def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
-             metodo='CORREDORES',comprimentos=None,progresso=None,cancelado=None):
+             metodo='CORREDORES',comprimentos=None,progresso=None,cancelado=None,restricoes=None,_trabalho=None):
+    if restricoes is not None:
+        from .restricoes_percurso import calcular as restrito
+        return restrito(pacote,modo,origens,destinos,criterio,alternativas,metodo,comprimentos,progresso,cancelado,restricoes)
     if modo not in db.MODOS:raise ValueError('Perspectiva indisponível')
     if metodo not in ('CORREDORES','CAMINHO'):raise ValueError('Método de rotas inválido')
     if criterio not in ('ARESTAS','COMPRIMENTO'):raise ValueError('Critério de caminho inválido')
@@ -73,7 +76,7 @@ def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
         if cancelado and cancelado():raise InterruptedError('Cálculo cancelado; nenhum conjunto publicado')
         if progresso:progresso(texto,n,total)
     passo('Verificando terminais e perspectiva')
-    r=pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial'];g=r['grafo'];el=pacote['topologia']['modelo']['elementos']
+    r=pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial'];g=_trabalho['grafo'] if _trabalho is not None else r['grafo'];el=pacote['topologia']['modelo']['elementos']
     fontes=sorted(set(resolver_terminal(g,el,o) for o in origens),key=repr)
     if comprimentos is None:comprimentos=comprimentos_metricos(pacote)
     destinos_validos=[];inalcancaveis=[]
@@ -82,13 +85,18 @@ def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
             p=resolver_terminal(g,el,t)
             if p not in destinos_validos:destinos_validos.append(p)
         except ValueError as e:inalcancaveis.append(dict(destino=t,motivo=str(e),interrupcoes=[]))
-    arestas={};pesos={}
-    numero_arestas=g.number_of_edges()
+    arestas={};pesos={};pesos_base={};lex=bool(_trabalho and _trabalho['lexicografica']);zero=(0,0) if lex else 0
+    def somar(a,b):return (a[0]+b[0],a[1]+b[1]) if lex else a+b
+    numero_arestas=g.number_of_edges();numero_nos=g.number_of_nodes()
     for n,(a,b,k,d) in enumerate(g.edges(keys=True,data=True)):
         if n%1024==0:passo('Preparando arestas identificadas',n,numero_arestas)
         i=d['elemento'];tubo=d.get('natureza')=='TUBULACAO';comprimento=comprimentos.get(i) if tubo else 0
         if criterio=='COMPRIMENTO' and tubo and (comprimento is None or not math.isfinite(comprimento) or comprimento<=0):raise ValueError(f'Comprimento métrico validado indisponível para tubulação {i}; use número de arestas ou valide a referência espacial')
-        chave=(a,b,k);peso=1 if criterio=='ARESTAS' else comprimento;pesos[chave]=peso
+        chave=(a,b,k);peso=1 if criterio=='ARESTAS' else comprimento;pesos_base[chave]=peso
+        if lex:
+            from .restricoes_percurso import passagens
+            pesos[chave]=(passagens(a,b,d,_trabalho),peso)
+        else:pesos[chave]=peso
         arestas[chave]=dict(inicio=a,fim=b,elemento=i,natureza=d.get('natureza'),comprimento_m=comprimento)
     # Dijkstra único para todas as origens/destinos. Ordem estável dá desempate
     # reproduzível; não significa que a rota é única ou hidraulicamente preferível.
@@ -96,20 +104,20 @@ def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
     # Guarda um predecessor por nó, não listas de caminho para todos os nós:
     # memória linear mesmo em redes longas. Portas nunca são fundidas por ID.
     def buscar(inicios,alvos,bloqueio=None):
-        ds={n:0 for n in inicios};ps={};seq=count();fila=[];fechados=set();pendentes=set(alvos)
+        ds={n:zero for n in inicios};ps={};seq=count();fila=[];fechados=set();pendentes=set(alvos)
         if not pendentes:return ds,ps
-        for n in inicios:heappush(fila,(0,next(seq),n))
+        for n in inicios:heappush(fila,(zero,next(seq),n))
         while fila:
             custo,_,a=heappop(fila)
             if a in fechados:continue
             fechados.add(a);pendentes.discard(a)
             if not pendentes:break
-            if len(fechados)%1024==0:passo('Calculando rotas dirigidas',len(fechados),g.number_of_nodes())
+            if len(fechados)%1024==0:passo('Calculando rotas dirigidas',len(fechados),numero_nos)
             for b,paralelas in g[a].items():
                 for k,d in paralelas.items():
                     if bloqueio==(d.get('natureza'),d['elemento']):continue
-                    novo=custo+pesos[a,b,k]
-                    if b not in fechados and novo<ds.get(b,float('inf')):
+                    novo=somar(custo,pesos[a,b,k])
+                    if b not in fechados and (b not in ds or novo<ds[b]):
                         ds[b]=novo;ps[b]=(a,b,k);heappush(fila,(novo,next(seq),b))
         return ds,ps
     dist,pais=buscar(fontes,destinos_validos)
@@ -128,7 +136,7 @@ def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
         es=[arestas[n] for n in chaves];tubos=list(dict.fromkeys(e['elemento'] for e in es if e['natureza']=='TUBULACAO'));dispositivos=sorted({e['elemento'] for e in es if e['natureza']=='DISPOSITIVO'}|{n[0] for n in caminho if el.get(n[0],{}).get('familia')=='DISPOSITIVO'})
         ls=[e['comprimento_m'] for e in es if e['natureza']=='TUBULACAO'];comprimento=sum(ls) if all(v is not None for v in ls) else None
         return dict(uid=str(numero),origem=caminho[0],destino=destino,tubulacoes=tubos,dispositivos=dispositivos,
-            custo=sum(pesos[k] for k in chaves),comprimento_m=comprimento,
+            custo=sum(pesos_base[k] for k in chaves),custo_lexicografico=[sum(pesos[k][0] for k in chaves),sum(pesos_base[k] for k in chaves)] if lex else None,comprimento_m=comprimento,
             quantidade_arestas=len(es),portas=caminho,arestas=es,alternativa=alternativa)
     for pos,destino in enumerate(destinos_validos):
         passo('Organizando destinos e alternativas',pos,len(destinos_validos))
@@ -150,8 +158,8 @@ def calcular(pacote,modo,origens,destinos,criterio='ARESTAS',alternativas=0,
                 if destino not in da:continue
                 ns,chs=reconstruir(destino,pa);assinatura=tuple(chs)
                 if assinatura in vistos:continue
-                vistos.add(assinatura);alt=rota(ns,chs,destino,'',True);alt['exclusao_de_busca']=corte;alt['comparacao']='MESMO_CUSTO' if math.isclose(alt['custo'],principal['custo'],rel_tol=1e-12,abs_tol=1e-9) else 'CUSTO_MAIOR';candidatas.append(alt)
-            for j,alt in enumerate(sorted(candidatas,key=lambda a:(a['custo'],repr(a['portas'])))[:alternativas],1):alt['uid']=f"{principal['uid']}.{j}";alternativas_rotas.append(alt)
+                vistos.add(assinatura);alt=rota(ns,chs,destino,'',True);alt['exclusao_de_busca']=corte;alt['comparacao']='MESMO_CUSTO' if (alt['custo_lexicografico']==principal['custo_lexicografico'] if lex else math.isclose(alt['custo'],principal['custo'],rel_tol=1e-12,abs_tol=1e-9)) else 'CUSTO_MAIOR';candidatas.append(alt)
+            for j,alt in enumerate(sorted(candidatas,key=lambda a:(a['custo_lexicografico'] if lex else a['custo'],repr(a['portas'])))[:alternativas],1):alt['uid']=f"{principal['uid']}.{j}";alternativas_rotas.append(alt)
     passo('Calculando participação no conjunto de rotas escolhido')
     metricas={};motivos={};vs=[];ids_alternativos={i for a in alternativas_rotas for i in a['tubulacoes']}
     for i in sorted(contagens):

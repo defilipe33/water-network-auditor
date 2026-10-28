@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.9.0** acrescenta [restrições de percurso nos corredores alimentadores](documentacao/publica/RESTRICOES_CORREDORES.md): permitir, evitar ou bloquear equipamentos; exceções, hipóteses manuais de estado, perfis e comparação. Não modifica o grafo original ou o WaterGEMS.
+
 A versão **1.8.1** simplifica relatórios offline, identifica Queries por tipo e acrescenta **RESOLVIDO** como acompanhamento independente. Veja o [guia de uso, persistência e aceitação](documentacao/publica/RELATORIOS_QUERIES_ACOMPANHAMENTO.md). O resultado técnico e as prioridades permanecem preservados.
 
 A versão **1.8.0** oferece [exportação completa de corredores, catálogo organizado e relatórios ilustrados](documentacao/publica/EXPORTACAO_CATALOGO_RELATORIOS.md).

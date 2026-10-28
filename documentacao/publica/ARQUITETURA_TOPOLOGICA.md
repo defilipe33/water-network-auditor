@@ -96,3 +96,7 @@ Corredores completos, Queries, gestão reversível e relatório ilustrado offlin
 ## Acompanhamento e apresentação — 1.8.1
 
 `acompanhamento.py` estende a persistência IGD no mesmo GeoPackage: esquema v1, backup completo verificado, gravação transacional com controle otimista, histórico imutável e assinatura do contexto local para reavaliação. Não substitui análises técnicas. `fontes_relatorio.py` centraliza identificação local/remota e permissões antes de renderizar. Relatórios e Queries reutilizam os exportadores existentes. [Estrutura, regras e limitações](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).
+
+## Restrições nos corredores — 1.9.0
+
+`restricoes_percurso.py` prepara sobreposição investigativa dirigida e visão filtrada; o Dijkstra existente recebe custos lexicográficos opcionais, conservando seu comportamento sem restrições. `restricoes_ui.py` reutiliza seleção tabular/cartográfica e perfis em IGD_OBJETOS/IGD_OBJ_HIST, sem infraestrutura paralela. Exportação reconstrói o mesmo grafo de trabalho e conserva o perfil/regra. [Contrato, restrições obrigatórias, persistência e aceitação](RESTRICOES_CORREDORES.md).
