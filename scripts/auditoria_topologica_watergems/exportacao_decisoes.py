@@ -84,6 +84,12 @@ def tabelas_decisoes(base,pacote):
     tabelas['VINCULOS_MANUAIS_CONJUNTOS']=(('HIST_UUID','ORIGEM','CHAVE','NATUREZA','LABEL','TIPO','CAMADA','WG_UID'),[(r['uid'],v['origem'],v['chave'],v['natureza'],v['dados'].get('label'),v['dados'].get('tipo'),v['dados'].get('camada'),v['dados'].get('uid')) for r in objetos for v in r['vinculos']])
     tabelas['LOCAIS_MANUAIS']=(('LOCAL_UUID','TITULO','OBSERVACOES','X','Y','CRS','N_VINCULOS'),[(r['obj_uid'],r['dados'].get('titulo'),r['dados'].get('observacoes'),r['dados']['x'],r['dados']['y'],r['dados']['crs'],len(r['vinculos'])) for r in objetos_atuais(base,pacote,'LOCAL_MANUAL')])
     tabelas['CONJUNTOS_REDES']=(('CONJ_UUID','NOME','TOPO_UID','PERSPECTIVA','N_ELEMENTOS'),[(r['obj_uid'],r['dados']['nome'],r['topo_uid'],r['modo'],len(r['vinculos'])) for r in objetos_atuais(base,pacote,'REDE_PRINCIPAL')])
+    conjuntos=objetos_atuais(base,pacote,'REDE_PRINCIPAL')
+    def criterios(r):
+        valor=r['dados'].get('criterios');return valor if isinstance(valor,dict) else {}
+    tabelas['ROTAS_CORREDORES']=(('CONJ_UUID','ROTA','ALTERNATIVA','ORIGEM','DESTINO','CUSTO','COMP_M','N_TUBOS','DISPOSITIVOS'),[(r['obj_uid'],t['uid'],t['alternativa'],str(t['origem']),str(t['destino']),t['custo'],t['comprimento_m'],len(t['tubulacoes']),'; '.join(map(str,t['dispositivos']))) for r in conjuntos for t in criterios(r).get('rotas',[])+criterios(r).get('rotas_alternativas',[])])
+    tabelas['METRICAS_CORREDORES']=(('CONJ_UUID','WG_ID','ROTAS','DESTINOS','CLASSE','COMP_M','DIAM_BRUTO','UNID_DIAM'),[(r['obj_uid'],v['chave'],*[v['dados'].get('metricas',{}).get(k) for k in ('rotas','destinos','classe','comprimento_m','diametro_bruto','unidade_diametro')]) for r in conjuntos for v in r['vinculos']])
+    tabelas['DESTINOS_INALCANCAVEIS']=(('CONJ_UUID','DESTINO','MOTIVO'),[(r['obj_uid'],str(t['destino']),t['motivo']) for r in conjuntos for t in criterios(r).get('destinos_inalcancaveis',[])])
     return tabelas
 
 

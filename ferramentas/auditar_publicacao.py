@@ -32,7 +32,7 @@ def verificar(nome,dados,modo,pdfs):
     if p.suffix.lower() not in ('.py','.md','.txt','.svg','.json','.yaml','.yml') and nome not in ARQUIVOS_RAIZ:erros.append('Formato não permitido na distribuição pública')
     if nome.startswith('documentacao/') and not nome.startswith('documentacao/publica/'):erros.append('Documento original local fora da documentação pública revisada')
     if nome=='scripts/LEIA_ME.md':erros.append('Manual local com informações operacionais')
-    if nome.startswith('testes/') and not (p.name.startswith('test_') or p.name in {'empacotar_plugin.py','validar_estrutura_xlsx.py','validar_relatorio_locais.py','validar_excel_desktop.py','ensaio_versionamento_bases.py'}):erros.append('Ensaio não aprovado para distribuição pública')
+    if nome.startswith('testes/') and not (p.name.startswith('test_') or p.name in {'empacotar_plugin.py','executar_suite_isolada.py','validar_estrutura_xlsx.py','validar_relatorio_locais.py','validar_excel_desktop.py','ensaio_versionamento_bases.py'}):erros.append('Ensaio não aprovado para distribuição pública')
     try:conteudo=dados.decode('utf8')
     except UnicodeDecodeError:return erros+['Binário inesperado']
     if '\x00' in conteudo:erros.append('Conteúdo binário inesperado')

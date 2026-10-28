@@ -47,6 +47,7 @@ class FormResultado(QGroupBox):
             uid=self.caso['uid'];antigos=[c['uid'] for c in self.painel.visiveis];pos=antigos.index(uid) if uid in antigos else -1;destino=antigos[pos+1] if pos>=0 and pos+1<len(antigos) else None
             op.salvar(self.painel.base,self.painel.pacote,self.caso,self.modo,*self.valores()[:3],prioridade=self.valores()[3],esperada=self.head['uid'] if self.head else None,contexto=self.painel.indice_atributos)
             self.painel._analises=op.indice(self.painel.base,self.painel.pacote['resultado']['meta']['uid']);self.head=self.painel._analises[(uid,self.modo)];self._baseline=self.valores();self.situacao.setText(op.estado(self.head));self.atualizar_historico();self.aviso.setText('Análise salva no histórico. Nenhuma proposta criada e nenhuma alteração no WaterGEMS.')
+            self.painel.atualizar_recuperacao()
             if atualizar:
                 self.painel.filtrar()
                 if proxima and destino:

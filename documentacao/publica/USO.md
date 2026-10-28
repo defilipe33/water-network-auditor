@@ -85,3 +85,8 @@ chaves, vínculos e avisos. Nenhuma saída é uma instrução automática de int
 ## Locais manuais e conjuntos — 1.6.0
 
 Extensão aditiva IGD com geometrias históricas e visão de locais ativos, associações manuais, recuperação transacional e conjuntos por critérios cadastrais/estruturais. Guia: LOCAIS_MANUAIS_E_REDES.md
+
+
+## Corredores e recuperação — 1.7.0
+
+Métodos separados, Junctions como terminais, rotas compartilhadas e consulta por UUID/perspectiva de todas as análises persistidas. Guia e limitações: CORREDORES_E_RECUPERACAO.md

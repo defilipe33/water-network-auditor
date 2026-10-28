@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.7.0** oferece [caminhos entre Junctions, corredores alimentadores e recuperação de análises salvas](documentacao/publica/CORREDORES_E_RECUPERACAO.md). Pontes são uma análise separada; participação em rotas não representa vazão.
+
 A versão **1.6.0** acrescenta [locais manuais de investigação e conjuntos de redes](documentacao/publica/LOCAIS_MANUAIS_E_REDES.md), com histórico, revisão de seleções e exportação técnica para conferência de Selection Sets. Não altera o modelo WaterGEMS.
 
 A versão **1.5.0** oferece [resultado da análise sem exigências formais e filtros genéricos](documentacao/publica/ANALISE_OPERACIONAL_E_FILTROS.md): atributos GIS/WaterGEMS, grupos E/OU, relações por polígonos e prioridade de trabalho. O histórico anterior é preservado.

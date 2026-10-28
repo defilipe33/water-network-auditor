@@ -29,10 +29,13 @@ class PainelDiagnosticos(QDockWidget):
         self.execucao=QLabel('Auditoria integrada · '+self.pacote['resultado']['meta']['uid'][:12]+' · detectar → localizar → investigar');self.execucao.setWordWrap(True);v.addWidget(self.execucao)
         self.tabs=QTabWidget();v.addWidget(self.tabs);diag=QWidget();self.tabs.addTab(diag,'DIAGNÓSTICOS');layout=QVBoxLayout(diag)
         self.resumo=QLabel();self.resumo.setWordWrap(True);layout.addWidget(self.resumo)
+        self.carregada=QLabel();self.carregada.setWordWrap(True);layout.addWidget(self.carregada)
+        atalhos=QHBoxLayout();layout.addLayout(atalhos);self.analises_salvas_botao=QPushButton('Mostrar todas as análises salvas');self.analises_salvas_botao.clicked.connect(lambda checked=False:self.abrir_analises_salvas());atalhos.addWidget(self.analises_salvas_botao)
+        self.consulta_rapida=QComboBox();self.consulta_rapida.addItems(['Consultar…','Todos os casos','Casos já analisados','Anotações salvas','Locais manuais','Conjuntos salvos']);self.consulta_rapida.activated.connect(self.consultar_rapido);atalhos.addWidget(self.consulta_rapida)
         acoes_manuais=QHBoxLayout();layout.addLayout(acoes_manuais)
         self.origem_filtro=QComboBox();self.origem_filtro.addItem('Todas as origens',None);self.origem_filtro.addItem('Automática','AUTOMATICA');self.origem_filtro.addItem('Manual','MANUAL');acoes_manuais.addWidget(self.origem_filtro)
         from .ferramentas_investigacao_ui import iniciar_local
-        for nome,acao in [('Adicionar local',lambda:iniciar_local(self)),('A partir da seleção',lambda:iniciar_local(self,por_selecao=True)),('Editar local manual',lambda:iniciar_local(self,editar=True)),('Redes principais…',self.abrir_redes)]:
+        for nome,acao in [('Adicionar local',lambda:iniciar_local(self)),('A partir da seleção',lambda:iniciar_local(self,por_selecao=True)),('Editar local manual',lambda:iniciar_local(self,editar=True)),('Corredores / redes…',self.abrir_redes)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());acoes_manuais.addWidget(b)
         self.origem_filtro.currentIndexChanged.connect(self.filtrar)
         self.mostrar_filtros=QPushButton('Filtros ▾');self.mostrar_filtros.setCheckable(True);self.mostrar_filtros.setChecked(True);layout.addWidget(self.mostrar_filtros)
@@ -128,6 +131,34 @@ class PainelDiagnosticos(QDockWidget):
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
         if self.atual:self.mostrar_filtros.setChecked(False)
+        self.atualizar_recuperacao()
+
+    def atualizar_recuperacao(self):
+        from .recuperacao_analises import inventariar
+        self._recuperadas=inventariar(self.base,self.pacote,self.casos);self.exibir_recuperacao()
+
+    def exibir_recuperacao(self):
+        if not hasattr(self,'_recuperadas'):return
+        r=self._recuperadas;modo=self.modo.currentData();n=r['por_perspectiva'].get(modo,0)
+        self.carregada.setText(f"INVESTIGAÇÃO CARREGADA · {r['locais_automaticos']} locais automáticos · {r['locais_manuais']} manuais · {r['analises']} análises salvas ({n} nesta perspectiva)\n{r['observacoes']} registros com observações · {r['conjuntos']} conjuntos. Resultados analisados podem estar ocultos pela fila de pendências; use Mostrar todas as análises salvas.")
+        self.carregada.setToolTip(f"{r['nome']}\nInvestigação {r['ig_uid']}\nVersão topológica {r['topo_uid']}\nPerspectiva: {modo}\nFiltros: {self.filtros_ativos.text()}")
+
+    def abrir_analises_salvas(self):
+        from .recuperacao_analises import abrir_consulta
+        return abrir_consulta(self)
+
+    def mostrar_registro_salvo(self,uid,modo):
+        if not self.resolver_formularios():return False
+        self.modo.setCurrentIndex(self.modo.findData(modo));self.limpar_filtros();self.origem_filtro.setCurrentIndex(0)
+        self.fila.setCurrentIndex(self.fila.findData('TODOS'));self.filtrar();self.selecionar_uid(uid);return bool(self.atual and self.atual['uid']==uid and self.modo.currentData()==modo)
+
+    def consultar_rapido(self,n):
+        if n in (2,3):self.abrir_analises_salvas()
+        elif n==5:self.abrir_redes();self._redes_ui.recuperar()
+        elif n in (1,4):
+            if not self.resolver_formularios():return
+            self.limpar_filtros();self.fila.setCurrentIndex(self.fila.findData('TODOS'));self.origem_filtro.setCurrentIndex(2 if n==4 else 0);self.filtrar()
+        self.consulta_rapida.setCurrentIndex(0)
 
     def revisao_atualizada(self,*args):
         if not self._ativo:return
@@ -200,6 +231,7 @@ class PainelDiagnosticos(QDockWidget):
         if hasattr(self,'editor_filtros') and self.editor_filtros.arvore.topLevelItem(0).childCount():ativos.append('Condições genéricas: '+str(self.editor_filtros.arvore.topLevelItem(0).childCount()))
         self.filtros_ativos.setText('Filtros: '+('; '.join(ativos) or 'nenhum')+' · '+self.modo.currentText())
         self.preencher()
+        self.exibir_recuperacao()
 
     def filtrar_resultado(self):
         if self.resultado_filtro.currentData() in op.RESULTADOS[1:4]+(op.RESULTADOS[5],):
@@ -378,6 +410,8 @@ class PainelDiagnosticos(QDockWidget):
         self.aviso.setText('Seleção do mapa: caso identificado inequivocamente.' if len(candidatos)==1 else f'{len(candidatos)} casos relacionados à seleção. Escolha um caso; nenhuma correspondência é presumida.')
 
     def desativar(self):
+        consulta=getattr(self,'_consulta_analises',None)
+        if consulta is not None and not sip.isdeleted(consulta):consulta.close()
         if self._ferramenta_manual and self.legado.canvas:
             ferramenta,anterior=self._ferramenta_manual
             if self.legado.canvas.mapTool() is ferramenta:
@@ -401,6 +435,7 @@ class PainelDiagnosticos(QDockWidget):
         if uid:
             caso=next((c for c in self.casos if c.get('manual_uid')==uid),None)
             if caso:self.selecionar_uid(caso['uid'])
+        self.atualizar_recuperacao()
 
     def abrir_redes(self):
         from .ferramentas_investigacao_ui import DialogoRedes

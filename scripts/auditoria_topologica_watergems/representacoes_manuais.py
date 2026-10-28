@@ -40,11 +40,15 @@ def carregar_manuais(painel):
 def carregar_conjunto(painel,vs,nome,registro=None):
     if not painel.pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):raise ValueError('Geometrias WaterGEMS bloqueadas: valide a referência espacial')
     crs=painel.pacote['dossie']['contexto']['parametros']['crs'];c=QgsVectorLayer('LineString?crs='+crs,nome,'memory');pr=c.dataProvider()
-    pr.addAttributes([QgsField('WG_ID',QVariant.String,len=30),QgsField('WG_UID',QVariant.String,len=80),QgsField('LABEL',QVariant.String),QgsField('ORIGEM',QVariant.String,len=20),QgsField('CRITERIOS',QVariant.String)]);c.updateFields();fs=[]
+    pr.addAttributes([QgsField('WG_ID',QVariant.String,len=30),QgsField('WG_UID',QVariant.String,len=80),QgsField('LABEL',QVariant.String),QgsField('ORIGEM',QVariant.String,len=20),QgsField('CRITERIOS',QVariant.String),QgsField('CLASSE',QVariant.String),QgsField('N_ROTAS',QVariant.Int),QgsField('N_DEST',QVariant.Int),QgsField('COMP_M',QVariant.Double)]);c.updateFields();fs=[]
     for v in vs:
         g=(painel.pacote.get('geometrias') or {}).get(int(v['chave']))
         if not g:raise ValueError('Geometria indisponível para '+v['chave']+'; exporte a lista técnica')
-        f=QgsFeature(c.fields());f.setAttributes([v['chave'],v['dados']['uid'],v['dados']['label'],v['natureza'],'; '.join(v['dados'].get('criterios',[]))]);f.setGeometry(g);fs.append(f)
+        m=v['dados'].get('metricas',{});f=QgsFeature(c.fields());f.setAttributes([v['chave'],v['dados']['uid'],v['dados']['label'],v['natureza'],'; '.join(v['dados'].get('criterios',[])),m.get('classe','SELECAO_CADASTRAL_OU_MANUAL'),m.get('rotas'),m.get('destinos'),m.get('comprimento_m')]);f.setGeometry(g);fs.append(f)
+    from qgis.core import QgsCategorizedSymbolRenderer,QgsRendererCategory,QgsLineSymbol
+    categorias=[]
+    for classe,cor in [('CORREDOR_COMPARTILHADO','#1464dc'),('RAMO_DESTINO','#e58a13'),('CAMINHO_ENTRE_PONTOS','#008a69'),('SELECAO_CADASTRAL_OU_MANUAL','#666666')]:categorias.append(QgsRendererCategory(classe,QgsLineSymbol.createSimple(dict(line_color=cor,line_width='0.8' if classe=='CORREDOR_COMPARTILHADO' else '0.5')),classe))
+    c.setRenderer(QgsCategorizedSymbolRenderer('CLASSE',categorias))
     pr.addFeatures(fs);c.updateExtents();identidade=registro['uid'] if registro else __import__('uuid').uuid4().hex
     c=_publicar(painel,c,'REDE_PRINCIPAL_'+identidade,'Conjuntos de redes');c.setCustomProperty('wna/topo_uid',painel.pacote['resultado']['meta']['topologia']['execucao_uid']);c.setName(nome+' · seleção investigativa');c.selectAll()
     node=painel.legado.projeto.layerTreeRoot().findLayer(c.id())

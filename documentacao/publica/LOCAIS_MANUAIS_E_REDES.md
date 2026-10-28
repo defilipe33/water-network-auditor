@@ -1,5 +1,7 @@
 # Locais manuais e conjuntos de redes — 1.6.0
 
+A versão 1.7.0 reformula os corredores, permite Junctions como terminais e acrescenta recuperação de análises. Consulte o [guia atual](CORREDORES_E_RECUPERACAO.md); o texto abaixo conserva o comportamento da entrega 1.6.0.
+
 ## Uso no QGIS
 
 Abra uma investigação integrada persistida. Em DIAGNÓSTICOS, use **Adicionar

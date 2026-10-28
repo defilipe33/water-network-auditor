@@ -51,3 +51,8 @@ Registre os passos realmente executados e suas limitações no relatório do tes
 Executar o verificador em `ferramentas/auditar_publicacao.py` depois do staging,
 revisar o diff e o histórico e empacotar a partir de um clone limpo. Resultados,
 logs e arquivos de instalação gerados permanecem fora do Git. Ver SECURITY.md.
+
+
+## Suíte com isolamento de módulos Qt
+
+No Python do QGIS, `python testes/executar_suite_isolada.py resultados/testes_isolados` executa todos os módulos `test_*.py` em processos separados. O destino deve ser novo. O processo de cada módulo encerra cooperativamente threads de teste, descarta widgets temporários e libera os provedores antes de finalizar o runtime PyQGIS. Não usa encerramento forçado para mascarar falhas. Cada módulo conserva seus testes de integração internos; o runner registra retorno, timeout, contagem e log e falha se qualquer módulo não concluir com sucesso. Não oculta abortos nativos. É útil para isolar estado global Qt/provedores. A execução monolítica também pode ser usada, mas apresentou aborto nativo em ensaio Windows; a causa ainda não foi determinada. Não equiparar a suíte isolada à aceitação humana no QGIS.

@@ -1,5 +1,9 @@
 # Histórico técnico publicável
 
+## 1.7.0 — corredores e recuperação
+
+Caminhos entre terminais e corredores multi-destino, sem inclusão automática de pontes; alternativas limitadas, métricas e continuidade. Recuperação explícita de análises em todas as perspectivas, filtros e páginas. [Guia](CORREDORES_E_RECUPERACAO.md).
+
 ## 1.6.0 — locais manuais e conjuntos de redes
 
 Pontos sem eventos automáticos, associações explícitas, histórico e recuperação conservadora. Seleções cadastrais, pontes estruturais e corredores dirigidos, critérios combinados e conjuntos editáveis. Exportação CSV de identidades e seleção QGIS; criação nativa de Selection Sets no WaterGEMS ainda requer conferência. [Guia e limitações](LOCAIS_MANUAIS_E_REDES.md).

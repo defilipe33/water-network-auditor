@@ -105,12 +105,13 @@ def exportar_csv(destino,pacote,registro):
         if v['origem']!='WG':continue
         i=int(v['chave']);e=el.get(i)
         if e is None or e.get('excluido') is not False or e['uid']!=v['dados']['uid'] or db.digest(e)!=v['dados'].get('assinatura'):raise ValueError('Elemento ausente/incompatível; reconcilie antes de exportar')
-        linhas.append((str(i),e['label'],e['tipo'],e['uid'],db.texto(pacote['topologia']['modelo']['projeto']),db.texto(pacote['topologia']['modelo']['cenario']),registro['topo_uid'],registro['modo'],registro['obj_uid'],v['natureza'],'LABEL_REPETIDO' if len(labels[(e['tipo'],e['label'])])>1 else 'IDENTIDADE_PRESENTE'))
+        metrica=v['dados'].get('metricas',{})
+        linhas.append((str(i),e['label'],e['tipo'],e['uid'],db.texto(pacote['topologia']['modelo']['projeto']),db.texto(pacote['topologia']['modelo']['cenario']),registro['topo_uid'],registro['modo'],registro['obj_uid'],v['natureza'],'LABEL_REPETIDO' if len(labels[(e['tipo'],e['label'])])>1 else 'IDENTIDADE_PRESENTE',*[metrica.get(k) for k in ('rotas','destinos','classe','comprimento_m','diametro_bruto','unidade_diametro')]))
     if len({r[0] for r in linhas})!=len(linhas):raise ValueError('Elementos duplicados no conjunto')
     temporario=destino.with_name(destino.name+'.'+__import__('uuid').uuid4().hex+'.tmp')
     try:
         with temporario.open('x',encoding='utf-8-sig',newline='') as f:
-            w=csv.writer(f);w.writerow(('DomainElementID','Label','Tipo','UID','Modelo','Cenario','Versao','Perspectiva','ConjuntoUUID','OrigemInclusao','Conferencia'));w.writerows(linhas)
+            w=csv.writer(f);w.writerow(('DomainElementID','Label','Tipo','UID','Modelo','Cenario','Versao','Perspectiva','ConjuntoUUID','OrigemInclusao','Conferencia','RotasEscolhidas','DestinosAtendidos','ClasseNoConjunto','Comprimento_m','DiametroBruto','UnidadeDiametro'));w.writerows(linhas)
         temporario.rename(destino)
     finally:
         if temporario.exists():temporario.unlink()
