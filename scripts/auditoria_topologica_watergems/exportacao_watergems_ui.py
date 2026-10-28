@@ -16,7 +16,7 @@ class ExportarWatergems(QDialog):
             w=QCheckBox(n);w.setChecked(True);self.opcoes[k]=w;v.addWidget(w)
         f=QFormLayout();v.addLayout(f);self.campo=QComboBox();self.campo.addItems(['Label','ID']);self.idcampo=QLineEdit();self.idcampo.setPlaceholderText('Nome real confirmado no Query Builder');self.idok=QCheckBox('Confirmei este campo ID no Query Builder');self.maxit=QSpinBox();self.maxit.setRange(1,10000);self.maxit.setValue(100);self.maxchar=QSpinBox();self.maxchar.setRange(40,100000);self.maxchar.setValue(4000)
         for n,w in [('Campo',self.campo),('Campo ID real',self.idcampo),('',self.idok),('Elementos por lote',self.maxit),('Caracteres por lote',self.maxchar)]:f.addRow(n,w)
-        self.tabela=QTableWidget(0,3);self.tabela.setHorizontalHeaderLabels(['Tipo','Lote','Quantidade']);v.addWidget(self.tabela);self.texto=QPlainTextEdit();self.texto.setReadOnly(True);v.addWidget(self.texto)
+        self.tabela=QTableWidget(0,10);self.tabela.setHorizontalHeaderLabels(['Ordem','Tipo WaterGEMS','Arquivo','Lote','Elementos','Total do tipo','Campo','Validação sintática','Modelo','Versão']);v.addWidget(self.tabela);self.texto=QPlainTextEdit();self.texto.setReadOnly(True);v.addWidget(self.texto)
         self.aviso=QLabel('IN é documentado pela Bentley. Confira campos e sintaxe no Query Builder. Limites de lotes são conservadores configuráveis; não são limites oficiais. Nenhum Selection Set nativo é criado por esta ação.');self.aviso.setWordWrap(True);v.addWidget(self.aviso)
         h=QHBoxLayout();v.addLayout(h)
         for n,fn in [('Gerar consultas',self.consultas),('Copiar expressão',lambda:QApplication.clipboard().setText(self.texto.toPlainText())),('Exportar arquivos…',self.exportar),('Conferir seleção CSV…',self.conferir),('Fechar',self.close)]:b=QPushButton(n);b.clicked.connect(fn);h.addWidget(b)
@@ -24,9 +24,10 @@ class ExportarWatergems(QDialog):
     def config(self):return dict({k:w.isChecked() for k,w in self.opcoes.items()},campo=self.campo.currentText(),campo_id=self.idcampo.text().strip(),id_validado=self.idok.isChecked(),max_itens=self.maxit.value(),max_caracteres=self.maxchar.value())
     def consultas(self):
         try:
-            c=self.config();self.qs=ex.consultas(self.dados,self.pacote['topologia']['modelo'],c['campo'],c['campo_id'],c['id_validado'],c['max_itens'],c['max_caracteres']);self.tabela.setRowCount(len(self.qs))
-            for n,q in enumerate(self.qs):
-                for j,k in enumerate(('tipo','lote','quantidade')):self.tabela.setItem(n,j,QTableWidgetItem(str(q[k])))
+            c=self.config();self.qs=ex.consultas(self.dados,self.pacote['topologia']['modelo'],c['campo'],c['campo_id'],c['id_validado'],c['max_itens'],c['max_caracteres']);self.indice=ex.indice_consultas(self.qs,self.dados,c['campo_id'] if c['campo']=='ID' else 'Label');self.tabela.setRowCount(len(self.qs))
+            for n,r in enumerate(self.indice):
+                for j,valor in enumerate(r.values()):
+                    item=QTableWidgetItem(str(valor));item.setToolTip(str(valor));self.tabela.setItem(n,j,item)
             self.tabela.resizeColumnsToContents()
             if self.qs:self.tabela.setCurrentCell(0,0)
         except Exception as e:QMessageBox.warning(self,'Consulta não gerada',str(e))

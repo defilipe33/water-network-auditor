@@ -22,15 +22,19 @@ def selecionar(casos,analises,modo,escopo='TODOS',ids=()):
 def snapshot(base,pacote,casos,modo,config):
     from .decisoes import propostas,registros
     ig=pacote['resultado']['meta']['uid'];hs=op.historico(base,ig);heads={(a['occ_uid'],a['modo']):a for a in hs};ps=propostas(base,ig);notas=registros(base,ig)
+    from . import acompanhamento as ac
+    acompanhamentos=ac.indice(base,pacote);ctx=ac.Contexto(pacote);estados={c['uid']:ac.estado(acompanhamentos.get((c['uid'],modo)),c,pacote,modo,ctx) for c in casos}
     meta=pacote['resultado']['meta'];linhas=[]
     for caso,a in selecionar(casos,heads,modo,config.get('escopo','TODOS'),config.get('ids',())):
+        situacao=estados[caso['uid']];filtro_acomp=config.get('situacao_acompanhamento','TODAS')
+        if filtro_acomp=='RESOLVIDAS' and situacao!='RESOLVIDO' or filtro_acomp=='EM_ABERTO' and situacao=='RESOLVIDO':continue
         man=caso.get('manual_registro',{}).get('dados',{});old=[n.get('observacao','') for n in notas if n['occ_uid']==caso['uid'] and n['modo']==modo]
-        linhas.append(dict(uid=caso['uid'],local=caso.get('local_uid') or caso.get('manual_uid') or caso['chave'],titulo=caso['titulo'],origem=caso.get('origem','AUTOMATICA'),diagnostico=caso.get('resumo',''),resultado=a.get('resultado') or 'PENDENTE',motivo=a.get('motivo',''),observacao=a.get('observacao','') or man.get('observacoes',''),anotacoes=old,prioridade=a.get('prioridade_trabalho') or caso.get('prioridade',''),regioes=caso.get('regioes',[]),elementos=caso.get('elementos',[]),gis=caso.get('tubos_gis',[]),wg_ids=caso.get('wg_ids',[]),data=a.get('data_utc',''),revisao_uid=a.get('uid'),propostas=[p for p in ps if p['occ_uid']==caso['uid'] and p['modo']==modo],historico=[h for h in hs if h['occ_uid']==caso['uid'] and h['modo']==modo] if config.get('historico') else [],tecnico=caso.get('tecnico',[]) if config.get('tecnico') else []))
+        linhas.append(dict(acompanhamento=ac.ROTULOS[situacao],acomp_estado=situacao,acomp_uid=acompanhamentos.get((caso['uid'],modo),{}).get('uid'),historico_acomp=ac.historico(base,ig,caso['uid'],modo) if config.get('historico') else [],uid=caso['uid'],local=caso.get('local_uid') or caso.get('manual_uid') or caso['chave'],titulo=caso['titulo'],origem=caso.get('origem','AUTOMATICA'),diagnostico=caso.get('resumo',''),resultado=a.get('resultado') or 'PENDENTE',motivo=a.get('motivo',''),observacao=a.get('observacao','') or man.get('observacoes',''),anotacoes=old,prioridade=a.get('prioridade_trabalho') or caso.get('prioridade',''),regioes=caso.get('regioes',[]),elementos=caso.get('elementos',[]),gis=caso.get('tubos_gis',[]),wg_ids=caso.get('wg_ids',[]),data=a.get('data_utc',''),revisao_uid=a.get('uid'),propostas=[p for p in ps if p['occ_uid']==caso['uid'] and p['modo']==modo],historico=[h for h in hs if h['occ_uid']==caso['uid'] and h['modo']==modo] if config.get('historico') else [],tecnico=caso.get('tecnico',[]) if config.get('tecnico') else []))
     chave=config.get('ordenacao','titulo')
     if chave not in ('titulo','resultado','prioridade','origem'):raise ValueError('Ordenação inválida')
     linhas.sort(key=lambda r:(str(r[chave]),r['uid']))
     contagens={k:0 for k in op.RESULTADOS};contagens.update(Counter(r['resultado'] for r in linhas))
-    return dict(nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
+    return dict(nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,resolvidas=sum(r['acomp_estado']=='RESOLVIDO' for r in linhas),em_aberto=sum(r['acomp_estado']!='RESOLVIDO' for r in linhas),acompanhamento_contagens=dict(Counter(r['acompanhamento'] for r in linhas)),acompanhamento_global=dict(Counter(ac.ROTULOS[v] for v in estados.values())),total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
 
 
 def geometrias_caso(pacote,caso,contexto=None):
@@ -103,7 +107,20 @@ def camadas_relatorio(gs,crs):
     return sorted(layers,key=lambda c:0 if c.geometryType()==0 else 1 if c.geometryType()==1 else 2)
 
 
-def renderizar(gs,crs,destino,config,basemaps=(),centro=None,contexto=False):
+def renderizar_imagem(layers,crs,caixa,config):
+    from qgis.core import QgsMapSettings,QgsMapRendererParallelJob,QgsCoordinateReferenceSystem,QgsProject
+    from qgis.PyQt.QtCore import QSize,QEventLoop,QTimer
+    from qgis.PyQt.QtGui import QColor
+    st=QgsMapSettings();st.setLayers(layers);st.setDestinationCrs(QgsCoordinateReferenceSystem(crs));st.setTransformContext(QgsProject.instance().transformContext());st.setExtent(caixa);st.setOutputSize(QSize(1440,900));st.setOutputDpi(160);st.setBackgroundColor(QColor('white'))
+    job=QgsMapRendererParallelJob(st);loop=QEventLoop();timer=QTimer();timer.setSingleShot(True);expirou=[]
+    def timeout():expirou.append(True);job.cancel()
+    timer.timeout.connect(timeout);job.finished.connect(loop.quit);timer.start(config.get('timeout_ms',15000));job.start()
+    if job.isActive():loop.exec_()
+    timer.stop()
+    return job.renderedImage(),bool(expirou),[e.message for e in job.errors()],st.visibleExtent()
+
+
+def renderizar(gs,crs,destino,config,basemaps=(),centro=None,contexto=False,ao_falhar_basemap=None):
     """QgsMapRendererParallelJob: camadas temporárias próprias, timeout e falha explícita."""
     from qgis.core import QgsMapSettings,QgsMapRendererParallelJob,QgsCoordinateReferenceSystem,QgsProject,QgsUnitTypes
     from qgis.PyQt.QtCore import QSize,QEventLoop,QTimer,Qt
@@ -116,12 +133,11 @@ def renderizar(gs,crs,destino,config,basemaps=(),centro=None,contexto=False):
         from qgis.core import QgsRectangle
         caixa=QgsRectangle(*config['extensao'])
         if caixa.isEmpty() or not all(math.isfinite(v) for v in config['extensao']):raise ValueError('Extensão manual inválida')
-    layers=camadas_relatorio(gs,crs);avisos=[];fontes=[];clones=[]
+    from .fontes_relatorio import resolver,FalhaBasemap
+    basemaps,config=resolver(basemaps,config,1)
+    layers=camadas_relatorio(gs,crs);avisos=list(config.get('avisos_basemap',[]));fontes=[];clones=[]
     for b in basemaps:
         if not b.isValid():avisos.append('Mapa-base indisponível: '+b.name());continue
-        if not config.get('licenca_exportacao') or not config.get('atribuicao','').strip():raise ValueError('Confirme a permissão de exportação e a atribuição da fonte cartográfica.')
-        remoto=b.providerType().lower() in ('wms','wcs','arcgismapserver','arcgisfeatureserver') or 'url=' in b.source().lower() or 'http' in b.source().lower()
-        if remoto and not config.get('mapas_online'):raise PermissionError('Renderização online desabilitada; use fonte local ou autorize a consulta de área ao provedor.')
         c=b.clone();c.setOpacity(config.get('opacidade',.65))
         if config.get('cinza') and hasattr(c,'pipe'):
             f=c.pipe().hueSaturationFilter()
@@ -129,17 +145,13 @@ def renderizar(gs,crs,destino,config,basemaps=(),centro=None,contexto=False):
         if hasattr(c,'brightnessFilter'):
             c.brightnessFilter().setBrightness(config.get('brilho',0));c.brightnessFilter().setContrast(config.get('contraste',0))
         clones.append(c);fontes.append(sanear_fonte(b))
-    def imagem(bases):
-        st=QgsMapSettings();st.setLayers(layers+bases);st.setDestinationCrs(src);st.setTransformContext(QgsProject.instance().transformContext());st.setExtent(caixa);st.setOutputSize(QSize(1440,900));st.setOutputDpi(160);st.setBackgroundColor(QColor('white'))
-        job=QgsMapRendererParallelJob(st);loop=QEventLoop();timer=QTimer();timer.setSingleShot(True);expirou=[]
-        def timeout():expirou.append(True);job.cancel()
-        timer.timeout.connect(timeout);job.finished.connect(loop.quit);timer.start(config.get('timeout_ms',15000));job.start()
-        if job.isActive():loop.exec_()
-        timer.stop()
-        return job.renderedImage(),bool(expirou),[e.message for e in job.errors()],st.visibleExtent()
-    img,timeout,erros,ext=imagem(clones)
+    img,timeout,erros,ext=renderizar_imagem(layers+clones,crs,caixa,config)
     if clones and (timeout or erros):
-        avisos+=['Mapa-base não carregou integralmente; imagem gerada SEM base: '+str(erros)];img,timeout,erros,ext=imagem([]);fontes=[]
+        motivo='Tempo de carregamento excedido' if timeout else 'Falha de autenticação no mapa-base' if any('401' in e or '403' in e or 'auth' in e.lower() for e in erros) else 'Mapa-base indisponível ou incompleto (rede/provedor)'
+        if ao_falhar_basemap is None:raise FalhaBasemap(motivo+'. Você pode continuar sem mapa-base ou cancelar.')
+        if not ao_falhar_basemap(motivo):raise InterruptedError('Relatório cancelado pelo usuário após falha do mapa-base.')
+        avisos.append(motivo+'. Mapa-base não utilizado por escolha do usuário; rede e limites mantidos.')
+        img,timeout,erros,ext=renderizar_imagem(layers,crs,caixa,config);fontes=[]
     if timeout or img.isNull():raise RuntimeError('Falha/timeout de renderização; relatório não publicado.')
     avisos+=erros
     if ampla:avisos.append('Elementos distantes: detalhe e contexto têm enquadramentos diferentes; conferir mapa de contexto.')
@@ -183,12 +195,12 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
     meta=dados['meta']
     for s in [meta.get('projeto','Projeto'),meta.get('nome','Investigação'),f"Investigação {meta['uid']} · versão {meta.get('versao',1)}",f"WaterGEMS {meta['topologia']['execucao_uid']}",f"Cenário {meta['topologia'].get('cenario')} · {dados['modo']}",dados['data'],dados['interpretacao']]:story.extend([par(s),Spacer(1,10)])
     story+=[PageBreak(),par('Resumo','Heading1')]
-    for s in [f"{len(dados['ocorrencias'])} ocorrências nesta seleção / {dados.get('total_disponivel',len(dados['ocorrencias']))} disponíveis na investigação",*['%s: %s'%(k,v) for k,v in dados['contagens'].items()],*['%s: %s'%(k,v) for k,v in dados['origens'].items()],f"Propostas relacionadas: {dados['propostas']}",f"Escopo: {dados['config'].get('escopo','TODOS')}"] :story.extend([par(s),Spacer(1,5)])
+    for s in [f"{len(dados['ocorrencias'])} ocorrências nesta seleção / {dados.get('total_disponivel',len(dados['ocorrencias']))} disponíveis na investigação",*['%s: %s'%(k,v) for k,v in dados['contagens'].items()],*['%s: %s'%(k,v) for k,v in dados['origens'].items()],f"Propostas relacionadas: {dados['propostas']}",f"Acompanhamento nesta seleção: {dados['resolvidas']} resolvidas · {dados['em_aberto']} em aberto (inclui reavaliações)",'Acompanhamento na investigação: '+str(dados['acompanhamento_global']),f"Escopo: {dados['config'].get('escopo','TODOS')}"] :story.extend([par(s),Spacer(1,5)])
     story+=[PageBreak(),par('Índice de ocorrências','Title')];toc=TableOfContents();toc.levelStyles=[styles['BodyText']];story+=[toc]
     for r in dados['ocorrencias']:
         if cancelado and cancelado():raise InterruptedError('Composição PDF cancelada; nada publicado.')
-        titulo=par(r['titulo']+' · '+r['resultado'],'Heading1');titulo.indice_texto=escape(r['titulo']+' · '+r['resultado']+' | '+'; '.join(r['regioes'])+' | '+str(r['prioridade'])+' | '+r['localizacao']['texto'])
-        story+=[PageBreak(),titulo,par('Região: '+'; '.join(r['regioes'])+' · Prioridade: '+str(r['prioridade'])),par(r['localizacao']['texto'])]
+        titulo=par(r['titulo'],'Heading1');titulo.indice_texto=escape(r['titulo']+' | '+'; '.join(r['regioes'])+' | '+str(r['prioridade'])+' | '+r['localizacao']['texto'])
+        story+=[PageBreak(),titulo,par('Acompanhamento: '+r['acompanhamento']+' · Resultado técnico: '+r['resultado']),par('Região: '+'; '.join(r['regioes'])+' · Prioridade: '+str(r['prioridade'])),par(r['localizacao']['texto'])]
         for im in imagens.get(r['uid'],[]):
             story+=[Spacer(1,7),Image(str(im),width=largura,height=largura*900/1440)]
         if r.get('mapa_meta'):
@@ -201,8 +213,11 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
         story.append(par('Origem: '+r['origem']+' · Última análise: '+r['data']+' · UUID: '+r['uid']))
         if r['propostas']:
             story+=[par('Intervenções propostas','Heading2')]+[par(str(v.get('tipo','Proposta'))+' · '+str(v.get('atual',{}).get('situacao',''))+' · '+str(v.get('atual',{}).get('descricao',''))) for v in r['propostas']]
+        if r['historico_acomp']:
+            story+=[par('Histórico de acompanhamento','Heading2')]+[par(v['data_utc']+' · '+v['estado_anterior']+' → '+v['estado']+'\n'+v['observacao']) for v in r['historico_acomp']]
         if r['historico']:
             story+=[par('Histórico','Heading2')]+[par(str(v.get('data_utc',''))+' · '+str(v.get('resultado',''))+'\n'+str(v.get('motivo',''))+'\n'+str(v.get('observacao',''))) for v in r['historico']]
+        if dados['config'].get('tecnico') and r.get('coordenadas'):story.append(par('Coordenadas de referência: '+str(r['coordenadas'])))
         if r['tecnico']:story+=[par('Informações técnicas','Heading2')]+[par(json.dumps(v,ensure_ascii=False,default=str)) for v in r['tecnico']]
     def rodape(canvas,doc):
         if cancelado and cancelado():raise InterruptedError('Paginação PDF cancelada; nada publicado.')
@@ -213,15 +228,15 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
 
 def xlsx(destino,dados):
     from .saidas import exportar_tabelas_xlsx
-    campos=('UUID','LOCAL','ORIGEM','DIAGNOSTICO','RESULTADO','MOTIVO','OBSERVACOES','REGIOES','PRIORIDADE','LOCALIZACAO','DATA','REVISAO_UID')
-    linhas=[(r['uid'],r['local'],r['origem'],r['diagnostico'],r['resultado'],r['motivo'],r['observacao'],'; '.join(r['regioes']),r['prioridade'],r['localizacao']['texto'],r['data'],r['revisao_uid']) for r in dados['ocorrencias']]
+    campos=('UUID','LOCAL','ORIGEM','DIAGNOSTICO','RESULTADO','MOTIVO','OBSERVACOES','REGIOES','PRIORIDADE','LOCALIZACAO','DATA','REVISAO_UID','ACOMPANHAMENTO','ACOMP_UID')
+    linhas=[(r['uid'],r['local'],r['origem'],r['diagnostico'],r['resultado'],r['motivo'],r['observacao'],'; '.join(r['regioes']),r['prioridade'],r['localizacao']['texto'],r['data'],r['revisao_uid'],r['acompanhamento'],r['acomp_uid']) for r in dados['ocorrencias']]
     # Exportador existente divide textos longos na aba técnica; este relatório não
     # trunca silenciosamente: recusa célula além do limite e mantém snapshot JSON.
     if any(len(str(v))>32767 for linha in linhas for v in linha):raise ValueError('Texto excede uma célula Excel; reduza o escopo ou exporte PDF/JSON sem XLSX.')
-    exportar_tabelas_xlsx({'OCORRENCIAS':(campos,linhas),'RESUMO':(('INDICADOR','VALOR'),list(dados['contagens'].items()))},destino)
+    exportar_tabelas_xlsx({'OCORRENCIAS':(campos,linhas),'RESUMO':(('INDICADOR','VALOR'),list(dados['contagens'].items())+[('Acompanhamento - resolvidas',dados['resolvidas']),('Acompanhamento - em aberto',dados['em_aberto'])])},destino)
 
 
-def gerar(base,pacote,casos,modo,pasta,config,basemaps=(),ruas=None,progresso=None,cancelado=None):
+def gerar(base,pacote,casos,modo,pasta,config,basemaps=(),ruas=None,progresso=None,cancelado=None,ao_falhar_basemap=None):
     from qgis.core import QgsApplication
     from qgis.PyQt.QtCore import QThread
     if QgsApplication.instance() and QThread.currentThread()!=QgsApplication.instance().thread():raise RuntimeError('Renderização QGIS deve ocorrer no thread principal.')
@@ -236,23 +251,35 @@ def gerar(base,pacote,casos,modo,pasta,config,basemaps=(),ruas=None,progresso=No
             # preservadas; não relaciona limites apenas pelo texto do diagnóstico.
             contexto.recuperar_geometrias()
             dados['avisos_limites']=list(contexto.avisos)
-        remotos=any(b.providerType().lower() in ('wms','wcs','arcgismapserver','arcgisfeatureserver') or 'http' in b.source().lower() for b in basemaps)
-        if remotos and len(dados['ocorrencias'])>1 and not config.get('lote_online_autorizado'):raise PermissionError('Para vários mapas, use fonte local ou serviço com permissão explícita de exportação em lote. Nenhuma consulta foi enviada.')
+        from .fontes_relatorio import resolver
+        basemaps,config=resolver(basemaps,config,len(dados['ocorrencias']));dados['config']=dict(config);base_falhou=[]
+        def decidir_falha(motivo):
+            if ao_falhar_basemap is None:return False
+            if ao_falhar_basemap(motivo):
+                base_falhou.append(motivo);basemaps.clear();return True
+            return False
         for n,r in enumerate(dados['ocorrencias']):
             if cancelado and cancelado():raise InterruptedError('Relatório cancelado; nada publicado.')
             if progresso:progresso('Preparando ocorrência '+r['titulo'],n,len(dados['ocorrencias']))
-            gs,centro=geometrias_caso(pacote,por_uid[r['uid']],contexto);r['localizacao']=dict(texto=config.get('localizacao_manual') or 'Referência de localização não disponível',fonte='MANUAL' if config.get('localizacao_manual') else 'INDEFINIDA')
-            from .localizacao_relatorio import referencia_cadastral
-            cadastro=referencia_cadastral(pacote,por_uid[r['uid']],config.get('referencia_cadastral',{})) if config.get('localizacao',True) else None
-            if cadastro:r['localizacao']=cadastro
-            elif config.get('localizacao',True) and centro and ruas:r['localizacao']=ruas.consultar(centro,config.get('raio_ruas',100))
-            if config.get('localizacao',True) and config.get('localizacoes_externas',{}).get(r['uid']):r['localizacao']=config['localizacoes_externas'][r['uid']]
+            gs,centro=geometrias_caso(pacote,por_uid[r['uid']],contexto)
+            r['coordenadas']=dict(x=centro.asPoint().x(),y=centro.asPoint().y(),crs=pacote['dossie']['contexto']['parametros']['crs']) if centro else None
+            r['localizacao']=dict(texto='Localização não identificada',fonte='INDEFINIDA')
+            if config.get('localizacao',True):
+                from .localizacao_relatorio import referencia_automatica
+                cadastro=referencia_automatica(pacote,por_uid[r['uid']],config.get('referencia_cadastral',{}))
+                rua=ruas.consultar(centro,config.get('raio_ruas',100)) if cadastro is None and centro and ruas else None
+                externa=config.get('localizacoes_externas',{}).get(r['uid'])
+                if cadastro:r['localizacao']=cadastro
+                elif rua and rua.get('candidatos'):r['localizacao']=rua
+                elif externa:r['localizacao']=externa
+                elif config.get('localizacao_manual'):r['localizacao']=dict(texto=config['localizacao_manual'],fonte='MANUAL')
             if config.get('imagens',True) and gs:
                 if not pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):r['mapa_meta']=[dict(avisos=['Mapa omitido: referência espacial não validada'],atribuicao='')];continue
-                fn=tmp/f'mapa_{n:05}.png';m=renderizar(gs,pacote['dossie']['contexto']['parametros']['crs'],fn,config,basemaps,centro);r['mapa_meta']=[m];mapa[r['uid']]=[fn]
+                fn=tmp/f'mapa_{n:05}.png';m=renderizar(gs,pacote['dossie']['contexto']['parametros']['crs'],fn,config,basemaps,centro,ao_falhar_basemap=decidir_falha);r['mapa_meta']=[m];mapa[r['uid']]=[fn]
+                if base_falhou and not m['fontes'] and not any('escolha do usuário' in a for a in m['avisos']):m['avisos'].append('Mapa-base não utilizado após falha anterior; rede e limites preservados.')
                 if contexto.avisos:m['avisos'].append('Limites/contexto parcialmente disponíveis; confira as fontes. '+ '; '.join(contexto.avisos[:3]))
                 if config.get('contexto',False) or any('distantes' in s for s in m['avisos']):
-                    fn=tmp/f'contexto_{n:05}.png';r['mapa_meta'].append(renderizar(gs,pacote['dossie']['contexto']['parametros']['crs'],fn,config,basemaps,centro,True));mapa[r['uid']].append(fn)
+                    fn=tmp/f'contexto_{n:05}.png';r['mapa_meta'].append(renderizar(gs,pacote['dossie']['contexto']['parametros']['crs'],fn,config,basemaps,centro,True,ao_falhar_basemap=decidir_falha));mapa[r['uid']].append(fn)
             elif config.get('imagens',True):r['mapa_meta']=[dict(avisos=['Sem geometria disponível; localização não inventada'],atribuicao='')]
         if cancelado and cancelado():raise InterruptedError('Relatório cancelado antes da publicação.')
         if progresso:progresso('Compondo documento e verificando publicação',None,None)

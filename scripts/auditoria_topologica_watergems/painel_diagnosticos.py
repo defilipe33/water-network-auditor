@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import (QDockWidget,QWidget,QVBoxLayout,QHBoxLayout,QGr
 from qgis.PyQt import sip
 from .filtros import ContextoFiltros
 from . import operacional as op
+from . import acompanhamento as ac
 from .diagnosticos import catalogar,filtrar,contagens,CATEGORIAS,MODOS
 from .mapa_diagnosticos import MapaDiagnosticos
 from auditoria_fronteiras.atividade import acompanhada,falha
@@ -22,6 +23,7 @@ class PainelDiagnosticos(QDockWidget):
         from .locais_manuais import casos as casos_manuais
         self.casos+=casos_manuais(self.base,self.pacote,self.indice_atributos)
         self._redes_ui=None;self._ferramenta_manual=None
+        self._acomp=ac.indice(self.base,self.pacote);self._contexto_acomp=ac.Contexto(self.pacote);self._situacoes_acomp={}
         self._analises=op.indice(self.base,self.pacote['resultado']['meta']['uid']);self._generico_estavel=None;self._fila_estavel=0;self._resultado_estavel=0;self._filtros_sessao={};self._pagina=0;self._tamanho_pagina=200;self._itens_pagina=[];self.atual=None;self._inversos=None;self._conexoes=[]
         self._filtros_estaveis=None;self._modo_estavel='ESTRUTURAL';self._bloqueador=None;self._iface=None
         self.mapa=MapaDiagnosticos(self.pacote,legado.projeto,legado.canvas)
@@ -64,7 +66,7 @@ class PainelDiagnosticos(QDockWidget):
         for n in ('Alta','Média','Baixa'):self.prioridade.addItem(n,n)
         for k,(nome,widget) in enumerate([('Tipo',self.categoria),('Perspectiva',self.modo),('Componente',self.componente),('Texto de região (legado)',self.regiao),('Revisão espacial',self.revisao),('Fonte cadastrada',self.fonte),('Prioridade',self.prioridade),('Elemento',self.busca),('Revisão topológica',self.revisao_topo)]):
             linha=(k//2)*2;col=k%2;filtros.addWidget(QLabel(nome),linha,col);filtros.addWidget(widget,linha+1,col)
-        self.lista=QTableWidget(0,5);self.lista.setHorizontalHeaderLabels(['Ocorrência / diagnóstico','Prioridade','Andamento','Regiões','Resultado da análise'])
+        self.lista=QTableWidget(0,5);self.lista.setHorizontalHeaderLabels(['Ocorrência / diagnóstico','Prioridade','Acompanhamento','Regiões','Resultado da análise'])
         self.lista.setSelectionBehavior(QAbstractItemView.SelectRows);self.lista.setSelectionMode(QAbstractItemView.SingleSelection);self.lista.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.lista.setColumnWidth(1,70);self.lista.setColumnWidth(2,130);self.lista.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
         self.investigacao=QSplitter(Qt.Vertical);self.area_trabalho=QSplitter(Qt.Horizontal);layout.addWidget(self.area_trabalho,1);self.area_trabalho.addWidget(self.investigacao);pagina_widget=QWidget();pv=QVBoxLayout(pagina_widget);pv.setContentsMargins(0,0,0,0);pv.addWidget(self.lista,1);nav=QHBoxLayout();self.pagina_anterior=QPushButton('Anterior');self.pagina_seguinte=QPushButton('Próxima página');self.contagem_pagina=QLabel();nav.addWidget(self.pagina_anterior);nav.addWidget(self.contagem_pagina);nav.addWidget(self.pagina_seguinte);pv.addLayout(nav);self.pagina_anterior.clicked.connect(lambda checked=False:self.mudar_pagina(-1));self.pagina_seguinte.clicked.connect(lambda checked=False:self.mudar_pagina(1));self.investigacao.addWidget(pagina_widget)
@@ -101,7 +103,7 @@ class PainelDiagnosticos(QDockWidget):
         from .form_operacional import FormResultado,EditorFiltros
         self.resultado_analise=FormResultado(self);self.resultado_scroll=QScrollArea();self.resultado_scroll.setWidgetResizable(True);self.resultado_scroll.setWidget(self.resultado_analise);direita=QWidget();dv=QVBoxLayout(direita);dv.setContentsMargins(0,0,0,0);dv.addWidget(self.resultado_scroll,1);acoes_resultado=QHBoxLayout();acoes_resultado.addWidget(self.resultado_analise.salvar_botao);acoes_resultado.addWidget(self.resultado_analise.proxima_botao);dv.addLayout(acoes_resultado);self.area_trabalho.addWidget(direita);self.area_trabalho.setSizes([500,420])
         self.fila=QComboBox()
-        for nome,codigo in [('Pendentes e em análise','PENDENTES'),('Todos os casos','TODOS'),('Analisados','ANALISADOS'),('Necessita conferência','CONFERENCIA')]:self.fila.addItem(nome,codigo)
+        for nome,codigo in [('Em aberto','EM_ABERTO'),('Todas as ocorrências','TODOS'),('Resolvidas','RESOLVIDAS'),('Pendentes','PENDENTES'),('Em análise','EM_ANALISE'),('Necessitam investigação adicional','CONFERENCIA'),('Reavaliação necessária','REAVALIACAO'),('Analisados (resultado)','ANALISADOS')]:self.fila.addItem(nome,codigo)
         filtros.addWidget(QLabel('Fila de trabalho'),11,0);filtros.addWidget(self.fila,11,1)
         self.resultado_filtro=QComboBox();self.resultado_filtro.addItem('Qualquer resultado',None)
         for resultado in op.RESULTADOS:self.resultado_filtro.addItem(resultado,resultado)
@@ -182,7 +184,7 @@ class PainelDiagnosticos(QDockWidget):
         salvos=self._filtros_sessao.get(modo) or op.carregar_filtros(self.base,self.pacote,modo)
         if hasattr(self,'editor_filtros'):
             self.editor_filtros.carregar(salvos or {'operador':'E','condicoes':[]})
-            for widget,key,default in [(self.fila,'fila','PENDENTES'),(self.resultado_filtro,'resultado',None)]:
+            for widget,key,default in [(self.fila,'fila','EM_ABERTO'),(self.resultado_filtro,'resultado',None)]:
                 widget.blockSignals(True);widget.setCurrentIndex(max(0,widget.findData((salvos or {}).get(key,default))));widget.blockSignals(False)
         self.filtrar()
         modo=self.modo.currentData()
@@ -193,6 +195,7 @@ class PainelDiagnosticos(QDockWidget):
         self._inversos=None
         for c in self.casos:
             h=self._analises.get((c['uid'],self.modo.currentData()),{});sugestao,criterio=op.sugerir(c,self.indice_atributos);c['prioridade_sugerida']=h.get('prioridade_auto',sugestao);c['motivo_prioridade']=h.get('criterio_auto',criterio);c['prioridade_trabalho']=h.get('prioridade_trabalho')
+        self._situacoes_acomp={c['uid']:ac.estado(self._acomp.get((c['uid'],self.modo.currentData())),c,self.pacote,self.modo.currentData(),self._contexto_acomp) for c in self.casos}
         novos=filtrar(self.casos,self.categoria.currentData(),self.componente.currentData(),self.regiao.currentData(),self.revisao.currentData(),self.modo.currentData(),self.busca.text(),self.fonte.currentData(),self.prioridade.currentData())
         if self.origem_filtro.currentData():novos=[c for c in novos if c.get('origem','AUTOMATICA')==self.origem_filtro.currentData()]
         from .decisoes import indice_revisoes,registros
@@ -205,9 +208,12 @@ class PainelDiagnosticos(QDockWidget):
             escolhido=self.resultado_filtro.currentData()
             if escolhido:novos=[c for c in novos if self._analises.get((c['uid'],self.modo.currentData()),{}).get('resultado','PENDENTE')==escolhido]
             fila=self.fila.currentData()
-            if fila=='PENDENTES':novos=[c for c in novos if op.pendente(self._analises.get((c['uid'],self.modo.currentData())))]
+            if fila=='EM_ABERTO':novos=[c for c in novos if self._situacoes_acomp[c['uid']]!='RESOLVIDO']
+            elif fila=='RESOLVIDAS':novos=[c for c in novos if self._situacoes_acomp[c['uid']]=='RESOLVIDO']
+            elif fila=='REAVALIACAO':novos=[c for c in novos if self._situacoes_acomp[c['uid']]=='REAVALIACAO_NECESSARIA']
+            elif fila in ('PENDENTES','EM_ANALISE'):novos=[c for c in novos if self._situacoes_acomp[c['uid']]!='RESOLVIDO' and op.estado(self._analises.get((c['uid'],self.modo.currentData())))==('PENDENTE' if fila=='PENDENTES' else 'EM ANÁLISE')]
             elif fila=='ANALISADOS':novos=[c for c in novos if not op.pendente(self._analises.get((c['uid'],self.modo.currentData())))]
-            elif fila=='CONFERENCIA':novos=[c for c in novos if op.estado(self._analises.get((c['uid'],self.modo.currentData())))=='NECESSITA CONFERÊNCIA']
+            elif fila=='CONFERENCIA':novos=[c for c in novos if self._situacoes_acomp[c['uid']]!='RESOLVIDO' and op.estado(self._analises.get((c['uid'],self.modo.currentData())))=='NECESSITA CONFERÊNCIA']
         if hasattr(self,'analise') and self.tem_edicoes() and self.atual and not any(c['uid']==self.atual['uid'] for c in novos):
             if not self.resolver_formularios():
                 if self._filtros_estaveis:
@@ -257,7 +263,7 @@ class PainelDiagnosticos(QDockWidget):
         self.lista.blockSignals(True);self.lista.setRowCount(len(self._itens_pagina))
         for n,c in enumerate(self._itens_pagina):
             situacao=self._revisoes_topologicas.get((c['uid'],self.modo.currentData()),{}).get('situacao','PENDENTE')
-            h=self._analises.get((c['uid'],self.modo.currentData()));andamento=op.estado(h)
+            h=self._analises.get((c['uid'],self.modo.currentData()));andamento=ac.ROTULOS[self._situacoes_acomp.get(c['uid'],'EM_ABERTO')]
             for col,texto in enumerate((c['titulo'],c.get('prioridade_trabalho') or c.get('prioridade_sugerida',c['prioridade']),andamento,'; '.join(c['regioes']),h['resultado'] if h else 'Sem resultado; histórico anterior disponível')):
                 item=QTableWidgetItem(texto);item.setToolTip(texto);item.setData(Qt.UserRole,c['uid']);self.lista.setItem(n,col,item)
         self.lista.blockSignals(False)
@@ -271,9 +277,8 @@ class PainelDiagnosticos(QDockWidget):
         if hasattr(self,'editor_filtros'):
             hs=list(self._analises.values());self.resumo.setText(self.resumo.text()+f"\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} casos indeterminados nos filtros (não incluídos). Resultados investigativos: {len([h for h in hs if h['modo']==modo])}.")
         texto_detalhado=self.resumo.text();self.resumo.setToolTip(texto_detalhado)
-        pendentes=sum(op.pendente(self._analises.get((caso['uid'],modo))) for caso in self.casos)
-        self.resumo.setText(f"{len(self.visiveis)} de {len(self.casos)} ocorrências · {pendentes} pendentes · {len(self.casos)-pendentes} analisadas\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} indeterminadas nos filtros. Prioridade não confirma defeito.")
-        self.execucao.setText(f"{getattr(self,'nome_exibicao',None) or meta.get('nome','Investigação')} · {meta.get('projeto','')} · Integrada V{meta.get('versao',1)} · {self.modo.currentText()}\nWaterGEMS {meta['topologia']['execucao_uid'][:12]} · Cenário {meta['topologia'].get('cenario')} · contexto salvo; rascunhos indicados no formulário")
+        resolvidas=sum(v=='RESOLVIDO' for v in self._situacoes_acomp.values());reavaliar=sum(v=='REAVALIACAO_NECESSARIA' for v in self._situacoes_acomp.values())
+        self.resumo.setText(f"{len(self.visiveis)} de {len(self.casos)} ocorrências · {resolvidas} resolvidas · {len(self.casos)-resolvidas} em aberto ({reavaliar} para reavaliação)\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} indeterminadas nos filtros. RESOLVIDO encerra acompanhamento, sem alterar o resultado técnico.")
         self.atualizar_contexto()
         if self.visiveis and selecionar_primeiro:
             indice=next((i for i,c in enumerate(self._itens_pagina) if c['uid']==anterior),0);self.lista.selectRow(indice);self.selecionar()
@@ -511,9 +516,11 @@ class PainelDiagnosticos(QDockWidget):
             anterior=selecionar_integracao(caminho,self)
             if anterior is None:return
             r=comparar(anterior,self.pacote,self.modo.currentData())
-            resumo='\n'.join(f'{k}: {v}' for k,v in r['contagens'].items())+'\nNão transfere conclusões; ausência não comprova correção.'
+            from .locais_manuais import casos as manuais
+            anteriores=catalogar(anterior)+manuais(caminho,anterior);ar=ac.comparar(caminho,anterior,anteriores,self.pacote,self.casos,self.modo.currentData());r['acompanhamento']=ar
+            resumo='Acompanhamento: '+str(ar['contagens'])+'\nEquivalentes preservam a resolução; alterações exigem reavaliação.\n'+'\n'.join(f'{k}: {v}' for k,v in r['contagens'].items())+'\nNão transfere conclusões; ausência não comprova correção.'
             if QMessageBox.question(self,'Registrar comparação de versões',resumo,QMessageBox.Save|QMessageBox.Cancel,QMessageBox.Cancel)==QMessageBox.Save:
-                salvar_comparacao(self.base,self.pacote,r,caminho);QMessageBox.information(self,'Comparação registrada',resumo)
+                salvar_comparacao(self.base,self.pacote,r,caminho);ac.aplicar_comparacao(self.base,self.pacote,self.casos,self.modo.currentData(),ar);self._acomp=ac.indice(self.base,self.pacote);self.filtrar();QMessageBox.information(self,'Comparação registrada',resumo)
         except Exception as e:falha(self,e);QMessageBox.warning(self,'Comparação não registrada',str(e))
 
     def exportar_decisoes(self):

@@ -1,6 +1,7 @@
 """Fotografia de conjuntos e percursos cadastrados, sem escrita no WaterGEMS."""
 from collections import Counter,defaultdict
 import csv,json,math,os,re,tempfile
+import hashlib,unicodedata
 from pathlib import Path
 from .decisoes import MODOS
 
@@ -98,6 +99,22 @@ def csv_novo(path,linhas):
         w=csv.DictWriter(f,fieldnames=list(linhas[0]) if linhas else ['SEM_REGISTROS'],delimiter=';');w.writeheader();w.writerows(linhas)
 
 
+def indice_consultas(qs,dados,campo='Label'):
+    tipos={'IdahoPipe':'PIPE','IdahoJunction':'JUNCTION','IdahoReservoir':'RESERVOIR','IdahoTank':'TANK','ConventionalTank':'TANK','StandardPump':'PUMP','VariableSpeedPumpBattery':'PUMP_BATTERY','CheckValve':'CHECK_VALVE','AirValve':'AIR_VALVE'}
+    slugs={}
+    for tipo in {q['tipo'] for q in qs}:
+        s=tipos.get(tipo) or re.sub('[^A-Z0-9_]+','_',unicodedata.normalize('NFKD',tipo).encode('ascii','ignore').decode().upper()).strip('_')[:48] or 'TIPO'
+        if s in ('CON','PRN','AUX','NUL') or re.fullmatch('(COM|LPT)[0-9]',s):s='TIPO_'+s
+        slugs[tipo]=s
+    repetidos=Counter(slugs.values())
+    for tipo,s in list(slugs.items()):
+        if repetidos[s]>1:slugs[tipo]=s+'_'+hashlib.sha256(tipo.encode()).hexdigest()[:10].upper()
+    total=Counter()
+    for q in qs:total[q['tipo']]+=q['quantidade']
+    modelos=list(dict.fromkeys(str(e.get('Modelo') or '') for e in dados['elementos']))
+    return [dict(Ordem=n,TipoWaterGEMS=q['tipo'],Arquivo=f"{slugs[q['tipo']]}_LOTE_{q['lote']:03}_{q['quantidade']}_"+('ELEMENTO' if q['quantidade']==1 else 'ELEMENTOS')+'.txt',Lote=q['lote'],Quantidade=q['quantidade'],TotalTipo=total[q['tipo']],Campo=campo,Validacao=q['estado'],Modelo='; '.join(modelos),Versao=dados['versao']) for n,q in enumerate(qs,1)]
+
+
 def exportar(pasta,pacote,registro,opcoes=None):
     import shutil
     pasta=Path(pasta);opcoes=opcoes or {};dados=preparar(pacote,registro)
@@ -108,9 +125,12 @@ def exportar(pasta,pacote,registro,opcoes=None):
         if opcoes.get('percursos',True):csv_novo(tmp/'PERCURSOS.csv',dados['percursos'])
         if opcoes.get('queries',True):
             qs=consultas(dados,pacote['topologia']['modelo'],opcoes.get('campo','Label'),opcoes.get('campo_id'),opcoes.get('id_validado',False),opcoes.get('max_itens',100),opcoes.get('max_caracteres',4000));csv_novo(tmp/'CONSULTAS.csv',qs)
-            for n,q in enumerate(qs,1):(tmp/f'QUERY_{n:04}.txt').write_text(q['expressao'],encoding='utf8')
+            indice=indice_consultas(qs,dados,opcoes.get('campo_id') if opcoes.get('campo')=='ID' else 'Label');csv_novo(tmp/'INDICE_QUERIES.csv',indice)
+            for q,r in zip(qs,indice):(tmp/r['Arquivo']).write_text(q['expressao'],encoding='utf8')
+            manifesto=dict(conjunto=dados['conjunto'],versao=dados['versao'],perspectiva=dados['modo'],consultas=indice,sha256={r['Arquivo']:hashlib.sha256((tmp/r['Arquivo']).read_bytes()).hexdigest() for r in indice})
+            (tmp/'MANIFESTO_QUERIES.json').write_text(json.dumps(manifesto,ensure_ascii=False,indent=2),encoding='utf8')
         if opcoes.get('conferencia',True):(tmp/'CONFERENCIA.json').write_text(json.dumps(dados,ensure_ascii=False,indent=2),encoding='utf8')
-        if opcoes.get('instrucoes',True):(tmp/'LEIA_ME.txt').write_text('Abra o mesmo modelo, cenário e perspectiva. No Query Manager crie uma consulta por tipo e lote; confirme o campo e a sintaxe no Query Builder. IN é documentado pela Bentley: '+FONTE_QUERY+'\nOs limites de lote são conservadores configuráveis, sem limite máximo comprovado do produto. Reúna as seleções com adição, confira por ID/tipo/Label com ELEMENTOS.csv e salve um Selection Set ESTÁTICO. Consulta dinâmica pode mudar com o modelo. Selection by Query não importa CSV. Find Adjacent Nodes só ajuda na seleção: confira os nós contra a lista, sem incluir ramificações/dispositivos vizinhos. Sintaxe local e criação nativa ainda requerem conferência no WaterGEMS desktop. Nenhum SQLite original foi alterado.\n',encoding='utf8')
+        if opcoes.get('instrucoes',True):(tmp/'LEIA_ME.txt').write_text('1. Abra o modelo e cenário de origem indicados no índice.\n2. No Query Manager crie uma Query do tipo indicado em INDICE_QUERIES.csv.\n3. Cole a expressão do arquivo daquele tipo/lote e confira o campo no Query Builder.\n4. Execute e confira a quantidade do lote.\n5. Crie um Selection Set ESTÁTICO ou acrescente ao conjunto em trabalho. Uma Query pode substituir a seleção anterior: não presuma adição automática.\n6. Repita para os outros lotes e tipos, conferindo a união.\n7. Compare o total distinto e os IDs/tipos/Labels com ELEMENTOS.csv e o conferidor.\nIN documentado pela Bentley: '+FONTE_QUERY+'\nOs limites de lote são conservadores configuráveis, sem limite máximo comprovado do produto. Consulta dinâmica pode mudar com o modelo. Selection by Query não importa CSV. Find Adjacent Nodes só auxilia: confira os nós contra a lista. Criação nativa e sintaxe local permanecem pendentes de teste no WaterGEMS desktop. Nenhum SQLite original foi alterado.\n',encoding='utf8')
         os.rename(tmp,pasta)
     finally:
         if tmp.exists():shutil.rmtree(tmp)

@@ -1,5 +1,7 @@
 # Instalação e operação
 
+Na **1.8.1**, use **✓ Marcar como resolvido** ou **Resolvido e próxima** para retirar um caso da fila Em aberto sem alterar sua interpretação técnica. Em Resolvidas, use Reabrir investigação. Relatórios funcionam offline por padrão, com filtro de resolvidas e prévia de um caso. [Instruções e roteiro de aceitação](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).
+
 Em **Janelas / painéis**, recupere auditoria GIS, configuração WaterGEMS, investigação
 e auxiliares existentes. Mostrar uma tela não reprocessa dados nem repõe rascunhos.
 O acompanhamento informa atividade, etapa, cancelamento e conclusão. Consulte

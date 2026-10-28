@@ -106,7 +106,7 @@ class OperacionalTest(unittest.TestCase):
     def test_ui_observacao_sem_resultado(self):
         j=self.painel();f=j.resultado_analise;f.observacoes.setPlainText('Conferir no modelo');self.assertTrue(f.salvar());self.assertEqual(op.historico(self.base,self.ig)[0]['resultado'],'PENDENTE')
     def test_ui_sai_da_fila(self):
-        j=self.painel();u=j.atual['uid'];f=j.resultado_analise;f.resultado.setCurrentIndex(f.resultado.findData(op.RESULTADOS[2]));self.assertTrue(f.salvar());self.assertNotIn(u,[c['uid'] for c in j.visiveis]);j.fila.setCurrentIndex(j.fila.findData('TODOS'));self.assertIn(u,[c['uid'] for c in j.visiveis])
+        j=self.painel();j.fila.setCurrentIndex(j.fila.findData('PENDENTES'));u=j.atual['uid'];f=j.resultado_analise;f.resultado.setCurrentIndex(f.resultado.findData(op.RESULTADOS[2]));self.assertTrue(f.salvar());self.assertNotIn(u,[c['uid'] for c in j.visiveis]);j.fila.setCurrentIndex(j.fila.findData('TODOS'));self.assertIn(u,[c['uid'] for c in j.visiveis])
     def test_ui_cancelamento_preserva(self):
         j=self.painel();f=j.resultado_analise;f.observacoes.setPlainText('Não perder');u=j.atual['uid']
         with patch('auditoria_topologica_watergems.form_operacional.QMessageBox.question',return_value=QMessageBox.Cancel):j.busca.setText('sem-resultados')

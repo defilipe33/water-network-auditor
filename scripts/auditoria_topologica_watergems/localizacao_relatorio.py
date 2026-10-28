@@ -1,7 +1,39 @@
 """Referências locais primeiro; geocodificação unitária somente por ação explícita."""
 import json,math,time
+import unicodedata,re
 from urllib.parse import urlsplit,urlencode
 from qgis.core import (QgsGeometry,QgsSpatialIndex,QgsCoordinateReferenceSystem,QgsCoordinateTransform,QgsProject,QgsUnitTypes,QgsFeature,QgsPointXY)
+
+def campos_localizacao(nomes):
+    fortes={'LOGRADOURO','NOMELOGRADOURO','NMLOGRADOURO','ENDERECO','ENDERECOCOMPLETO','NOMERUA','NMRUA','RUA','STREET','STREETNAME','ADDRESS'}
+    return [n for n in nomes if re.sub('[^A-Z]','',unicodedata.normalize('NFKD',n).encode('ascii','ignore').decode().upper()) in fortes]
+
+
+def referencia_automatica(pacote,caso,config):
+    if config.get('origem') and config.get('campo'):return referencia_cadastral(pacote,caso,config)
+    candidatos=[];uids=set(caso.get('gis_uids',[]))
+    for t in pacote['dossie']['tubulacoes']:
+        if t['uid'] not in uids:continue
+        attrs=t.get('atributos',{});campos=campos_localizacao(attrs)
+        if len(campos)!=1:continue
+        valor=attrs.get(campos[0])
+        if isinstance(valor,str) and valor.strip():candidatos.append(dict(camada=t['camada'],origem=t['origem'],campo=campos[0],valor=valor))
+    if not candidatos:return None
+    valores=list(dict.fromkeys(c['valor'] for c in candidatos))
+    return dict(texto='Referência cadastral: '+' / '.join(valores)+' (atributo de localização; não é endereço confirmado).',fonte='CADASTRO_GIS',precisao='ATRIBUTO_DE_LOCALIZACAO',candidatos=candidatos,ambigua=len(valores)>1)
+
+
+def sugerir_logradouros(camadas):
+    from .fontes_relatorio import valida,remota
+    saida=[]
+    for c in camadas:
+        if not valida(c) or remota(c) or not hasattr(c,'geometryType') or c.geometryType()!=1:continue
+        explicitado=c.customProperty('wna/relatorio/campo_logradouro',None)
+        campos=[explicitado] if explicitado in c.fields().names() else campos_localizacao(c.fields().names())
+        if len(campos)==1:
+            from qgis.PyQt.QtCore import QVariant
+            if c.fields().field(campos[0]).type()==QVariant.String:saida.append((c,campos[0]))
+    return saida
 
 
 def referencia_cadastral(pacote,caso,config):
@@ -44,7 +76,7 @@ class Logradouros:
                 if a['nome']==b['nome']:continue
                 inter=self.dados[a['id']][1].intersection(self.dados[b['id']][1])
                 if not inter.isEmpty() and inter.type()==0 and ponto.distance(inter)<=raio:cruz.append(dict(ruas=[a['nome'],b['nome']],distancia_m=ponto.distance(inter),criterio='INTERSECAO_GEOMETRICA_2D_NAO_COMPROVA_CRUZAMENTO_EM_NIVEL'))
-        texto='Referência de localização não disponível'
+        texto='Localização não identificada'
         if candidatos:texto='Próximo ao eixo '+candidatos[0]['nome']+f" (~{candidatos[0]['distancia_m']:.1f} m); não é endereço exato."
         if cruz:texto+=' Interseção geométrica candidata: '+' / '.join(cruz[0]['ruas'])+'.'
         return dict(texto=texto,fonte=self.nome,campo=self.campo,precisao='DISTANCIA_2D_A_EIXO',candidatos=candidatos,cruzamentos=cruz)

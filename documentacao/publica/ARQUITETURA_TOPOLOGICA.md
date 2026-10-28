@@ -92,3 +92,7 @@ Métodos separados, Junctions como terminais, rotas compartilhadas e consulta po
 
 Corredores completos, Queries, gestão reversível e relatório ilustrado offline.
 [Guia, privacidade, requisitos e roteiro de validação](EXPORTACAO_CATALOGO_RELATORIOS.md).
+
+## Acompanhamento e apresentação — 1.8.1
+
+`acompanhamento.py` estende a persistência IGD no mesmo GeoPackage: esquema v1, backup completo verificado, gravação transacional com controle otimista, histórico imutável e assinatura do contexto local para reavaliação. Não substitui análises técnicas. `fontes_relatorio.py` centraliza identificação local/remota e permissões antes de renderizar. Relatórios e Queries reutilizam os exportadores existentes. [Estrutura, regras e limitações](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).

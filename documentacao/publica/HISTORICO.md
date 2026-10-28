@@ -1,5 +1,13 @@
 # Histórico técnico publicável
 
+## 1.8.1 — relatórios, Queries e acompanhamento
+
+Relatório offline por padrão, prévia de um caso, fontes locais e alternativas seguras para serviços externos; localização cadastral/logradouros; Queries com nomes por tipo e índice. RESOLVIDO independente de diagnóstico, prioridade e resultado técnico, com fila Em aberto, resolver/avançar/reabrir, histórico, comparação conservadora e relatórios. [Guia](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).
+
+## 1.8.0 — exportação completa e catálogo
+
+Elementos e percursos ordenados, Queries, catálogo com cópias de segurança separadas e relatórios ilustrados. [Guia](EXPORTACAO_CATALOGO_RELATORIOS.md).
+
 ## 1.7.0 — corredores e recuperação
 
 Caminhos entre terminais e corredores multi-destino, sem inclusão automática de pontes; alternativas limitadas, métricas e continuidade. Recuperação explícita de análises em todas as perspectivas, filtros e páginas. [Guia](CORREDORES_E_RECUPERACAO.md).

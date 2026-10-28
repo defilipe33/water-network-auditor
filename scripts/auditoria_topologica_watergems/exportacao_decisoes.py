@@ -90,6 +90,10 @@ def tabelas_decisoes(base,pacote):
     tabelas['ROTAS_CORREDORES']=(('CONJ_UUID','ROTA','ALTERNATIVA','ORIGEM','DESTINO','CUSTO','COMP_M','N_TUBOS','DISPOSITIVOS'),[(r['obj_uid'],t['uid'],t['alternativa'],str(t['origem']),str(t['destino']),t['custo'],t['comprimento_m'],len(t['tubulacoes']),'; '.join(map(str,t['dispositivos']))) for r in conjuntos for t in criterios(r).get('rotas',[])+criterios(r).get('rotas_alternativas',[])])
     tabelas['METRICAS_CORREDORES']=(('CONJ_UUID','WG_ID','ROTAS','DESTINOS','CLASSE','COMP_M','DIAM_BRUTO','UNID_DIAM'),[(r['obj_uid'],v['chave'],*[v['dados'].get('metricas',{}).get(k) for k in ('rotas','destinos','classe','comprimento_m','diametro_bruto','unidade_diametro')]) for r in conjuntos for v in r['vinculos']])
     tabelas['DESTINOS_INALCANCAVEIS']=(('CONJ_UUID','DESTINO','MOTIVO'),[(r['obj_uid'],str(t['destino']),t['motivo']) for r in conjuntos for t in criterios(r).get('destinos_inalcancaveis',[])])
+    from .acompanhamento import historico as acompanhamento_historico
+    acompanhamento=acompanhamento_historico(base,ig)
+    campos_acomp=('UID','IG_UID','OCC_UID','PERSPECTIVA','ANTERIOR','SITUACAO_ANTERIOR','SITUACAO','OBSERVACAO','DATA_UTC','TOPO_UID','ASSINATURA')
+    tabelas['ACOMPANHAMENTO']=(campos_acomp,[tuple(h[k] for k in ('uid','ig_uid','occ_uid','modo','anterior','estado_anterior','estado','observacao','data_utc','topo_uid','assinatura')) for h in acompanhamento])
     return tabelas
 
 

@@ -50,3 +50,7 @@ ausentes não são inventados. Importação parcial é identificada explicitamen
 GPKG é a base completa. SHP tem campos resumidos e relacionamentos auxiliares;
 XLSX tem visões analíticas e expansíveis. Exportação nova não substitui as antigas
 automaticamente. Nenhuma versão ou proposta é escrita de volta no modelo hidráulico.
+
+## Situação de acompanhamento — 1.8.1
+
+As tabelas aditivas `IGD_ACOMP_SCHEMA` e `IGD_ACOMPANHAMENTO` conservam resolução/reabertura separadas do resultado técnico. A primeira gravação cria backup verificado; leitura de base antiga não aplica migração. Novos registros referenciam a revisão anterior, a execução e a perspectiva; alteração concorrente bloqueia a sobrescrita. Comparação explícita conserva somente equivalências técnicas comprovadas, sinaliza alterações locais e preserva histórias nas duas versões. [Detalhes](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).
