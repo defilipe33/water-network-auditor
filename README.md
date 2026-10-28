@@ -169,3 +169,9 @@ Consulte [CONTRIBUTING.md](CONTRIBUTING.md) e [SECURITY.md](SECURITY.md).
 **Ainda não foi definida uma licença para este projeto.** A disponibilidade pública
 do código não equivale a uma concessão de licença open-source. Dependências e
 referências de terceiros conservam seus próprios direitos e condições.
+
+
+## Exportação, catálogo e relatórios — 1.8.0
+
+Corredores completos, Queries, gestão reversível e relatório ilustrado offline.
+[Guia, privacidade, requisitos e roteiro de validação](documentacao/publica/EXPORTACAO_CATALOGO_RELATORIOS.md).

@@ -81,7 +81,7 @@ class Catalogo(IndiceSQLite):
         itens=[]
         for grupo in grupos.values():
             vistos={}
-            for r in grupo:
+            for r in sorted(grupo,key=lambda r:('_antes_' in Path(r['base']).stem,r['base'])):
                 p=Path(r['base']);wal=Path(str(p)+'-wal');assinatura=None
                 if len(grupo)>1 and r['disponivel'] and not (wal.exists() and wal.stat().st_size):
                     antes=p.stat();assinatura=hash_arquivo(p);depois=p.stat()
@@ -90,9 +90,14 @@ class Catalogo(IndiceSQLite):
                     vistos[assinatura].setdefault('caminhos',[vistos[assinatura]['base']]).append(r['base']);continue
                 if assinatura:vistos[assinatura]=r
                 itens.append(r)
-            if len(vistos)>1:
+            assinaturas_ativas={ass for ass,r in vistos.items() if '_antes_' not in Path(r['base']).stem}
+            if len(assinaturas_ativas)>1:
                 for r in grupo:r['conflito_identidade']=True
                 self.advertir('Mesma identidade em arquivos com conteúdo diferente; nenhuma versão escolhida automaticamente: '+grupo[0]['uuid'])
+            for r in grupo:
+                if '_antes_' in Path(r['base']).stem:r['backup_identidade_compartilhada']=len(grupo)>1
+        from .gestao_catalogo import apresentar
+        itens=apresentar(self,itens)
         return [r for r in itens if all(v in (None,'') or str(r.get(k,''))==str(v) for k,v in filtros.items())]
     def localizar(self,uuid,tipo,novo_caminho):
         itens=identificar(novo_caminho)
@@ -102,7 +107,7 @@ class Catalogo(IndiceSQLite):
     def varrer(self):
         avisos=[]
         for p in self.raiz.rglob('*.gpkg'):
-            if '_tecnicos' in p.parts or 'preparando' in p.name:continue
+            if '_tecnicos' in p.parts or 'RECUPERACAO' in p.parts or 'preparando' in p.name:continue
             try:self.registrar(p)
             except (ValueError,sqlite3.DatabaseError,ErroCatalogo,OSError) as e:avisos.append(str(p)+': '+str(e))
         return avisos

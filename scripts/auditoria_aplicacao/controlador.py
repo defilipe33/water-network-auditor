@@ -25,6 +25,7 @@ class Aplicacao:
         self.janelas.registrar('gis',self.geo,'auditoria GIS');self.janelas.registrar('atividade',self.atividades.dock,'acompanhamento de operações')
         self.menu_janelas=QMenu('Janelas / painéis',iface.mainWindow());self.menu_janelas.aboutToShow.connect(lambda:self.janelas.preencher_menu(self.menu_janelas))
         self.botao_janelas(self.geo)
+        self.catalogo.bases_ativas=lambda:[self.painel.base] if self.painel and not sip.isdeleted(self.painel) else []
         self._catalogo_antigo=None
         import auditoria_fronteiras.catalogo as cat
         self._catalogo_antigo=cat.CATALOGO_APLICACAO;cat.CATALOGO_APLICACAO=self.catalogo.raiz/'auditorias_recentes.json'
@@ -103,7 +104,7 @@ class Aplicacao:
             elif r['tipo']=='INTEGRADA':
                 self.atividades.executar_thread('Abrindo investigação integrada',r['nome'],
                     lambda cancelar,progresso:reabrir(r['base'],r['uuid'],cancelar,progresso),
-                    lambda pacote:self.publicar(pacote,r['base']),lambda e:QMessageBox.warning(self.geo,'Investigação não aberta',e+'\nA versão anterior permanece disponível.'))
+                    lambda pacote:self.publicar(pacote,r['base'],nome_exibicao=r['nome']),lambda e:QMessageBox.warning(self.geo,'Investigação não aberta',e+'\nA versão anterior permanece disponível.'))
             else:
                 # O fluxo já implementado lida com descarte, cancelamento e
                 # restauração. Substitui apenas o seletor nesta chamada explícita.
@@ -112,7 +113,7 @@ class Aplicacao:
                 try:self.geo.iniciar_operacao(1,usar_ativa=False)
                 finally:self.geo.escolher_auditoria=antigo
         except Exception as e:QMessageBox.warning(self.geo,'Base não aberta',str(e))
-    def publicar(self,pacote,base,modo=None):
+    def publicar(self,pacote,base,modo=None,nome_exibicao=None):
         if not self.resolver():return False
         anterior=(self.geo.base_revisao,self.geo.dossie['execucao_uid']) if self.geo.dossie and self.geo.base_revisao else None
         # A auditoria exibida na janela principal deve ser a mesma do painel.
@@ -124,7 +125,8 @@ class Aplicacao:
             if anterior:self.geo.abrir_auditoria(*anterior)
             QMessageBox.warning(self.geo,'Investigação não aberta',str(e)+'\nAs versões anteriores foram preservadas. Reabra a fonte correta ou restaure uma cópia íntegra.');return False
         if self.painel:self.painel.desativar()
-        self.painel=novo
+        self.painel=novo;novo._wna_janelas=self.janelas
+        novo.nome_exibicao=nome_exibicao or pacote['resultado']['meta'].get('nome','Investigação');novo.atualizar_contexto()
         self.janelas.registrar('integrada',novo,'investigação integrada',self.mostrar_integracao);self.atividades.vincular(novo);self.botao_janelas(novo.widget())
         self.janelas.registrar('inspecao',novo.legado,'inspeção espacial');self.atividades.vincular(novo.legado)
         if modo in ('ESTRUTURAL','TODAS_VALVULAS_ABERTAS'):novo.modo.setCurrentIndex(novo.modo.findData(modo))

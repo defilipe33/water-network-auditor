@@ -24,6 +24,11 @@ class FormResultado(QGroupBox):
         self.historico_grupo=QGroupBox('Histórico desta análise');self.historico_grupo.setCheckable(True);self.historico_grupo.setChecked(False);hv=QVBoxLayout(self.historico_grupo);self.historia=QTextBrowser();self.historia.setMaximumHeight(150);self.historia.hide();hv.addWidget(self.historia);self.historico_grupo.toggled.connect(self.historia.setVisible);v.addWidget(self.historico_grupo)
         for c in (self.resultado,self.motivo,self.prioridade):c.setMinimumContentsLength(12);c.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
         self.setEnabled(False)
+        self.observacoes.textChanged.connect(painel.atualizar_contexto)
+        self.resultado.currentIndexChanged.connect(painel.atualizar_contexto)
+        self.motivo.editTextChanged.connect(painel.atualizar_contexto)
+        self.prioridade.currentIndexChanged.connect(painel.atualizar_contexto)
+
     def valores(self):return self.resultado.currentData(),self.motivo.currentText(),self.observacoes.toPlainText(),self.prioridade.currentData()
     def tem_edicoes(self):return self.chave is not None and self._baseline is not None and self.valores()!=self._baseline
     def carregar(self,caso,modo,forcar=False):

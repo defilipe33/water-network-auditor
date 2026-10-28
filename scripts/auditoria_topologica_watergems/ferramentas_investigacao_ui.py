@@ -180,7 +180,7 @@ class DialogoRedes(QDialog):
         local=QPushButton('Criar local manual no destino inalcançável escolhido');local.clicked.connect(self.local_interrupcao);v.addWidget(local);self.local_interrupcao_botao=local
         self.estado=QLabel('Nenhum conjunto calculado. Desmarque linhas para removê-las da seleção final.');self.estado.setWordWrap(True);v.addWidget(self.estado)
         linha=QHBoxLayout();v.addLayout(linha)
-        for nome,fn in [('Salvar nova revisão',self.salvar),('Exportar CSV…',self.exportar),('Carregar seleção QGIS',self.camada)]:
+        for nome,fn in [('Salvar nova revisão',self.salvar),('Exportar CSV…',self.exportar),('Exportar para WaterGEMS…',self.exportar_completo),('Carregar seleção QGIS',self.camada)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,fn=fn:fn());linha.addWidget(b)
         fechar=QPushButton('Fechar');fechar.clicked.connect(self.close);linha.addWidget(fechar);adaptar_janela(self)
         self.metodo.currentIndexChanged.connect(self.metodo_alterado);self.metodo_alterado()
@@ -299,6 +299,16 @@ class DialogoRedes(QDialog):
         from .representacoes_manuais import carregar_conjunto
         try:carregar_conjunto(self.painel,self.escolhidos(),self.nome.text(),self.registro)
         except Exception as e:QMessageBox.warning(self,'Seleção QGIS',str(e))
+
+    def exportar_completo(self):
+        if not self.registro or self.tem_edicoes():QMessageBox.information(self,'Salvar conjunto','Salve a revisão atual antes de exportar.');return
+        try:
+            from .exportacao_watergems_ui import ExportarWatergems
+            from qgis.PyQt import sip
+            if getattr(self,'_exportacao',None) is None or sip.isdeleted(self._exportacao):self._exportacao=ExportarWatergems(self)
+            if getattr(self.painel,'_wna_janelas',None):self.painel._wna_janelas.registrar('exportacao_watergems',self._exportacao,'exportação WaterGEMS')
+            self._exportacao.show();self._exportacao.raise_()
+        except Exception as e:QMessageBox.warning(self,'Exportação indisponível',str(e))
 
     def exportar(self):
         from .redes_principais import exportar_csv

@@ -64,3 +64,10 @@ e documentos de contexto permanecem preservados somente no ambiente local.
 Os roadmaps aprovados são mantidos como documentos históricos. Algumas frentes,
 como associação espacial genérica de equipamentos e telemetria, permanecem futuras.
 O README descreve o que está implementado e as limitações vigentes.
+
+
+## 1.8.0
+
+Exportação dos elementos do percurso, consultas por tipo, catálogo com backups
+separados, nome de exibição e recuperação reversível. PDF ilustrado e XLSX da
+mesma seleção; fontes cartográficas e localização externa opcionais.

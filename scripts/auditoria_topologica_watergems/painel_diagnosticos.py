@@ -111,7 +111,7 @@ class PainelDiagnosticos(QDockWidget):
         self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
-        for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes)]:
+        for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes),('Gerar relatório de investigação…',self.abrir_relatorio)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
         for nome,acao in [('Excluir logicamente local manual',self.excluir_manual),('Restaurar local manual excluído…',self.restaurar_manual),('Recuperar locais manuais de outra investigação…',self.importar_manuais)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
@@ -273,7 +273,8 @@ class PainelDiagnosticos(QDockWidget):
         texto_detalhado=self.resumo.text();self.resumo.setToolTip(texto_detalhado)
         pendentes=sum(op.pendente(self._analises.get((caso['uid'],modo))) for caso in self.casos)
         self.resumo.setText(f"{len(self.visiveis)} de {len(self.casos)} ocorrências · {pendentes} pendentes · {len(self.casos)-pendentes} analisadas\nFila: {self.fila.currentText()} · {getattr(self,'_filtros_indeterminados',0)} indeterminadas nos filtros. Prioridade não confirma defeito.")
-        self.execucao.setText(f"{meta.get('projeto') or meta.get('nome','Investigação')} · {self.modo.currentText()}\nCenário {meta['topologia'].get('cenario')} · versões e fontes disponíveis na aba de configuração")
+        self.execucao.setText(f"{getattr(self,'nome_exibicao',None) or meta.get('nome','Investigação')} · {meta.get('projeto','')} · Integrada V{meta.get('versao',1)} · {self.modo.currentText()}\nWaterGEMS {meta['topologia']['execucao_uid'][:12]} · Cenário {meta['topologia'].get('cenario')} · contexto salvo; rascunhos indicados no formulário")
+        self.atualizar_contexto()
         if self.visiveis and selecionar_primeiro:
             indice=next((i for i,c in enumerate(self._itens_pagina) if c['uid']==anterior),0);self.lista.selectRow(indice);self.selecionar()
         else:
@@ -410,6 +411,8 @@ class PainelDiagnosticos(QDockWidget):
         self.aviso.setText('Seleção do mapa: caso identificado inequivocamente.' if len(candidatos)==1 else f'{len(candidatos)} casos relacionados à seleção. Escolha um caso; nenhuma correspondência é presumida.')
 
     def desativar(self):
+        relatorio=getattr(self,'_relatorio_ui',None)
+        if relatorio is not None and not sip.isdeleted(relatorio):relatorio.close()
         consulta=getattr(self,'_consulta_analises',None)
         if consulta is not None and not sip.isdeleted(consulta):consulta.close()
         if self._ferramenta_manual and self.legado.canvas:
@@ -488,6 +491,8 @@ class PainelDiagnosticos(QDockWidget):
         return self.analise.resolver_edicoes()
 
     def resolver_alteracoes(self):
+        r=getattr(self,'_relatorio_ui',None)
+        if r is not None and not sip.isdeleted(r) and r._ocupado:return False
         if not self.resolver_formularios():return False
         if self.legado.tem_edicoes():
             if not self.legado.resolver_edicoes():return False
@@ -515,6 +520,18 @@ class PainelDiagnosticos(QDockWidget):
         if not self.resolver_alteracoes():return
         from .exportacao_decisoes import DialogExportarDecisoes
         self._exportacao=DialogExportarDecisoes(self);self._exportacao.exec_()
+
+
+    def atualizar_contexto(self):
+        meta=self.pacote['resultado']['meta'];pendente=hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes()
+        self.execucao.setText(f"{getattr(self,'nome_exibicao',None) or meta.get('nome','Investigação')} · {meta.get('projeto','')} · Integrada V{meta.get('versao',1)} · {self.modo.currentText()}\nWaterGEMS {meta['topologia']['execucao_uid'][:12]} · Cenário {meta['topologia'].get('cenario')} · {'Alterações não salvas' if pendente else 'Registros persistidos'}")
+
+    def abrir_relatorio(self):
+        from .relatorio_ui import RelatorioDialog
+        if not self._ativo:return
+        if getattr(self,'_relatorio_ui',None) is None or sip.isdeleted(self._relatorio_ui):self._relatorio_ui=RelatorioDialog(self)
+        if getattr(self,'_wna_janelas',None):self._wna_janelas.registrar('relatorio_investigacao',self._relatorio_ui,'relatório de investigação')
+        self._relatorio_ui.show();self._relatorio_ui.raise_();self._relatorio_ui.activateWindow()
 
 
 def abrir_diagnosticos(pacote,base,projeto=None,parent=None,canvas=None,gerenciar_saida=True):

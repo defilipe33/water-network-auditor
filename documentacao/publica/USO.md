@@ -90,3 +90,9 @@ Extensão aditiva IGD com geometrias históricas e visão de locais ativos, asso
 ## Corredores e recuperação — 1.7.0
 
 Métodos separados, Junctions como terminais, rotas compartilhadas e consulta por UUID/perspectiva de todas as análises persistidas. Guia e limitações: CORREDORES_E_RECUPERACAO.md
+
+
+## Exportação, catálogo e relatórios — 1.8.0
+
+Corredores completos, Queries, gestão reversível e relatório ilustrado offline.
+[Guia, privacidade, requisitos e roteiro de validação](EXPORTACAO_CATALOGO_RELATORIOS.md).
