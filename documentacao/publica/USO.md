@@ -105,3 +105,8 @@ Corredores completos, Queries, gestão reversível e relatório ilustrado offlin
 ## Ilhas sem origem — 1.10.0
 
 Busca multiorigem no grafo completo; estrutural fraca e restrita dirigida separadas. Extensão relacional IGD_ILHAS com backup, cache e histórico de análises; decisões, RESOLVIDO e comparações reutilizam a persistência existente. Sem origens: inconclusivo. Tanks somente como hipótese explícita. Demanda não validada permanece indeterminada. Guia público: [ILHAS_SEM_ORIGEM](./ILHAS_SEM_ORIGEM.md).
+
+
+## Selection Sets — 1.11.0
+
+Adaptador HMI sobre Banco, com nomes/membros/pastas por identidade; persistência reutiliza IGD_OBJETOS/IGD_OBJ_HIST/IGD_OBJ_VINCULOS e publicação transacional. Queries desconhecidas não são avaliadas. Camadas próprias persistentes e organização local separada da hierarquia original, filtros de identidade, comparação e relatórios existentes. [Guia e aceitação](SELECTION_SETS_WATERGEMS.md).

@@ -114,6 +114,7 @@ class PainelDiagnosticos(QDockWidget):
         self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
+        b=QPushButton('IMPORTAR SELECTION SETS DO WATERGEMS…');b.clicked.connect(self.abrir_selection_sets);fv.addWidget(b)
         b=QPushButton('ILHAS SEM ORIGEM…');b.clicked.connect(self.abrir_ilhas);fv.addWidget(b)
         for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes),('Gerar relatório de investigação…',self.abrir_relatorio)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
@@ -200,6 +201,7 @@ class PainelDiagnosticos(QDockWidget):
             h=self._analises.get((c['uid'],self.modo.currentData()),{});sugestao,criterio=op.sugerir(c,self.indice_atributos);c['prioridade_sugerida']=h.get('prioridade_auto',sugestao);c['motivo_prioridade']=h.get('criterio_auto',criterio);c['prioridade_trabalho']=h.get('prioridade_trabalho')
         self._situacoes_acomp={c['uid']:ac.estado(self._acomp.get((c['uid'],self.modo.currentData())),c,self.pacote,self.modo.currentData(),self._contexto_acomp) for c in self.casos}
         novos=filtrar(self.casos,self.categoria.currentData(),self.componente.currentData(),self.regiao.currentData(),self.revisao.currentData(),self.modo.currentData(),self.busca.text(),self.fonte.currentData(),self.prioridade.currentData())
+        if getattr(self,'_ss_escopo',None) is not None:novos=[c for c in novos if set(c.get('wg_ids',[]))&self._ss_escopo]
         if self.origem_filtro.currentData():novos=[c for c in novos if c.get('origem','AUTOMATICA')==self.origem_filtro.currentData()]
         from .decisoes import indice_revisoes,registros
         self._revisoes_topologicas=indice_revisoes(self.base,self.pacote['resultado']['meta']['uid'])
@@ -238,6 +240,7 @@ class PainelDiagnosticos(QDockWidget):
         ativos=[w.currentText() for w in (self.categoria,self.componente,self.regiao,self.revisao,self.revisao_topo,self.fonte,self.prioridade) if w.currentIndex()>0]
         if self.busca.text():ativos.append('Elemento: '+self.busca.text())
         if hasattr(self,'editor_filtros') and self.editor_filtros.arvore.topLevelItem(0).childCount():ativos.append('Condições genéricas: '+str(self.editor_filtros.arvore.topLevelItem(0).childCount()))
+        if getattr(self,'_ss_escopo',None) is not None:ativos.append('Selection Sets: identidade de membro ('+str(len(self._ss_escopo))+' elementos)')
         self.filtros_ativos.setText('Filtros: '+('; '.join(ativos) or 'nenhum')+' · '+self.modo.currentText())
         self.preencher()
         self.exibir_recuperacao()
@@ -248,6 +251,7 @@ class PainelDiagnosticos(QDockWidget):
         self.filtrar()
 
     def limpar_filtros(self):
+        self._ss_escopo=None
         if hasattr(self,'editor_filtros'):self.editor_filtros.carregar({'operador':'E','condicoes':[]})
         if hasattr(self,'fila'):self.fila.blockSignals(True);self.fila.setCurrentIndex(0);self.fila.blockSignals(False)
         if hasattr(self,'resultado_filtro'):self.resultado_filtro.blockSignals(True);self.resultado_filtro.setCurrentIndex(0);self.resultado_filtro.blockSignals(False)
@@ -447,6 +451,12 @@ class PainelDiagnosticos(QDockWidget):
             caso=next((c for c in self.casos if c.get('manual_uid')==uid),None)
             if caso:self.selecionar_uid(caso['uid'])
         self.atualizar_recuperacao()
+
+    def abrir_selection_sets(self):
+        from .selection_sets_ui import SelectionSetsDialog
+        if getattr(self,'_selection_sets_ui',None) is None or sip.isdeleted(self._selection_sets_ui):self._selection_sets_ui=SelectionSetsDialog(self)
+        if getattr(self,'_wna_janelas',None):self._wna_janelas.registrar('selection_sets',self._selection_sets_ui,'Selection Sets WaterGEMS')
+        self._selection_sets_ui.show();self._selection_sets_ui.raise_();self._selection_sets_ui.activateWindow()
 
     def abrir_ilhas(self):
         from .ilhas_ui import IlhasDialog

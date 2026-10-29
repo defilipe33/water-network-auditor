@@ -32,3 +32,5 @@ opcionais de confronto exigem obter a referência separadamente e revisar suas c
 Bentley WaterGEMS, QGIS e nomes de organizações mencionados conservam seus direitos.
 Não há declaração de afiliação ou aprovação oficial. Não foi adicionada licença
 open-source ao Water Network Auditor; essa definição permanece pendente.
+
+Na 1.11.0, o mesmo commit do Composer foi confrontado para Selection Sets: nomes em HMIModelingElement, IDs uint32 e classificação de membros. O WNA acrescenta adaptação própria de ParentID e marcador de pastas observado. Não incorpora o código do repositório como dependência; o confronto opcional exige cópia externa.

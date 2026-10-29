@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A versão **1.11.0** acrescenta [importação de Selection Sets do WaterGEMS](documentacao/publica/SELECTION_SETS_WATERGEMS.md), preservando nomes, membros e a hierarquia por IDs quando disponível; camadas persistentes, filtros, histórico, comparação e relatórios. Queries não interpretadas permanecem com composição não verificada.
+
 A versão **1.10.0** acrescenta [ilhas sem caminho até origens configuradas](documentacao/publica/ILHAS_SEM_ORIGEM.md): busca multiorigem estrutural e dirigida com restrições, inventário, mapa, diagnósticos, histórico, exportação e comparação conservadora. Redes extensas também são investigadas; ausência de caminho não comprova desabastecimento.
 
 A versão **1.9.0** acrescenta [restrições de percurso nos corredores alimentadores](documentacao/publica/RESTRICOES_CORREDORES.md): permitir, evitar ou bloquear equipamentos; exceções, hipóteses manuais de estado, perfis e comparação. Não modifica o grafo original ou o WaterGEMS.

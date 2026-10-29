@@ -1,5 +1,9 @@
 # Histórico técnico publicável
 
+## 1.11.0 — Selection Sets WaterGEMS
+
+Leitura HMI somente consulta, pastas por ParentID, membros explícitos, pendências preservadas, história IGD reutilizada, camadas temáticas, filtros e comparação/relatórios. [Guia e limitações](SELECTION_SETS_WATERGEMS.md).
+
 ## 1.10.0 — ilhas sem caminho até origem
 
 Origens configuráveis, Tanks como hipótese explícita, busca multiorigem estrutural e dirigida sob restrições; grupos sem origem independentemente do tamanho. Inventário e candidatos, integração ao resultado/RESOLVIDO existentes, persistência/cache, comparação conservadora e relatórios. [Guia e aceitação](ILHAS_SEM_ORIGEM.md).

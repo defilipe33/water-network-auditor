@@ -36,8 +36,9 @@ def snapshot(base,pacote,casos,modo,config):
     linhas.sort(key=lambda r:(str(r[chave]),r['uid']))
     contagens={k:0 for k in op.RESULTADOS};contagens.update(Counter(r['resultado'] for r in linhas))
     from .ilhas_persistencia import resumo_ativo
-    resumo_ilhas=resumo_ativo(base,pacote)
-    return dict(analise_ilhas=resumo_ilhas,nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,resolvidas=sum(r['acomp_estado']=='RESOLVIDO' for r in linhas),em_aberto=sum(r['acomp_estado']!='RESOLVIDO' for r in linhas),acompanhamento_contagens=dict(Counter(r['acompanhamento'] for r in linhas)),acompanhamento_global=dict(Counter(ac.ROTULOS[v] for v in estados.values())),total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
+    conjuntos=bool(casos) and all(c['tipo']=='SELECTION_SET_WG' for c in casos)
+    resumo_ilhas=None if conjuntos else resumo_ativo(base,pacote)
+    return dict(tipo_relatorio='SELECTION_SETS' if conjuntos else 'INVESTIGACAO',analise_ilhas=resumo_ilhas,nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,resolvidas=sum(r['acomp_estado']=='RESOLVIDO' for r in linhas),em_aberto=sum(r['acomp_estado']!='RESOLVIDO' for r in linhas),acompanhamento_contagens=dict(Counter(r['acompanhamento'] for r in linhas)),acompanhamento_global=dict(Counter(ac.ROTULOS[v] for v in estados.values())),total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
 
 
 def geometrias_caso(pacote,caso,contexto=None):
@@ -195,24 +196,25 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
             if isinstance(f,Paragraph) and f.style.name=='Heading1' and hasattr(f,'indice_texto'):self.notify('TOCEntry',(0,f.indice_texto,self.page))
     doc=Documento(str(destino),pagesize=landscape(A4) if dados['config'].get('paisagem') else A4,rightMargin=36,leftMargin=36,topMargin=38,bottomMargin=38,title=dados['nome'],author='Water Network Auditor')
     largura=doc.width;story=[Spacer(1,55),par('WATER NETWORK AUDITOR','Title'),Spacer(1,20),par(dados['nome'],'Title'),Spacer(1,30)]
-    meta=dados['meta']
+    meta=dados['meta'];conjuntos=dados.get('tipo_relatorio')=='SELECTION_SETS'
     for s in [meta.get('projeto','Projeto'),meta.get('nome','Investigação'),f"Investigação {meta['uid']} · versão {meta.get('versao',1)}",f"WaterGEMS {meta['topologia']['execucao_uid']}",f"Cenário {meta['topologia'].get('cenario')} · {dados['modo']}",dados['data'],dados['interpretacao']]:story.extend([par(s),Spacer(1,10)])
     story+=[PageBreak(),par('Resumo','Heading1')]
-    for s in [f"{len(dados['ocorrencias'])} ocorrências nesta seleção / {dados.get('total_disponivel',len(dados['ocorrencias']))} disponíveis na investigação",*['%s: %s'%(k,v) for k,v in dados['contagens'].items()],*['%s: %s'%(k,v) for k,v in dados['origens'].items()],f"Propostas relacionadas: {dados['propostas']}",f"Acompanhamento nesta seleção: {dados['resolvidas']} resolvidas · {dados['em_aberto']} em aberto (inclui reavaliações)",'Acompanhamento na investigação: '+str(dados['acompanhamento_global']),f"Escopo: {dados['config'].get('escopo','TODOS')}"] :story.extend([par(s),Spacer(1,5)])
-    story+=[PageBreak(),par('Índice de ocorrências','Title')];toc=TableOfContents();toc.levelStyles=[styles['BodyText']];story+=[toc]
+    resumo_conjuntos=[str(len(dados['ocorrencias']))+' conjuntos / comparações nesta seleção','Composição cadastral; não representa fila de problemas, prioridade hidráulica ou comprovação de conectividade.']
+    for s in resumo_conjuntos if conjuntos else [f"{len(dados['ocorrencias'])} ocorrências nesta seleção / {dados.get('total_disponivel',len(dados['ocorrencias']))} disponíveis na investigação",*['%s: %s'%(k,v) for k,v in dados['contagens'].items()],*['%s: %s'%(k,v) for k,v in dados['origens'].items()],f"Propostas relacionadas: {dados['propostas']}",f"Acompanhamento nesta seleção: {dados['resolvidas']} resolvidas · {dados['em_aberto']} em aberto (inclui reavaliações)",'Acompanhamento na investigação: '+str(dados['acompanhamento_global']),f"Escopo: {dados['config'].get('escopo','TODOS')}"] :story.extend([par(s),Spacer(1,5)])
+    story+=[PageBreak(),par('Índice de conjuntos' if conjuntos else 'Índice de ocorrências','Title')];toc=TableOfContents();toc.levelStyles=[styles['BodyText']];story+=[toc]
     if dados.get('analise_ilhas'):
         a=dados['analise_ilhas'];story+=[PageBreak(),par('REDES SEM CAMINHO ATÉ ORIGEM','Heading1'),par('Estado da análise: '+a['estado']+' · '+a.get('motivo','')),par('Origens: '+db.texto(a['origens_info'])),par('Configuração: '+db.texto(a['config'])),par('Inventário por ilha; estrutural e alcance restrito são distintos. Ausência de caminho não comprova desabastecimento.')]
     for r in dados['ocorrencias']:
         if cancelado and cancelado():raise InterruptedError('Composição PDF cancelada; nada publicado.')
-        titulo=par(r['titulo'],'Heading1');titulo.indice_texto=escape(r['titulo']+' | '+'; '.join(r['regioes'])+' | '+str(r['prioridade'])+' | '+r['localizacao']['texto'])
-        story+=[PageBreak(),titulo,par('Acompanhamento: '+r['acompanhamento']+' · Resultado técnico: '+r['resultado']),par('Região: '+'; '.join(r['regioes'])+' · Prioridade: '+str(r['prioridade'])),par(r['localizacao']['texto'])]
+        titulo=par(r['titulo'],'Heading1');titulo.indice_texto=escape(r['titulo'] if conjuntos else r['titulo']+' | '+'; '.join(r['regioes'])+' | '+str(r['prioridade'])+' | '+r['localizacao']['texto'])
+        story+=[PageBreak(),titulo]+([par('Conjunto cadastral; não é ocorrência hidráulica confirmada.')] if conjuntos else [par('Acompanhamento: '+r['acompanhamento']+' · Resultado técnico: '+r['resultado']),par('Região: '+'; '.join(r['regioes'])+' · Prioridade: '+str(r['prioridade']))])+[par(r['localizacao']['texto'])]
         for im in imagens.get(r['uid'],[]):
             story+=[Spacer(1,7),Image(str(im),width=largura,height=largura*900/1440)]
         if r.get('mapa_meta'):
             for m in r['mapa_meta']:
                 if m['atribuicao']:story.append(par('Referência cartográfica: '+m['atribuicao']))
                 for aviso in m['avisos']:story.append(par('Aviso: '+aviso))
-        for titulo,chave in [('Diagnóstico','diagnostico'),('Motivo','motivo'),('Observações','observacao')]:story+=[Spacer(1,6),par(titulo,'Heading2'),par(r[chave])]
+        for titulo,chave in [('Descrição do conjunto' if conjuntos else 'Diagnóstico','diagnostico'),('Motivo','motivo'),('Observações','observacao')]:story+=[Spacer(1,6),par(titulo,'Heading2'),par(r[chave])]
         for titulo,chave in [('Elementos WaterGEMS','elementos'),('Cadastro GIS','gis'),('Anotações anteriores','anotacoes')]:
             if r[chave]:story+=[par(titulo,'Heading2')]+[par(v) for v in r[chave]]
         story.append(par('Origem: '+r['origem']+' · Última análise: '+r['data']+' · UUID: '+r['uid']))
@@ -235,6 +237,8 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
 
 def xlsx(destino,dados):
     from .saidas import exportar_tabelas_xlsx
+    if dados.get('tipo_relatorio')=='SELECTION_SETS':
+        exportar_tabelas_xlsx({'CONJUNTOS':(('UUID','SET_ID','NOME_CAMINHO','DESCRICAO','MEMBROS_VALIDOS','MODELO','VERSAO_TOPO'),[(r['uid'],r['local'],r['titulo'],r['diagnostico'],len(r['wg_ids']),dados['meta']['topologia']['projeto'],dados['meta']['topologia']['execucao_uid']) for r in dados['ocorrencias']])},destino);return
     campos=('UUID','LOCAL','ORIGEM','DIAGNOSTICO','RESULTADO','MOTIVO','OBSERVACOES','REGIOES','PRIORIDADE','LOCALIZACAO','DATA','REVISAO_UID','ACOMPANHAMENTO','ACOMP_UID')
     linhas=[(r['uid'],r['local'],r['origem'],r['diagnostico'],r['resultado'],r['motivo'],r['observacao'],'; '.join(r['regioes']),r['prioridade'],r['localizacao']['texto'],r['data'],r['revisao_uid'],r['acompanhamento'],r['acomp_uid']) for r in dados['ocorrencias']]
     # Exportador existente divide textos longos na aba técnica; este relatório não

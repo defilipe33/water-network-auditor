@@ -2,7 +2,7 @@
 from pathlib import Path
 from qgis.core import QgsLayerTreeGroup
 
-CATEGORIAS={'gis':'AUDITORIA GIS','wg':'TOPOLOGIA WATERGEMS','integrada':'INVESTIGAÇÃO INTEGRADA'}
+CATEGORIAS={'ss':'SELECTION SETS WATERGEMS','gis':'AUDITORIA GIS','wg':'TOPOLOGIA WATERGEMS','integrada':'INVESTIGAÇÃO INTEGRADA'}
 AMIGAVEIS={'WG_TUBULACOES':'Tubulações WaterGEMS','WG_NOS':'Nós WaterGEMS','WG_DISPOSITIVOS':'Dispositivos WaterGEMS'}
 
 def grupo(projeto,categoria,uid,base='',nome='',versao=None,secao=None):
