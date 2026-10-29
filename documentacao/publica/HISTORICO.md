@@ -1,5 +1,9 @@
 # Histórico técnico publicável
 
+## 1.10.0 — ilhas sem caminho até origem
+
+Origens configuráveis, Tanks como hipótese explícita, busca multiorigem estrutural e dirigida sob restrições; grupos sem origem independentemente do tamanho. Inventário e candidatos, integração ao resultado/RESOLVIDO existentes, persistência/cache, comparação conservadora e relatórios. [Guia e aceitação](ILHAS_SEM_ORIGEM.md).
+
 ## 1.9.0 — restrições de percurso
 
 Regras por tipo e equipamento, preferências lexicográficas, bloqueios em cópia do grafo, direção obrigatória das retenções, estados manuais identificados como hipóteses, perfis versionados e comparação/exportação completa. [Guia](RESTRICOES_CORREDORES.md).

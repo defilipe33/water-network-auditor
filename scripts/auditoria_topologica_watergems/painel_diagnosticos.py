@@ -10,6 +10,7 @@ from qgis.PyQt import sip
 from .filtros import ContextoFiltros
 from . import operacional as op
 from . import acompanhamento as ac
+from .ilhas_persistencia import casos_ativos as casos_ilhas
 from .diagnosticos import catalogar,filtrar,contagens,CATEGORIAS,MODOS
 from .mapa_diagnosticos import MapaDiagnosticos
 from auditoria_fronteiras.atividade import acompanhada,falha
@@ -19,7 +20,7 @@ class PainelDiagnosticos(QDockWidget):
     def __init__(self,legado,parent=None):
         super().__init__('Diagnósticos GIS × WaterGEMS',parent)
         self.legado=legado;self.pacote=legado.pacote;self.base=legado.base;self._ativo=True;self._sincronizando=False
-        self.casos=catalogar(self.pacote);self.indice_atributos=ContextoFiltros(self.pacote);self.indice_atributos.restaurar_persistidas(self.base)
+        self.casos=catalogar(self.pacote)+casos_ilhas(self.base,self.pacote);self.indice_atributos=ContextoFiltros(self.pacote);self.indice_atributos.restaurar_persistidas(self.base)
         from .locais_manuais import casos as casos_manuais
         self.casos+=casos_manuais(self.base,self.pacote,self.indice_atributos)
         self._redes_ui=None;self._ferramenta_manual=None
@@ -113,6 +114,7 @@ class PainelDiagnosticos(QDockWidget):
         self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
+        b=QPushButton('ILHAS SEM ORIGEM…');b.clicked.connect(self.abrir_ilhas);fv.addWidget(b)
         for nome,acao in [('Comparar com auditoria anterior…',self.comparar_versoes),('Exportar acompanhamento…',self.exportar_decisoes),('Gerar relatório de investigação…',self.abrir_relatorio)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,acao=acao:acao());fv.addWidget(b)
         for nome,acao in [('Excluir logicamente local manual',self.excluir_manual),('Restaurar local manual excluído…',self.restaurar_manual),('Recuperar locais manuais de outra investigação…',self.importar_manuais)]:
@@ -164,7 +166,8 @@ class PainelDiagnosticos(QDockWidget):
 
     def revisao_atualizada(self,*args):
         if not self._ativo:return
-        self.casos=catalogar(self.pacote)
+        from .ilhas_persistencia import casos_ativos
+        self.casos=catalogar(self.pacote)+casos_ativos(self.base,self.pacote)
         from .locais_manuais import casos
         self.casos+=casos(self.base,self.pacote,self.indice_atributos)
         for c in self.casos:
@@ -300,7 +303,7 @@ class PainelDiagnosticos(QDockWidget):
         self.analise.carregar(c,modo)
         self.resultado_analise.carregar(c,modo)
         from .inspecao_tabular import elementos_caso
-        self.elementos_tabela.preencher(elementos_caso(self.pacote,c,modo,self.analise.head.get('situacao','PENDENTE') if self.analise.head else 'PENDENTE'))
+        self.elementos_tabela.preencher(elementos_caso(self.pacote,dict(c,wg_ids=c['wg_ids'][:200],gis_uids=c['gis_uids'][:200]) if c['tipo']=='ILHA' else c,modo,self.analise.head.get('situacao','PENDENTE') if self.analise.head else 'PENDENTE'))
         evidencias_filtro=[]
         if hasattr(self,'editor_filtros'):self.indice_atributos.avaliar(c,self.editor_filtros.configuracao(),modo,evidencias_filtro)
         self._evidencias_filtro=evidencias_filtro
@@ -445,6 +448,12 @@ class PainelDiagnosticos(QDockWidget):
             if caso:self.selecionar_uid(caso['uid'])
         self.atualizar_recuperacao()
 
+    def abrir_ilhas(self):
+        from .ilhas_ui import IlhasDialog
+        if getattr(self,'_ilhas_ui',None) is None or sip.isdeleted(self._ilhas_ui):self._ilhas_ui=IlhasDialog(self)
+        if getattr(self,'_wna_janelas',None):self._wna_janelas.registrar('ilhas_sem_origem',self._ilhas_ui,'ilhas sem origem')
+        self._ilhas_ui.show();self._ilhas_ui.raise_();self._ilhas_ui.activateWindow()
+
     def abrir_redes(self):
         from .ferramentas_investigacao_ui import DialogoRedes
         if self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and self._redes_ui.modo!=self.modo.currentData():
@@ -488,9 +497,11 @@ class PainelDiagnosticos(QDockWidget):
         self.desativar();event.accept()
 
     def tem_edicoes(self):
-        return self.analise.tem_edicoes() or (hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes()) or (self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and self._redes_ui.tem_edicoes())
+        return (getattr(self,'_ilhas_ui',None) is not None and not sip.isdeleted(self._ilhas_ui) and self._ilhas_ui.tem_edicoes()) or self.analise.tem_edicoes() or (hasattr(self,'resultado_analise') and self.resultado_analise.tem_edicoes()) or (self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and self._redes_ui.tem_edicoes())
 
-    def resolver_formularios(self):
+    def resolver_formularios(self,ignorar_ilhas=False):
+        i=getattr(self,'_ilhas_ui',None)
+        if not ignorar_ilhas and i is not None and not sip.isdeleted(i) and not i.resolver():return False
         if self._redes_ui is not None and not sip.isdeleted(self._redes_ui) and not self._redes_ui.resolver():return False
         if hasattr(self,'resultado_analise') and not self.resultado_analise.resolver_edicoes():return False
         return self.analise.resolver_edicoes()

@@ -173,7 +173,7 @@ class DialogoRedes(QDialog):
         self.restricoes=RestricoesPercurso(self);v.addWidget(self.restricoes)
         self.orientacao=QLabel();self.orientacao.setWordWrap(True);v.addWidget(self.orientacao)
         linha=QHBoxLayout();v.addLayout(linha)
-        for nome,fn in [('Identificar',self.calcular),('Recuperar conjunto',self.recuperar),('Comparar com conjunto',self.comparar),('Acrescentar selecionadas',self.acrescentar),('Destacar selecionadas',self.destacar)]:
+        for nome,fn in [('Identificar',self.calcular),('Origem → todos / Ilhas sem origem',self.painel.abrir_ilhas),('Recuperar conjunto',self.recuperar),('Comparar com conjunto',self.comparar),('Acrescentar selecionadas',self.acrescentar),('Destacar selecionadas',self.destacar)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,fn=fn:fn());linha.addWidget(b)
         self.tabela=QTableWidget(0,5);self.tabela.setHorizontalHeaderLabels(['Incluir','DomainElementID','Label','Origem','Critérios']);self.tabela.setEditTriggers(QAbstractItemView.NoEditTriggers);v.addWidget(self.tabela,1)
         self.tabela.setColumnCount(12);self.tabela.setHorizontalHeaderLabels(['Incluir','DomainElementID','Label','Origem','Critérios','Rotas escolhidas','Destinos','Classe no conjunto','Comprimento (m)','Diâmetro bruto','Unidade diâmetro','Dispositivos'])

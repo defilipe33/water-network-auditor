@@ -10,6 +10,7 @@ PRIORIDADES=('Alta','Média','Baixa')
 ESTADOS=('PENDENTE','EM ANÁLISE','ANALISADO — MANTER CONFIGURAÇÃO','ANALISADO — CORREÇÃO NECESSÁRIA','NECESSITA CONFERÊNCIA','NÃO SE APLICA')
 
 def sugerir(caso,contexto=None):
+    if caso.get('tipo')=='ILHA':return caso['prioridade'],caso['motivo_prioridade']
     if contexto and caso['local_uid']:
         for area in contexto.locais.get(caso['local_uid'],{}):
             if contexto.relacao(caso,area,'REGIOES_DIFERENTES') is True:

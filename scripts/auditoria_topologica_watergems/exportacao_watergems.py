@@ -9,6 +9,9 @@ FONTE_QUERY='https://bentleysystems.service-now.com/community?id=kb_article_view
 
 
 def preparar(pacote,registro):
+    if registro.get('dados',{}).get('tipo_conjunto')=='ILHA':
+        from .ilhas_investigacao import preparar_exportacao
+        return preparar_exportacao(pacote,registro)
     modo=registro['modo'];meta=pacote['resultado']['meta'];topo=meta['topologia']['execucao_uid']
     if modo not in MODOS or registro['topo_uid']!=topo:raise ValueError('Conjunto pertence a outra versão/perspectiva; abra a fonte correspondente.')
     el=pacote['topologia']['modelo']['elementos'];g=pacote['topologia']['estrutural' if modo=='ESTRUTURAL' else 'potencial']['grafo']

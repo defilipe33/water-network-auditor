@@ -100,3 +100,8 @@ Corredores completos, Queries, gestão reversível e relatório ilustrado offlin
 ## Restrições nos corredores — 1.9.0
 
 `restricoes_percurso.py` prepara sobreposição investigativa dirigida e visão filtrada; o Dijkstra existente recebe custos lexicográficos opcionais, conservando seu comportamento sem restrições. `restricoes_ui.py` reutiliza seleção tabular/cartográfica e perfis em IGD_OBJETOS/IGD_OBJ_HIST, sem infraestrutura paralela. Exportação reconstrói o mesmo grafo de trabalho e conserva o perfil/regra. [Contrato, restrições obrigatórias, persistência e aceitação](RESTRICOES_CORREDORES.md).
+
+
+## Ilhas sem origem — 1.10.0
+
+Busca multiorigem no grafo completo; estrutural fraca e restrita dirigida separadas. Extensão relacional IGD_ILHAS com backup, cache e histórico de análises; decisões, RESOLVIDO e comparações reutilizam a persistência existente. Sem origens: inconclusivo. Tanks somente como hipótese explícita. Demanda não validada permanece indeterminada. Guia público: [ILHAS_SEM_ORIGEM](./ILHAS_SEM_ORIGEM.md).

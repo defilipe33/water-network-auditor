@@ -100,3 +100,8 @@ Métodos separados, Junctions como terminais, rotas compartilhadas e consulta po
 
 Corredores completos, Queries, gestão reversível e relatório ilustrado offline.
 [Guia, privacidade, requisitos e roteiro de validação](EXPORTACAO_CATALOGO_RELATORIOS.md).
+
+
+## Ilhas sem origem — 1.10.0
+
+Busca multiorigem no grafo completo; estrutural fraca e restrita dirigida separadas. Extensão relacional IGD_ILHAS com backup, cache e histórico de análises; decisões, RESOLVIDO e comparações reutilizam a persistência existente. Sem origens: inconclusivo. Tanks somente como hipótese explícita. Demanda não validada permanece indeterminada. Guia público: [ILHAS_SEM_ORIGEM](./ILHAS_SEM_ORIGEM.md).

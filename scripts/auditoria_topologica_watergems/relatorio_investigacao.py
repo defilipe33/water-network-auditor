@@ -13,6 +13,7 @@ def selecionar(casos,analises,modo,escopo='TODOS',ids=()):
     if escopo not in ('TODOS','ANALISADOS','PENDENTES','CORRECAO','MANUAIS','SELECAO','FILTROS'):raise ValueError('Seleção inválida')
     ids=set(ids);saida=[]
     for c in casos:
+        if c.get('modo_exclusivo') and c['modo_exclusivo']!=modo:continue
         a=analises.get((c['uid'],modo),{});resultado=a.get('resultado') or 'PENDENTE';analisado=resultado not in ('PENDENTE','NECESSITA INVESTIGAÇÃO ADICIONAL')
         if escopo=='ANALISADOS' and not analisado or escopo=='PENDENTES' and analisado or escopo=='CORRECAO' and resultado!='CORREÇÃO NECESSÁRIA' or escopo=='MANUAIS' and c.get('origem')!='MANUAL' or escopo in ('SELECAO','FILTROS') and c['uid'] not in ids:continue
         saida.append((c,a))
@@ -29,12 +30,14 @@ def snapshot(base,pacote,casos,modo,config):
         situacao=estados[caso['uid']];filtro_acomp=config.get('situacao_acompanhamento','TODAS')
         if filtro_acomp=='RESOLVIDAS' and situacao!='RESOLVIDO' or filtro_acomp=='EM_ABERTO' and situacao=='RESOLVIDO':continue
         man=caso.get('manual_registro',{}).get('dados',{});old=[n.get('observacao','') for n in notas if n['occ_uid']==caso['uid'] and n['modo']==modo]
-        linhas.append(dict(acompanhamento=ac.ROTULOS[situacao],acomp_estado=situacao,acomp_uid=acompanhamentos.get((caso['uid'],modo),{}).get('uid'),historico_acomp=ac.historico(base,ig,caso['uid'],modo) if config.get('historico') else [],uid=caso['uid'],local=caso.get('local_uid') or caso.get('manual_uid') or caso['chave'],titulo=caso['titulo'],origem=caso.get('origem','AUTOMATICA'),diagnostico=caso.get('resumo',''),resultado=a.get('resultado') or 'PENDENTE',motivo=a.get('motivo',''),observacao=a.get('observacao','') or man.get('observacoes',''),anotacoes=old,prioridade=a.get('prioridade_trabalho') or caso.get('prioridade',''),regioes=caso.get('regioes',[]),elementos=caso.get('elementos',[]),gis=caso.get('tubos_gis',[]),wg_ids=caso.get('wg_ids',[]),data=a.get('data_utc',''),revisao_uid=a.get('uid'),propostas=[p for p in ps if p['occ_uid']==caso['uid'] and p['modo']==modo],historico=[h for h in hs if h['occ_uid']==caso['uid'] and h['modo']==modo] if config.get('historico') else [],tecnico=caso.get('tecnico',[]) if config.get('tecnico') else []))
+        linhas.append(dict(ilha=caso.get('ilha'),acompanhamento=ac.ROTULOS[situacao],acomp_estado=situacao,acomp_uid=acompanhamentos.get((caso['uid'],modo),{}).get('uid'),historico_acomp=ac.historico(base,ig,caso['uid'],modo) if config.get('historico') else [],uid=caso['uid'],local=caso.get('local_uid') or caso.get('manual_uid') or caso['chave'],titulo=caso['titulo'],origem=caso.get('origem','AUTOMATICA'),diagnostico=caso.get('resumo',''),resultado=a.get('resultado') or 'PENDENTE',motivo=a.get('motivo',''),observacao=a.get('observacao','') or man.get('observacoes',''),anotacoes=old,prioridade=a.get('prioridade_trabalho') or caso.get('prioridade',''),regioes=caso.get('regioes',[]),elementos=caso.get('elementos',[]),gis=caso.get('tubos_gis',[]),wg_ids=caso.get('wg_ids',[]),data=a.get('data_utc',''),revisao_uid=a.get('uid'),propostas=[p for p in ps if p['occ_uid']==caso['uid'] and p['modo']==modo],historico=[h for h in hs if h['occ_uid']==caso['uid'] and h['modo']==modo] if config.get('historico') else [],tecnico=caso.get('tecnico',[]) if config.get('tecnico') else []))
     chave=config.get('ordenacao','titulo')
     if chave not in ('titulo','resultado','prioridade','origem'):raise ValueError('Ordenação inválida')
     linhas.sort(key=lambda r:(str(r[chave]),r['uid']))
     contagens={k:0 for k in op.RESULTADOS};contagens.update(Counter(r['resultado'] for r in linhas))
-    return dict(nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,resolvidas=sum(r['acomp_estado']=='RESOLVIDO' for r in linhas),em_aberto=sum(r['acomp_estado']!='RESOLVIDO' for r in linhas),acompanhamento_contagens=dict(Counter(r['acompanhamento'] for r in linhas)),acompanhamento_global=dict(Counter(ac.ROTULOS[v] for v in estados.values())),total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
+    from .ilhas_persistencia import resumo_ativo
+    resumo_ilhas=resumo_ativo(base,pacote)
+    return dict(analise_ilhas=resumo_ilhas,nome=config.get('nome') or 'Relatório de investigação',meta=meta,modo=modo,data=datetime.now(timezone.utc).isoformat(),config=dict(config),ocorrencias=linhas,resolvidas=sum(r['acomp_estado']=='RESOLVIDO' for r in linhas),em_aberto=sum(r['acomp_estado']!='RESOLVIDO' for r in linhas),acompanhamento_contagens=dict(Counter(r['acompanhamento'] for r in linhas)),acompanhamento_global=dict(Counter(ac.ROTULOS[v] for v in estados.values())),total_disponivel=len(casos),contagens=contagens,origens=dict(Counter(r['origem'] for r in linhas)),propostas=sum(len(r['propostas']) for r in linhas),interpretacao='Resultados são interpretações investigativas; não comprovam operação hidráulica nem alteram o modelo.')
 
 
 def geometrias_caso(pacote,caso,contexto=None):
@@ -197,6 +200,8 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
     story+=[PageBreak(),par('Resumo','Heading1')]
     for s in [f"{len(dados['ocorrencias'])} ocorrências nesta seleção / {dados.get('total_disponivel',len(dados['ocorrencias']))} disponíveis na investigação",*['%s: %s'%(k,v) for k,v in dados['contagens'].items()],*['%s: %s'%(k,v) for k,v in dados['origens'].items()],f"Propostas relacionadas: {dados['propostas']}",f"Acompanhamento nesta seleção: {dados['resolvidas']} resolvidas · {dados['em_aberto']} em aberto (inclui reavaliações)",'Acompanhamento na investigação: '+str(dados['acompanhamento_global']),f"Escopo: {dados['config'].get('escopo','TODOS')}"] :story.extend([par(s),Spacer(1,5)])
     story+=[PageBreak(),par('Índice de ocorrências','Title')];toc=TableOfContents();toc.levelStyles=[styles['BodyText']];story+=[toc]
+    if dados.get('analise_ilhas'):
+        a=dados['analise_ilhas'];story+=[PageBreak(),par('REDES SEM CAMINHO ATÉ ORIGEM','Heading1'),par('Estado da análise: '+a['estado']+' · '+a.get('motivo','')),par('Origens: '+db.texto(a['origens_info'])),par('Configuração: '+db.texto(a['config'])),par('Inventário por ilha; estrutural e alcance restrito são distintos. Ausência de caminho não comprova desabastecimento.')]
     for r in dados['ocorrencias']:
         if cancelado and cancelado():raise InterruptedError('Composição PDF cancelada; nada publicado.')
         titulo=par(r['titulo'],'Heading1');titulo.indice_texto=escape(r['titulo']+' | '+'; '.join(r['regioes'])+' | '+str(r['prioridade'])+' | '+r['localizacao']['texto'])
@@ -218,6 +223,8 @@ def gerar_pdf(destino,dados,imagens,progresso=None,cancelado=None):
         if r['historico']:
             story+=[par('Histórico','Heading2')]+[par(str(v.get('data_utc',''))+' · '+str(v.get('resultado',''))+'\n'+str(v.get('motivo',''))+'\n'+str(v.get('observacao',''))) for v in r['historico']]
         if dados['config'].get('tecnico') and r.get('coordenadas'):story.append(par('Coordenadas de referência: '+str(r['coordenadas'])))
+        if r.get('ilha'):
+            v=r['ilha'];story+=[par('Inventário da ilha','Heading2'),par('Perspectiva: '+v['visao']+' · Tubulações: '+str(len(v['tubos']))+' · Junctions: '+str(v['junctions'])+' · Dispositivos: '+str(v['dispositivos'])+' · Comprimento (m): '+str(v['comprimento_m'])),par('Origens consideradas: '+db.texto(v.get('origens_consideradas'))),par('Restrições utilizadas: '+db.texto(v.get('restricoes_utilizadas'))),par('Demanda e consumidores: não determinados sem relações/unidades validadas. Regiões relacionadas por vínculos persistidos; não comprovam delimitação hidráulica.') ]
         if r['tecnico']:story+=[par('Informações técnicas','Heading2')]+[par(json.dumps(v,ensure_ascii=False,default=str)) for v in r['tecnico']]
     def rodape(canvas,doc):
         if cancelado and cancelado():raise InterruptedError('Paginação PDF cancelada; nada publicado.')
@@ -233,7 +240,11 @@ def xlsx(destino,dados):
     # Exportador existente divide textos longos na aba técnica; este relatório não
     # trunca silenciosamente: recusa célula além do limite e mantém snapshot JSON.
     if any(len(str(v))>32767 for linha in linhas for v in linha):raise ValueError('Texto excede uma célula Excel; reduza o escopo ou exporte PDF/JSON sem XLSX.')
-    exportar_tabelas_xlsx({'OCORRENCIAS':(campos,linhas),'RESUMO':(('INDICADOR','VALOR'),list(dados['contagens'].items())+[('Acompanhamento - resolvidas',dados['resolvidas']),('Acompanhamento - em aberto',dados['em_aberto'])])},destino)
+    tabelas={'OCORRENCIAS':(campos,linhas),'RESUMO':(('INDICADOR','VALOR'),list(dados['contagens'].items())+[('Acompanhamento - resolvidas',dados['resolvidas']),('Acompanhamento - em aberto',dados['em_aberto'])])}
+    if any(r.get('ilha') for r in dados['ocorrencias']):
+        campos_i=('ILHA_UID','VISAO','TUBOS','JUNCTIONS','DISPOSITIVOS','COMPRIMENTO_M','PRIORIDADE','REGIOES','ORIGENS','RESTRICOES','RESULTADO','ACOMPANHAMENTO')
+        tabelas['ILHAS_SEM_ORIGEM']=(campos_i,[(r['uid'],r['ilha']['visao'],len(r['ilha']['tubos']),r['ilha']['junctions'],r['ilha']['dispositivos'],r['ilha']['comprimento_m'],r['prioridade'],'; '.join(r['regioes']),db.texto(r['ilha'].get('origens_consideradas')),db.texto(r['ilha'].get('restricoes_utilizadas')),r['resultado'],r['acompanhamento']) for r in dados['ocorrencias'] if r.get('ilha')])
+    exportar_tabelas_xlsx(tabelas,destino)
 
 
 def gerar(base,pacote,casos,modo,pasta,config,basemaps=(),ruas=None,progresso=None,cancelado=None,ao_falhar_basemap=None):
