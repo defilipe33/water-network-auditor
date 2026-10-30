@@ -38,17 +38,84 @@ class Aplicacao:
             ('Bases WaterGEMS / atualizar…',self.bases,'Uma base topológica é uma cópia de consulta. Atualizar cria outra versão; preserva a anterior e não transfere conclusões automaticamente.'),
             ('Comparar versões…',self.comparar,'Confronta investigações ou versões WaterGEMS. Uma ocorrência ausente não é uma correção comprovada.')]):
             b=QPushButton(texto);b.clicked.connect(acao);b.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred);b.setToolTip(ajuda);linha.addWidget(b,i//2,i%2);self.navegacao[texto]=b
-        self.geo.layout().insertWidget(0,w)
+        w.setTitle('Atalhos avançados / navegação anterior');w.setCheckable(True);w.setChecked(False)
+        for b in self.navegacao.values():b.hide()
+        w.toggled.connect(lambda aberto:[b.setVisible(aberto) for b in self.navegacao.values()]);self.geo.layout().insertWidget(0,w)
+        publicar_geo=self.geo.publicar_auditoria
+        def publicar_vinculada(d,base,camadas=None):
+            r=publicar_geo(d,base,camadas);self.registrar_navegacao(dict(uuid=d['execucao_uid'],tipo='AUDITORIA_GIS',base=str(base) if base else '',nome=d.get('controle_versao',{}).get('nome','Auditoria')));return r
+        self.geo.publicar_auditoria=publicar_vinculada
         self.limpar_ao_sair=QCheckBox('Remover somente temporárias da ferramenta ao encerrar');self.limpar_ao_sair.setToolTip('Opcional: remove representações de validação marcadas pela ferramenta; não apaga arquivos ou camadas persistentes.');self.geo.layout().insertWidget(1,self.limpar_ao_sair)
+    def registrar_navegacao(self,r):
+        c=getattr(self,'central',None)
+        if c is None:return
+        try:c.projetos.vincular(r)
+        except Exception as e:c.pendencias.setText('Resultado preservado; vínculo no índice do projeto não foi salvo: '+str(e))
+    def painel_atual(self):
+        p=self.painel;c=getattr(self,'central',None)
+        return bool(p and not sip.isdeleted(p) and p._ativo and (not c or c.projetos.contem('INTEGRADA',p.pacote['resultado']['meta']['uid'])))
+    def trocar_base(self,registro):
+        """Confere a candidata antes de resolver rascunhos e trocar o contexto."""
+        from .contexto_trabalho import validar_registro
+        r=validar_registro(registro)
+        if not r['valido']:raise ValueError(r['erro'])
+        if self.ocupado or self.atividades.em_execucao() or self.geo._executando or self.wg and self.wg.ocupado:return False
+        if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
+        self.bases();self.wg.usar_base(registro['base'])
+        if self.wg.base!=str(registro['base']):return False
+        if self.painel and not sip.isdeleted(self.painel) and self.painel._ativo:
+            uid=self.painel.pacote['resultado']['meta']['topologia']['execucao_uid']
+            if uid!=registro['uuid']:self.painel.desativar();self.painel.hide()
+        direta=getattr(self,'topologia_direta',None)
+        if direta and not sip.isdeleted(direta) and direta.base!=self.wg.base:direta.close()
+        return True
+    def resolver_configuracao_wg(self):
+        w=self.wg
+        if not w or sip.isdeleted(w) or not (w._ref_pendente or w.fonte and not w.base):return True
+        m=QMessageBox.question(w,'Configuração WaterGEMS pendente','Salvar a preparação antes de mudar o contexto? As versões existentes não serão substituídas.',QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
+        if m==QMessageBox.Cancel:return False
+        if m==QMessageBox.Save:
+            if w._ref_pendente:return bool(w.gravar_referencia())
+            w.criar();return False
+        if w.base:w.usar_base(w.base)
+        else:w.fonte=None;w._ref_pendente=False
+        return True
     def botao_janelas(self,w):
         b=QPushButton('Janelas / painéis');b.setMenu(self.menu_janelas);w.layout().insertWidget(0,b)
-    def abrir(self):self.janelas.mostrar('gis')
+    def abrir(self):
+        from .central import CentralTrabalho
+        if getattr(self,'central',None) is None or sip.isdeleted(self.central):
+            self.central=CentralTrabalho(self);self.janelas.registrar('central',self.central,'Central de Trabalho');self.atividades.vincular(self.central)
+            if hasattr(self.iface,'addDockWidget'):self.iface.addDockWidget(Qt.RightDockWidgetArea,self.central)
+            else:self.iface.mainWindow().addDockWidget(Qt.RightDockWidgetArea,self.central)
+            from .apresentacao import Apresentacao
+            self.central.apresentacao=Apresentacao(self,self.central,'central');self.central.barra_topo.addWidget(self.central.apresentacao.combo);self.central.apresentacao.restaurar()
+        self.central.atualizar();self.janelas.mostrar('central')
     def mostrar_integracao(self):
         if self.painel and not sip.isdeleted(self.painel):return self.publicar(self.painel.pacote,self.painel.base)
         return False
     def operacao_gis(self,modo):
         if self.ocupado or self.atividades.em_execucao() or (self.wg and self.wg.ocupado) or not self.resolver():return
         self.geo.iniciar_operacao(modo,usar_ativa=False)
+    def abrir_topologia(self,ferramenta):
+        if self.painel_atual():
+            return self.painel.abrir_ilhas() if ferramenta=='ilhas' else self.painel.abrir_redes()
+        if not self.wg or not self.wg.base:return self.bases()
+        antiga=getattr(self,'topologia_direta',None)
+        if antiga is not None and not sip.isdeleted(antiga):
+            if antiga.base==self.wg.base:antiga.tipo.setCurrentIndex(1 if ferramenta=='ilhas' else 0);return self.janelas.mostrar('topologia_direta')
+            if not antiga.resolver():return
+        from .topologia_direta import TopologiaDireta,pacote_topologico
+        from auditoria_topologica_watergems import bases
+        def pronto(t):
+            if antiga is not None and not sip.isdeleted(antiga):antiga.close()
+            self.topologia_direta=TopologiaDireta(self,self.wg.base,pacote_topologico(t),ferramenta);self.janelas.registrar('topologia_direta',self.topologia_direta,'conectividade independente');self.atividades.vincular(self.topologia_direta);self.janelas.mostrar('topologia_direta')
+        self.atividades.executar_thread('Recuperando grafo persistido','Análise independente de GIS',lambda cancelar,progresso:bases.restaurar(self.wg.base,cancelar),pronto)
+    def abrir_cenarios(self):
+        from .cenarios_ui import CenariosDialog
+        if (not self.wg or not self.wg.base) and not self.painel_atual():return self.bases()
+        if getattr(self,'cenarios_ui',None) is None or sip.isdeleted(self.cenarios_ui):self.cenarios_ui=CenariosDialog(self)
+        self.cenarios_ui.atualizar();self.janelas.registrar('cenarios',self.cenarios_ui,'cenários e setores');self.janelas.mostrar('cenarios')
     def comparar(self):
         if self.ocupado or self.atividades.em_execucao() or self.geo._executando or not self.resolver():return
         if self.painel and self.painel._ativo:self.painel.comparar_versoes()
@@ -59,11 +126,15 @@ class Aplicacao:
                 if self.wg.base:self.wg.comparar()
     def resolver(self):
         if self.painel is not None and sip.isdeleted(self.painel):self.painel=None
+        direta=getattr(self,'topologia_direta',None)
+        if direta is not None and not sip.isdeleted(direta) and not direta.resolver():return False
         return not self.painel or self.painel.resolver_alteracoes()
     def validar_geo(self):
         g=self.geo
         if self.ocupado or self.atividades.em_execucao() or g._executando or g.estado in OCUPADOS:raise ValueError('Aguarde ou cancele o processamento em andamento')
         if not g.dossie:raise ValueError('Crie ou continue uma auditoria geométrica concluída')
+        c=getattr(self,'central',None)
+        if c and not c.projetos.contem('AUDITORIA_GIS',g.dossie['execucao_uid']):raise ValueError('A auditoria aberta não está vinculada ao projeto atual. Abra explicitamente a auditoria desejada pelo catálogo.')
         if g.pendente():
             dlg=QMessageBox(g);dlg.setWindowTitle('Configuração geométrica não processada');dlg.setText('Os resultados não incluem as alterações pendentes. Escolha explicitamente o próximo passo.')
             executar=dlg.addButton('Executar configuração',QMessageBox.AcceptRole);descartar=dlg.addButton('Descartar e usar resultados anteriores',QMessageBox.DestructiveRole);dlg.addButton(QMessageBox.Cancel);dlg.exec_()
@@ -81,7 +152,7 @@ class Aplicacao:
             if not p:return False
             if not p.lower().endswith('.gpkg'):p+='.gpkg'
             exportar_gpkg(p,g.dossie);g.vincular_base(p)
-        self.catalogo.registrar_opcional(g.base_revisao);return True
+        self.catalogo.registrar_opcional(g.base_revisao);self.registrar_navegacao(dict(uuid=g.dossie['execucao_uid'],tipo='AUDITORIA_GIS',base=str(g.base_revisao)));return True
     def analisar(self):
         try:
             if self.validar_geo():self.bases()
@@ -94,13 +165,21 @@ class Aplicacao:
         if self.wg is None or sip.isdeleted(self.wg):
             self.wg=WatergemsDialog(self);self.janelas.registrar('watergems',self.wg,'configuração WaterGEMS');self.atividades.vincular(self.wg);self.botao_janelas(self.wg)
         self.wg.atualizar_geo();self.janelas.mostrar('watergems')
+    def abrir_registro(self,r):
+        if r['tipo']=='TOPOLOGIA_WG':return self.trocar_base(r)
+        if self.ocupado or self.atividades.em_execucao() or not self.resolver() or not self.geo.resolver_pendencias():return False
+        if r['tipo']=='TOPOLOGIA_WG':self.bases();self.wg.usar_base(r['base'])
+        elif r['tipo']=='INTEGRADA':
+            self.atividades.executar_thread('Abrindo investigação',r['nome'],lambda cancelar,progresso:reabrir(r['base'],r['uuid'],cancelar,progresso),lambda p:self.publicar(p,r['base'],nome_exibicao=r['nome']))
+        else:self.geo.abrir_auditoria(r['base'],r['uuid']);self.janelas.mostrar('gis')
+        return True
     def catalogar(self,tipo=None):
         if self.ocupado or self.atividades.em_execucao() or not self.resolver() or self.geo._executando:return
         d=SeletorBases(self.catalogo,self.geo,tipo=tipo)
         if d.exec_()!=QDialog.Accepted:return
         r=d.selecionada
         try:
-            if r['tipo']=='TOPOLOGIA_WG':self.bases();self.wg.usar_base(r['base'])
+            if r['tipo']=='TOPOLOGIA_WG':self.trocar_base(r)
             elif r['tipo']=='INTEGRADA':
                 self.atividades.executar_thread('Abrindo investigação integrada',r['nome'],
                     lambda cancelar,progresso:reabrir(r['base'],r['uuid'],cancelar,progresso),
@@ -126,11 +205,17 @@ class Aplicacao:
             QMessageBox.warning(self.geo,'Investigação não aberta',str(e)+'\nAs versões anteriores foram preservadas. Reabra a fonte correta ou restaure uma cópia íntegra.');return False
         if self.painel:self.painel.desativar()
         self.painel=novo;novo._wna_janelas=self.janelas
+        from .apresentacao import Apresentacao
+        novo._apresentacao=Apresentacao(self,novo,'investigacao');novo.widget().layout().insertWidget(0,novo._apresentacao.combo);novo._apresentacao.restaurar()
         novo.nome_exibicao=nome_exibicao or pacote['resultado']['meta'].get('nome','Investigação');novo.atualizar_contexto()
+        from qgis.PyQt.QtWidgets import QLabel
+        contexto=QLabel('Modelo: '+str(pacote['topologia'].get('meta_base',{}).get('nome','WaterGEMS incorporado'))+' · Cenário: '+str(pacote['topologia']['modelo']['cenario'])+' · Active Topology: '+str(pacote['topologia']['modelo'].get('alternativas',{}).get('3') or 'não preservada neste resultado'))
+        contexto.setWordWrap(True);contexto.setToolTip('Contexto exato da investigação persistida; não é a união de cenários filhos.');novo.widget().layout().insertWidget(1,contexto)
+        b=QPushButton('Central de Trabalho / outras tarefas');b.clicked.connect(self.abrir);novo.widget().layout().insertWidget(2,b)
         self.janelas.registrar('integrada',novo,'investigação integrada',self.mostrar_integracao);self.atividades.vincular(novo);self.botao_janelas(novo.widget())
         self.janelas.registrar('inspecao',novo.legado,'inspeção espacial');self.atividades.vincular(novo.legado)
         if modo in ('ESTRUTURAL','TODAS_VALVULAS_ABERTAS'):novo.modo.setCurrentIndex(novo.modo.findData(modo))
-        self.catalogo.registrar_opcional(base);self.janelas.ocultar('gis');self.janelas.ocultar('watergems');self.janelas.mostrar('integrada')
+        self.catalogo.registrar_opcional(base);self.registrar_navegacao(dict(uuid=pacote['resultado']['meta']['uid'],tipo='INTEGRADA',base=str(base),nome=novo.nome_exibicao));self.janelas.ocultar('gis');self.janelas.ocultar('watergems');self.janelas.mostrar('integrada')
         if hasattr(self.iface,'messageBar'):self.iface.messageBar().pushInfo('Investigação integrada ativa','Auditoria GIS e configuração WaterGEMS estão em segundo plano. Recupere-as em Janelas / painéis, no menu do complemento ou no painel.')
         return True
     def integrar(self,base_wg,mapeamento,tolerancia,modo):
@@ -172,8 +257,12 @@ class Aplicacao:
         if not self.geo.close():return False
         if self.painel and not self.painel.close():self.geo.show();return False
         if self.wg:self.wg.close()
+        for nome in ('topologia_direta','cenarios_ui'):
+            w=getattr(self,nome,None)
+            if w is not None and not sip.isdeleted(w):w.close()
         import auditoria_fronteiras.catalogo as cat
         cat.CATALOGO_APLICACAO=self._catalogo_antigo
+        if getattr(self,'central',None) is not None and not sip.isdeleted(self.central):self.central.timer.stop();self.central.close()
         self.atividades.fechar();self.janelas.limpar()
         return True
     def preparar_saida(self):
@@ -186,7 +275,9 @@ class Aplicacao:
                 self.geo.status.setText(texto)
                 if hasattr(self.iface,'messageBar'):self.iface.messageBar().pushWarning('Water Network Auditor',texto)
                 return False
-            if not self.resolver() or not self.geo.resolver_pendencias():return False
+            direta=getattr(self,'topologia_direta',None)
+            if direta is not None and not sip.isdeleted(direta) and not direta.resolver():return False
+            if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
             if self.geo.pendente():
                 f=self.geo._formulario_resultado if self.geo.dossie else self.geo._config_inicial
                 if f:self.geo.restaurar_formulario(f)

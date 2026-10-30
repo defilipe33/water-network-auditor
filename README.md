@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A pré-release **1.12.0** acrescenta a [Central de Trabalho e preparação guiada](documentacao/publica/CENTRAL_E_FLUXO_GUIADO.md): projetos por UUID, requisitos verificados, retomada de operações, consulta topológica sem GIS, painel ou janela independente e seleção explícita de cenários. Os algoritmos existentes são preservados; aceitação humana continua pendente.
+
 A versão **1.11.0** acrescenta [importação de Selection Sets do WaterGEMS](documentacao/publica/SELECTION_SETS_WATERGEMS.md), preservando nomes, membros e a hierarquia por IDs quando disponível; camadas persistentes, filtros, histórico, comparação e relatórios. Queries não interpretadas permanecem com composição não verificada.
 
 A versão **1.10.0** acrescenta [ilhas sem caminho até origens configuradas](documentacao/publica/ILHAS_SEM_ORIGEM.md): busca multiorigem estrutural e dirigida com restrições, inventário, mapa, diagnósticos, histórico, exportação e comparação conservadora. Redes extensas também são investigadas; ausência de caminho não comprova desabastecimento.
@@ -76,6 +78,12 @@ Não é necessário configurar manualmente PYTHONPATH ou utilizar o console QGIS
 Após atualizar um complemento cujas bibliotecas já foram carregadas, reinicie o QGIS.
 
 ## Uso inicial
+
+Abra a **Central de Trabalho** pelo menu do complemento. Crie ou selecione um
+projeto e use **Preparação guiada** ou os grupos de tarefas. A recomendação indica
+o próximo requisito pendente; GIS e WaterGEMS podem ser preparados em qualquer
+ordem. **Retomar última base do projeto** recupera a referência salva após conferir
+o arquivo. Para seguir pelo formulário original, use **Nova auditoria GIS**.
 
 1. Carregue no QGIS suas camadas autorizadas de rede e limites.
 2. Escolha **NOVA AUDITORIA**, selecione redes, polígonos, campos e modos por camada.

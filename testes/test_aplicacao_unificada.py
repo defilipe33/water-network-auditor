@@ -22,6 +22,9 @@ class InterfaceUnificadaTest(unittest.TestCase):
         self.app=Aplicacao(Iface(),self.raiz)
     def tearDown(self):
         self.app.geo.resolver_pendencias=lambda:True;self.app.geo._executando=False;self.app.ocupado=False
+        # Limpeza do cenário sintético: as guardas são verificadas no corpo dos
+        # testes, não se mantém um diálogo de saída aberto durante tearDown.
+        self.app.resolver_configuracao_wg=lambda:True
         if self.app.wg:self.app.wg.ocupado=False
         self.app.encerrar();QgsProject.instance().removeAllMapLayers();self.main.close();self.tmp.cleanup()
     def carregar(self):

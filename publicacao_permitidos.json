@@ -2,5 +2,14 @@
   "pdfs_revisados": {
     "documentacao/Roadmap_01_Processo_Topologia_WaterGEMS.pdf": "cf4527fb7df93164a43f8179224874fcdaef0f5b474d6d56d6c87541adfe7a5b",
     "documentacao/Roadmap_02_Desenvolvimento_Ferramentas_WaterGEMS.pdf": "5bfd6799c9b34a80e2fe5720654a3eb1d11b0c9a491ea129ee7cc7dd86f7a073"
+  },
+  "imagens_revisadas": {
+    "documentacao/publica/capturas/interface_guiada/A_consulta_topologica.png": "e30e4c983eb1575715d59fe5f2f64c7cd703a045ca7e84e4946c804743dae12f",
+    "documentacao/publica/capturas/interface_guiada/B_preparacao_guiada.png": "1b0f2a985653c76ff8d362f07609a8da43608b826c10171970468b2d82a1112b",
+    "documentacao/publica/capturas/interface_guiada/C_janela_independente.png": "e6fe1107c9eb37b4a9ec3068ed22e1f63a088ccad0ba731fe53df7e1336201d8",
+    "documentacao/publica/capturas/interface_guiada/D_cenarios.png": "ee133c042df9f9516c27eecaca256de5783c6db7341390149c333ed53743e7d8",
+    "documentacao/publica/capturas/interface_guiada/central_requisitos.png": "cf3b902660dc254b3f0100d285a3c77b4ca7172263e37f63d607f43652b7640e",
+    "documentacao/publica/capturas/interface_guiada/investigacao_janela.png": "e529e5881b73d9ebbbb5ced45d6e97c915df16591c38e5bb792a8150f5e819a0",
+    "documentacao/publica/capturas/interface_guiada/contexto_integrado.png": "e4d6df3e52df8b270266fdc3de23e626c16c80c239efb0f9262ac9aed2d5c232"
   }
 }

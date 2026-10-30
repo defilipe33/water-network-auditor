@@ -110,3 +110,16 @@ Busca multiorigem no grafo completo; estrutural fraca e restrita dirigida separa
 ## Selection Sets — 1.11.0
 
 Adaptador HMI sobre Banco, com nomes/membros/pastas por identidade; persistência reutiliza IGD_OBJETOS/IGD_OBJ_HIST/IGD_OBJ_VINCULOS e publicação transacional. Queries desconhecidas não são avaliadas. Camadas próprias persistentes e organização local separada da hierarquia original, filtros de identidade, comparação e relatórios existentes. [Guia e aceitação](SELECTION_SETS_WATERGEMS.md).
+
+
+## Central e contextos — 1.12.0
+
+A Central de Trabalho orquestra os formulários existentes. Contratos declarativos
+distinguem consulta topológica independente de integração espacial. Projetos usam
+UUID, referências a bases e preferências locais; não alteram os esquemas analíticos.
+O mesmo QDockWidget alterna entre painel e janela independente, preservando seu
+conteúdo. Trocas de cenário exigem uma base correspondente, conferência de
+identidade e resolução de rascunhos; não transferem decisões ou RESOLVIDO.
+Cenário base não é união dos filhos. Comparação avançada permanece futura.
+
+[Guia, arquitetura e aceitação](CENTRAL_E_FLUXO_GUIADO.md).

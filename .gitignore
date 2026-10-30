@@ -97,3 +97,7 @@ Desktop.ini
 build/
 dist/
 # Fixtures essenciais são geradas em memória/temporários pelos testes.
+
+# Estado local de navegação e contexto, não distribuível
+projetos_wna.json
+preferencias_interface.ini

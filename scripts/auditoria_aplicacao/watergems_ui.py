@@ -109,12 +109,14 @@ class WatergemsDialog(QDialog):
         seletor=SeletorBases(self.app.catalogo,self,tipo='TOPOLOGIA_WG')
         if seletor.exec_()==QDialog.Accepted:self.usar_base(seletor.selecionada['base'])
     def usar_base(self,base):
+        if hasattr(self.app,'resolver') and str(base)!=self.base and not self.app.resolver():return
         try:m=bases.metadados(base)
         except Exception:
             if QMessageBox.question(self,'Base legada','Importar uma cópia preservando apenas os dados disponíveis? Campos ausentes não serão inventados.',QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
             destino,_=QFileDialog.getSaveFileName(self,'Nova base para importar legado',str(sugestao(self.app.catalogo.raiz,self.projeto.text(),'TopologiaWG')),'GeoPackage (*.gpkg)')
             if not destino:return
             base=bases.importar_legado(base,destino,self.nome.text() or 'Modelo legado',self.projeto.text());m=bases.metadados(base)
+        self.app.registrar_navegacao(dict(uuid=m['uuid'],tipo='TOPOLOGIA_WG',base=str(base),nome=m['nome'])) if hasattr(self.app,'registrar_navegacao') else None
         self.base=str(base);self.fonte=None;self._topologia=None;self._prova=None;self._carregando=True;self.nome.setText(m['nome']);self.projeto.setText(m['projeto'])
         self.cenario.clear();self.cenario.addItem('Cenário '+str(m['cenario']),m['cenario']);self.modo.setCurrentIndex(self.modo.findText(m['hipotese']))
         self.identidade.setText(f"{m['nome']} · v{m['versao']:03}\n{m['resumo']['componentes']} componentes estruturais / {m['resumo_potencial']['componentes']} na hipótese aberta.");self.identidade.setToolTip('Base topológica '+m['uuid']+'\n'+str(base)+'\nUma cópia persistente para consulta; o modelo original não é alterado.')
@@ -125,6 +127,9 @@ class WatergemsDialog(QDialog):
         self.metodo.setText({'DECLARACAO_LEGADA':'Declaração preservada da base anterior','REUSO_CONTEXTUAL_CONFIRMADO':'Reaproveitamento de conteúdo tecnicamente equivalente','VERTICES_E_CONFIRMACAO_DOCUMENTAL':'Chaves únicas, vértices e confirmação documental','ASSISTENTE_METADADOS_E_VERTICES':'Metadados, unidades comparadas e aprovação técnica'}.get(estado['metodo'],'Sem validação'))
         self.estado_espacial.setText(estado['estado']+' · '+estado['metodo']+(' · declaração preservada da base anterior; confira a fonte antes de reutilizar.' if estado['legada'] else '')+'\n'+'; '.join(estado['faltas']))
         self.app.catalogo.registrar_opcional(base);self.informacao.setPlainText('Base recuperada sem extrair o modelo original. Os elementos completos só são carregados ao investigar/comparar.')
+        p=getattr(self.app,'painel',None)
+        if p is not None and not sip.isdeleted(p) and p._ativo and p.pacote['resultado']['meta']['topologia']['execucao_uid']!=m['uuid']:
+            p.desativar();p.hide()
     def atualizar_base(self):
         if self.ocupado:return
         if not self.base:self.abrir_base()

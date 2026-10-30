@@ -26,6 +26,11 @@ def verificar(nome,dados,modo,pdfs):
     if modo not in ('100644','100755'):erros.append('Modo não permitido: links e submódulos exigem revisão')
     if p.parts[0] not in RAIZES and nome not in ARQUIVOS_RAIZ:erros.append('Caminho fora do conjunto público permitido')
     if len(dados)>1024*1024:erros.append('Arquivo acima de 1 MiB exige revisão específica')
+    if p.suffix.lower()=='.png':
+        if not nome.startswith('documentacao/publica/capturas/'):erros.append('Captura fora da documentação pública revisada')
+        if not dados.startswith(b'\x89PNG\r\n\x1a\n'):erros.append('Assinatura PNG inválida')
+        if pdfs.get(nome)!=sha256(dados).hexdigest():erros.append('Captura sem hash de revisão autorizado')
+        return erros
     if p.suffix=='.pdf':
         if pdfs.get(nome)!=sha256(dados).hexdigest():erros.append('PDF sem hash de revisão autorizado')
         return erros
@@ -53,7 +58,7 @@ def entradas(revisao=None):
                 yield nome.decode('utf8'),modo,oid
 
 def executar(historico=False):
-    permitidos=json.loads(git('show',':publicacao_permitidos.json').decode())['pdfs_revisados']
+    configuracao=json.loads(git('show',':publicacao_permitidos.json').decode());permitidos=dict(configuracao['pdfs_revisados'],**configuracao.get('imagens_revisadas',{}))
     falhas=[];vistos=set();arquivos=[]
     revisoes=[None]
     if historico:
