@@ -87,8 +87,7 @@ class DecisoesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,'outra sessão'):self.proposta(prop_uid=uid,esperada='obsoleta')
     def test_aprovacao_e_aplicacao_nao_sao_validacao(self):
         uid,h=self.proposta();uid,h=self.proposta(prop_uid=uid,esperada=h,situacao='PROPOSTA_PARA_APROVACAO')
-        with self.assertRaises(ValueError):self.proposta(prop_uid=uid,esperada=h,situacao='APROVADA')
-        uid,h=self.proposta(prop_uid=uid,esperada=h,situacao='APROVADA',confirmacao=True)
+        uid,h=self.proposta(prop_uid=uid,esperada=h,situacao='APROVADA',responsavel='',confirmacao=False)
         uid,h=self.proposta(prop_uid=uid,esperada=h,situacao='APLICACAO_INFORMADA',confirmacao=True)
         self.assertEqual(db.propostas(self.base,self.ig)[0]['atual']['situacao'],'APLICACAO_INFORMADA')
         with self.assertRaises(ValueError):self.proposta(prop_uid=uid,esperada=h,situacao='VALIDADA',confirmacao=True)
@@ -177,8 +176,8 @@ class DecisoesTest(unittest.TestCase):
     def test_validacao_positiva_exige_acao_humana(self):
         uid,h,pr=self.aplicada();n=clonar(self.p);e=copy.deepcopy(n['topologia']['modelo']['elementos'][10]);e['id']=12;e['uid']+='12';e['topologia']={'HMITopologyStartNodeID':1,'HMITopologyStopNodeID':3};n['topologia']['modelo']['elementos'][12]=e;n['topologia']['estrutural']=analisar(n['topologia']['modelo'])
         r=avaliar_proposta(pr,self.p,n);v=salvar_validacao(self.base,self.p,pr,r)
-        with self.assertRaises(ValueError):self.proposta(prop_uid=uid,esperada=h,situacao='VALIDADA',validacao_uid=v)
-        self.proposta(prop_uid=uid,esperada=h,situacao='VALIDADA',confirmacao=True,validacao_uid=v)
+        self.assertEqual(db.propostas(self.base,self.ig)[0]['atual']['situacao'],'VALIDACAO_PENDENTE')
+        self.proposta(prop_uid=uid,esperada=h,situacao='VALIDADA',confirmacao=False,responsavel='',validacao_uid=v)
         self.assertEqual(db.propostas(self.base,self.ig)[0]['atual']['situacao'],'VALIDADA')
     def test_salvar_navegacao_persiste_decisao(self):
         j=self.painel();a=j.analise;a.conclusao.setCurrentIndex(a.conclusao.findData('NÃO AVALIADO'));a.justificativa.setPlainText('Salvar na troca')

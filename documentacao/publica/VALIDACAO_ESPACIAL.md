@@ -1,35 +1,19 @@
-# Validar referência espacial do WaterGEMS — versão 1.2.0
+# Validar referência espacial do WaterGEMS — versão 1.12.1
 
-Resultados e limitações dos ensaios: [validação da versão 1.2.0](VALIDACAO_ASSISTENTE_1_2.md).
+Histórico dos ensaios iniciais: [validação da versão 1.2.0](VALIDACAO_ASSISTENTE_1_2.md).
 
 Na aba **CRS e unidades**, use **VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS…**.
 Abra ou crie antes uma base topológica e uma auditoria geométrica. A extração e os
 resultados anteriores continuam utilizáveis sem CRS; o assistente não escreve nas fontes.
 
-## Fluxo
+## Fluxo atual — 1.12.1
 
-1. **Fontes:** identificação da auditoria, modelo, cenário, perspectiva, versão e
-   assinatura técnica; CRS do projeto QGIS e CRS da auditoria são mostrados separadamente.
-2. **Metadados:** CRSs das camadas lidos pelo provedor QGIS, proveniência, unidade e
-   inconsistências com o registro anterior. GeoPackage utiliza seus metadados espaciais;
-   Shapefile utiliza a definição disponível no `.prj`. CRS declarado não prova georreferenciamento.
-   São investigados o esquema SQLite e as evidências compatíveis do catálogo.
-3. **Correspondências:** campos GIS classificados por preenchimento, nulos, vazios,
-   repetições e correspondência exata/única/múltipla com Label WG. A recomendação não é
-   aprovação: confirme explicitamente as colunas. Empates não recebem escolha arbitrária.
-4. **Unidades e Junctions:** teste de metro (1,0) e pé internacional (0,3048), como
-   hipóteses. Pode adicionar uma Junction observada pelo formulário, com ID, Label,
-   coordenadas exibidas em metros, precisão e fonte. Não é necessário criar JSON manualmente.
-   Importação JSON é opcional para conjuntos de controles e outras unidades fundamentadas.
-5. **Geometrias:** comparação de todos os vértices nas duas orientações, utilizando o
-   comparador existente. Tabelas apresentam pares, vértices, média, mediana, máximo,
-   P95, P99 e inconsistências. O botão de mapa cria uma camada temporária identificada
-   como candidata, com GIS, WG convertido e divergências. Não impõe zoom ou muda estilos originais.
-6. **Evidências:** distinção entre o que foi declarado, comparado, inferido ou permanece
-   pendente. CRS documental e fonte adicional são necessários somente quando os metadados
-   e evidências compatíveis não os fornecerem. Informe o responsável pela aprovação.
-7. **Confirmar e salvar:** aprovação técnica explícita e arquivo novo. Não substitui versões
-   anteriores nem atualiza silenciosamente investigações existentes.
+1. **Identificar os dados:** leitura automática de fontes, cenário, CRSs e referências anteriores. Esta página pode ser apenas consultada quando os dados já estão selecionados.
+2. **Conferir correspondências:** tabela de campos sugeridos e exemplos; alterar escolhas quando necessário, sem checkbox de aceite. Empates continuam explícitos.
+3. **Verificar compatibilidade espacial:** comparar hipóteses, geometrias e controles. O resumo mostra resultado e próxima ação; estatísticas completas e Junctions ficam nas opções avançadas.
+4. **Salvar e continuar:** nova versão íntegra, atualização da configuração e fechamento automático, sem responsável ou aprovação formal.
+
+O [guia de refinamento e capturas reais](REFINAMENTO_ESPACIAL_1_12_1.md) descreve o fluxo e as pendências técnicas. Documentos e observações são opcionais. A ausência de referência confiável de CRS continua bloqueando a validação; ajuste geométrico não prova datum.
 
 Detecção, análise de campos, comparação e gravação executam fora da thread da interface.
 Cancelar solicita interrupção no próximo ponto seguro. A troca de contexto e a saída do
@@ -50,7 +34,7 @@ O outro modelo não forneceu definição interpretável nos campos observados.
 
 Tabela, coluna, valor bruto, interpretação, confiabilidade, versão de esquema e hash
 ficam na evidência. Campos desconhecidos são candidatos não interpretados. JSON inválido
-ou definições conflitantes bloqueiam a aprovação. Ausência gera a mensagem
+ou definições conflitantes bloqueiam a validação. Ausência gera a mensagem
 **CRS NÃO IDENTIFICADO NOS METADADOS WATERGEMS**; não gera um EPSG presumido.
 
 O leitor não pretende ser um decodificador universal de todas as versões Bentley.
@@ -88,8 +72,7 @@ WaterGEMS permanecem pendentes; não são forçados a coincidir.
   margem numérica de 1e-8 m. Uma Junction isolada não valida a rede inteira.
 - Metadados ou evidência documental sustentam o datum. Coincidência de geometrias sozinha
   não o comprova. `APTO_PARA_CONFIRMACAO` é diferente de `VALIDADO`.
-- Aprovação final, responsável e proveniência são exigidos. Conectividade hidráulica
-  não é deduzida da validação espacial.
+- A verificação técnica e a proveniência são exigidas; responsável, aprovação formal e anexos não são. Conectividade hidráulica não é deduzida da validação espacial.
 
 Contagens cadastrais podem se sobrepor: um registro nulo também pode não ser encontrado.
 As estatísticas de erro usam somente pares com quantidade de vértices comparável; os

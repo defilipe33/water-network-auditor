@@ -30,12 +30,12 @@ class AnaliseDecisao(QWidget):
         b=QPushButton('Salvar somente andamento administrativo');b.clicked.connect(self.salvar_andamento);f.addRow(b)
         principal=f;self.avancadas=QGroupBox('CONFIRMAÇÃO TÉCNICA / EVIDÊNCIAS AVANÇADAS');self.avancadas.setCheckable(True);self.avancadas.setChecked(False);principal.addRow(self.avancadas)
         conteudo=QWidget();f=QFormLayout(conteudo);av=QVBoxLayout(self.avancadas);av.addWidget(conteudo);conteudo.setVisible(False);self.avancadas.toggled.connect(conteudo.setVisible)
-        aviso=QLabel('Conclusões definitivas exigem justificativa, responsável, fonte e evidência DOCUMENTAL, OPERACIONAL ou de CAMPO. Hipóteses podem ser salvas acima como preliminares. VERIFICADO é andamento, não correção comprovada.');aviso.setWordWrap(True);f.addRow(aviso)
+        aviso=QLabel('Conclusões definitivas exigem fundamento técnico DOCUMENTAL, OPERACIONAL ou de CAMPO; operador é opcional. Hipóteses podem ser salvas acima como preliminares. VERIFICADO é andamento, não correção comprovada.');aviso.setWordWrap(True);f.addRow(aviso)
         self.conclusao=QComboBox();self.conclusao.addItem('Escolha explicitamente a conclusão',None)
         for c in db.CONCLUSOES:self.conclusao.addItem(c,c)
         f.addRow('Conclusão técnica',self.conclusao)
         self.justificativa=QPlainTextEdit();self.justificativa.setMaximumHeight(95);f.addRow('Justificativa / observações',self.justificativa)
-        self.responsavel=QLineEdit();f.addRow('Responsável',self.responsavel)
+        self.responsavel=QLineEdit();f.addRow('Operador (opcional; histórico)',self.responsavel)
         from qgis.core import QgsSettings
         self.operador=QgsSettings().value('auditoria_redes/operador_padrao','');self.responsavel.setText(self.operador)
         b=QPushButton('Usar este responsável como operador padrão opcional');b.clicked.connect(self.salvar_operador);f.addRow(b)
@@ -55,10 +55,10 @@ class AnaliseDecisao(QWidget):
         self.elementos_confirmados=QCheckBox('Conferi as identidades dos elementos e seu papel nesta proposta');f.addRow(self.elementos_confirmados)
         self.prop_just=QPlainTextEdit();self.prop_just.setMaximumHeight(70);f.addRow('Justificativa',self.prop_just)
         self.requisitos=QPlainTextEdit();self.requisitos.setMaximumHeight(70);f.addRow('Requisitos de validação',self.requisitos)
-        self.prop_resp=QLineEdit();f.addRow('Responsável',self.prop_resp)
+        self.prop_resp=QLineEdit();f.addRow('Operador (opcional; histórico)',self.prop_resp)
         self.prop_evid=QPlainTextEdit();self.prop_evid.setMaximumHeight(70);f.addRow('Evidência desta alteração',self.prop_evid)
         self.prop_estado=combo(db.ESTADOS_PROPOSTA);f.addRow('Situação da proposta',self.prop_estado)
-        self.confirmacao=QCheckBox('Confirmo explicitamente esta aprovação / declaração de aplicação / validação técnica');f.addRow(self.confirmacao)
+        self.confirmacao=QCheckBox(self);self.confirmacao.hide()  # Compatibilidade do histórico; não é exigência de salvamento.
         self.verificacao_manual=QCheckBox('Realizei verificação técnica adicional e identifiquei a evidência do resultado acima');f.addRow(self.verificacao_manual)
         self.validacao=QLabel('Nenhuma evidência posterior selecionada.');self.validacao.setWordWrap(True);f.addRow(self.validacao);self.validacao_uid=None
         b=QPushButton('Salvar proposta / acrescentar histórico');b.clicked.connect(self.salvar_proposta);f.addRow(b)
@@ -150,7 +150,7 @@ class AnaliseDecisao(QWidget):
         try:
             if self.conclusao.currentData() is None:raise ValueError('Escolha a conclusão explicitamente; use NÃO AVALIADO para salvar uma observação inicial.')
             definitiva=self.conclusao.currentData() in db.CONCLUSOES[1:6] or self.conclusao.currentData()=='NÃO APLICÁVEL'
-            campos=[(self.justificativa,self.justificativa.toPlainText()),(self.responsavel,self.responsavel.text()),(self.fonte,self.fonte.currentText()),(self.evidencia,self.evidencia.toPlainText())]
+            campos=[(self.justificativa,self.justificativa.toPlainText()),(self.fonte,self.fonte.currentText()),(self.evidencia,self.evidencia.toPlainText())]
             for w,t in campos:w.setStyleSheet('border: 1px solid #b53030' if definitiva and not t.strip() else '')
             self.natureza.setStyleSheet('border: 1px solid #b53030' if definitiva and self.natureza.currentText() in ('HIPOTESE','INDEFINIDO') else '')
             if definitiva and (any(not t.strip() for _,t in campos) or self.natureza.currentText() in ('HIPOTESE','INDEFINIDO')):raise ValueError('Para confirmar, complete os campos destacados e use evidência documental, operacional ou de campo. Para investigar sem comprovação, use “Usar esta interpretação como hipótese preliminar” ou salve uma anotação rápida.')

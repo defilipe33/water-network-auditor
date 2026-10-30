@@ -21,7 +21,7 @@ from qgis.PyQt.QtWidgets import QMessageBox
 def metadados(crs='EPSG:31983'):return dict(crs=crs,estado='DECLARADO',problemas=[],registros=[],sha256='sintetico')
 def topologia(m=None):
     m=m or modelo()
-    return dict(modelo=m,meta_base=dict(nome='Modelo sintético',uuid='base-sintetica',assinatura=bases.assinatura_modelo(m,'ESTRUTURAL'),extrator='teste'))
+    return dict(modelo=m,meta_base=dict(nome='Modelo sintético',uuid='base-sintetica',assinatura=bases.assinatura_modelo(m,'ESTRUTURAL'),extrator='teste',projeto='Projeto',versao=1))
 def comparar(m=None,rs=None,**kw):
     m=m or modelo();return det.comparar_hipoteses(m,rs or registros(m),'EPSG:31983',**kw)
 
@@ -101,9 +101,9 @@ class AvaliacaoTest(unittest.TestCase):
     def test_modelo_alterado(self):
         self.t['modelo']['elementos'][10]['label']='outro';self.assertEqual(det.avaliar(self.t,self.r,metadados())['estado'],'INCOMPATIVEL')
     def test_aprovacao_explicita(self):
-        with self.assertRaises(ValueError):det.confirmar_assistida(self.t,self.r,metadados(),False,'Engenheiro sintético')
+        self.assertEqual(det.confirmar_assistida(self.t,self.r,metadados(),False,'')['validacao']['estado'],'VALIDADO')
     def test_responsavel_necessario(self):
-        with self.assertRaises(ValueError):det.confirmar_assistida(self.t,self.r,metadados(),True,'')
+        self.assertEqual(det.confirmar_assistida(self.t,self.r,metadados())['validacao']['responsavel'],'')
     def test_json_serializavel_contextual(self):
         r=det.confirmar_assistida(self.t,self.r,metadados(),True,'Engenheiro sintético');j=json.loads(bases.texto(r));self.assertEqual(j['validacao']['base_origem'],'base-sintetica');self.assertEqual(j['validacao']['regras'],det.REGRAS)
 
@@ -179,24 +179,23 @@ class AssistenteUITest(unittest.TestCase):
         self.fixture=_FixtureUI();self.fixture.setUp();self.fixture.carregar();self.fixture.app.bases();self.w=self.fixture.app.wg
         self.w.base='base_sintetica.gpkg'
         with patch.object(AssistenteEspacial,'executar') as iniciar:self.a=AssistenteEspacial(self.w);iniciar.assert_called_once()
-        self.a.t=topologia();self.a.metadados=metadados();self.a.evidencias=[];self.a.relatorio=comparar();self.a.relatorio['mapeamento']={};self.a.relatorio['transformacoes_gis']=[]
+        self.a.t=topologia();self.a.metadados=metadados();self.a.evidencias=[];self.a.relatorio=comparar();self.a.relatorio['mapeamento']={};self.a.relatorio['transformacoes_gis']=[];self.a.assinatura=[]
     def tearDown(self):self.a.close();self.fixture.tearDown()
-    def test_sete_etapas(self):self.assertEqual(self.a.paginas.count(),7)
+    def test_quatro_etapas(self):self.assertEqual(self.a.paginas.count(),4)
     def test_campos_exigem_confirmacao(self):
-        self.a.pagina(2)
+        self.a.pagina(1)
         with patch('auditoria_aplicacao.assistente_espacial.QMessageBox.information') as m:self.a.proximo();m.assert_called_once()
-        self.assertEqual(self.a.paginas.currentIndex(),2)
-    def test_confirmacao_nao_preenchida(self):self.assertFalse(self.a.aprovar.isChecked())
+        self.assertEqual(self.a.paginas.currentIndex(),1)
+    def test_sem_confirmacao_formal(self):self.assertFalse(hasattr(self.a,'aprovar'));self.assertFalse(hasattr(self.a,'responsavel'))
     def test_mudar_crs_invalida_prova(self):self.a.crs.setText('EPSG:32623');self.assertIsNone(self.a.relatorio)
     def test_mudar_tolerancia_invalida_prova(self):self.a.tolerancia.setValue(.02);self.assertIsNone(self.a.relatorio)
     def test_cancelar_nao_muda_base(self):
         antes=self.w.base;self.a.reject();self.assertEqual(self.w.base,antes)
-    def test_salvar_sem_aprovacao_bloqueado(self):
-        self.a.responsavel.setText('Engenheiro sintético')
-        with patch('auditoria_aplicacao.assistente_espacial.QMessageBox.warning') as m:self.a.salvar();m.assert_called_once()
+    def test_salvar_sem_aprovacao_cancelado_preserva_base(self):
+        with patch('auditoria_aplicacao.assistente_espacial.QMessageBox.warning') as m,patch('auditoria_aplicacao.assistente_espacial.QFileDialog.getSaveFileName',return_value=('','')) as escolher:self.a.salvar();escolher.assert_called_once();m.assert_not_called()
         self.assertIsNone(self.a.resultado)
     def test_estado_apto_nao_e_validado(self):
-        self.a.atualizar_avaliacao();self.assertIn('APTO_PARA_CONFIRMACAO',self.a.avaliacao.text());self.assertIsNone(self.a.resultado)
+        self.a.atualizar_avaliacao();self.assertIn('pronto para salvar',self.a.avaliacao.text());self.assertIsNone(self.a.resultado)
     def test_bloqueio_saida_durante_trabalho(self):
         self.w.ocupado=True;self.assertFalse(self.fixture.app.preparar_saida());self.w.ocupado=False
     def test_resolucao_notebook(self):

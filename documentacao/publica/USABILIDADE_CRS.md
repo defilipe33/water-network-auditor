@@ -58,7 +58,7 @@ em qualquer origem selecionada impede tratar o vínculo como inequívoco.
 | Fator bruto → metro | Multiplicador das coordenadas brutas antes da comparação |
 | Evidência | Documento ou conferência independente que sustenta CRS e unidade |
 | Método | Como a confirmação foi obtida |
-| Responsável | Pessoa que realizou a confirmação |
+| Operador histórico | Campo opcional preservado de bases antigas; não exigido no novo assistente |
 | Estado | VALIDADO, PENDENTE ou INCOMPATIVEL, com motivo |
 
 Copiar o CRS de processamento GIS é uma ação explícita e **não confirma** a referência
@@ -71,7 +71,7 @@ podem ser declarados. Não há CRS ou fator selecionado pelo nome do município.
 equivalência da identidade e composição técnica do modelo: cenário, alternativas,
 elementos, geometrias e valores resolvidos. Caminho ou nome igual não bastam.
 O registro conserva assinatura de contexto, hash e fonte da evidência, método,
-responsável e data. Cancelar a confirmação mantém o formulário anterior.
+data e registro anterior. Operador é opcional. Cancelar mantém o formulário anterior.
 
 Um JSON antigo sem assinatura reproduzível fornece somente valores candidatos;
 exige nova validação. Bases antigas com declaração de CRS/fator/fonte continuam
@@ -83,7 +83,7 @@ Examine a prévia e suas coordenadas e geometrias, disponíveis pelo menu **Colu
 As coordenadas apresentadas nessa etapa são candidatas, calculadas com os valores
 informados. A prova reaproveita o comparador de todos os vértices já existente.
 São exigidos pares inequívocos suficientes (pelo menos três, ou todos em modelos
-com menos de três tubulações) e confirmação explícita baseada em fonte independente.
+com menos de três tubulações) e referência de CRS identificada; nome e aprovação formal não são necessários.
 O ajuste geométrico sozinho não comprova datum, unidade ou conectividade hidráulica.
 
 Após confirmar, **Criar base / salvar validação em nova versão** grava um arquivo novo,
@@ -118,3 +118,6 @@ validação. ESTADOS_DO_CENARIO permanece indisponível.
 
 Os testes automatizados de áreas lógicas e APIs Qt não substituem essa conferência
 interativa, a leitura visual de todos os campos e o comportamento físico dos monitores.
+
+
+Fluxo refinado na 1.12.1: [quatro etapas, opções avançadas e capturas antes/depois](REFINAMENTO_ESPACIAL_1_12_1.md).

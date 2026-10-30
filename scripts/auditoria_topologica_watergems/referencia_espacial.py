@@ -64,7 +64,8 @@ def referencia_reutilizada(modelo,evidencia,responsavel=''):
     c=compatibilidade(modelo,evidencia)
     if c['estado']!='VALIDADO':raise ValueError('; '.join(c['faltas']))
     r=deepcopy(evidencia['referencia']);r['unidade_bruta']=r.get('unidade_bruta') or unidade_fator(r['fator'])
-    r['validacao']=dict(estado='VALIDADO',contexto_modelo=contexto_modelo(modelo),metodo='REUSO_CONTEXTUAL_CONFIRMADO',
+    anterior=deepcopy(r.get('validacao',{}))
+    r['validacao']=dict(estado='VALIDADO',contexto_modelo=contexto_modelo(modelo),metodo='REUSO_CONTEXTUAL_CONFIRMADO',validacao_anterior=anterior,
         fonte_anterior=evidencia['arquivo'],sha256_anterior=evidencia['sha256'],responsavel=responsavel,data=datetime.now(timezone.utc).isoformat())
     return r
 

@@ -20,20 +20,22 @@ class Extracao(Trabalho):
 
 class WatergemsDialog(QDialog):
     def __init__(self,app):
-        super().__init__(app.iface.mainWindow());self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('WaterGEMS — modelo, correspondência e referência espacial');self.resize(860,650)
+        super().__init__(app.iface.mainWindow());self.app=app;self.base=None;self.anterior=None;self.fonte=None;self.trabalho=None;self.ocupado=False;self.setWindowTitle('WaterGEMS — modelo, correspondência e referência espacial');self.resize(820,560)
         self._topologia=None;self._prova=None;self._referencia_confirmada=None;self._ref_pendente=False;self._carregando=False
         v=QVBoxLayout(self);self.geo_info=QLabel();self.geo_info.setWordWrap(True);v.addWidget(self.geo_info)
         self.tabs=QTabWidget();v.addWidget(self.tabs,1)
         modelo=QWidget();self.tabs.addTab(modelo,'1 · Modelo e cenário');mv=QVBoxLayout(modelo)
         l=QGridLayout();mv.addLayout(l)
-        for i,(nome,acao) in enumerate([('Selecionar .wtg.sqlite…',self.selecionar),('ABRIR BASE WATERGEMS EXISTENTE…',self.abrir_base),('ATUALIZAR BASE WATERGEMS…',self.atualizar_base)]):
+        for i,(nome,acao) in enumerate([('Selecionar modelo WaterGEMS…',self.selecionar),('ABRIR BASE WATERGEMS EXISTENTE…',self.abrir_base),('ATUALIZAR BASE WATERGEMS…',self.atualizar_base)]):
             b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b,i//2,i%2)
         f=QFormLayout();mv.addLayout(f);self.identidade=QLabel('Nenhuma base selecionada');self.identidade.setWordWrap(True);f.addRow(self.identidade)
         self.nome=QLineEdit();self.projeto=QLineEdit();f.addRow('Nome amigável do modelo',self.nome);f.addRow('Município / projeto',self.projeto)
         self.cenario=QComboBox();f.addRow('Cenário-base',self.cenario)
         self.modo=QComboBox();self.modo.addItems(list(bases.MODOS)+['ESTADOS_DO_CENARIO — indisponível']);self.modo.setCurrentIndex(1);self.modo.model().item(2).setEnabled(False);f.addRow('Perspectiva',self.modo)
         ajuda=QLabel('Primeiro crie ou abra a base topológica. CRS e unidades não são necessários para consultar o grafo. A integração com o mapa só será liberada após confirmação espacial.');ajuda.setWordWrap(True);mv.addWidget(ajuda)
-        self.informacao=QPlainTextEdit();self.informacao.setReadOnly(True);mv.addWidget(self.informacao,1)
+        self.informacao=QPlainTextEdit();self.informacao.setReadOnly(True);self.informacao.setMaximumHeight(130)
+        from qgis.PyQt.QtWidgets import QGroupBox
+        self.detalhes_modelo=QGroupBox('Detalhes da leitura / processamento');self.detalhes_modelo.setCheckable(True);self.detalhes_modelo.setChecked(False);dl=QVBoxLayout(self.detalhes_modelo);dl.addWidget(self.informacao);self.informacao.hide();self.detalhes_modelo.toggled.connect(self.informacao.setVisible);mv.addWidget(self.detalhes_modelo);mv.addStretch()
         refpage=QWidget();self.tabs.addTab(refpage,'3 · CRS e unidades');rv=QVBoxLayout(refpage)
         ajuda=QLabel('CRS identifica a referência das coordenadas GIS; a unidade bruta pertence às coordenadas WaterGEMS. Selecione o CRS métrico confirmado e a conversão correta. Não deduza esses valores pelo município.\nUse evidência anterior compatível ou confira pares cadastrais, coordenadas e uma fonte independente antes de confirmar.');ajuda.setWordWrap(True);rv.addWidget(ajuda)
         b=QPushButton('VALIDAR REFERÊNCIA ESPACIAL DO WATERGEMS…');b.clicked.connect(self.assistente_espacial);rv.addWidget(b)
@@ -42,7 +44,7 @@ class WatergemsDialog(QDialog):
         self.opcoes_referencia=QGroupBox('Informações avançadas / evidência anterior');self.opcoes_referencia.setCheckable(True);self.opcoes_referencia.setChecked(False);rv.addWidget(self.opcoes_referencia)
         conteudo_ref=QWidget();av=QVBoxLayout(self.opcoes_referencia);av.addWidget(conteudo_ref);av_ref=QVBoxLayout(conteudo_ref);conteudo_ref.setVisible(False);self.opcoes_referencia.toggled.connect(conteudo_ref.setVisible)
         f=QFormLayout();av_ref.addLayout(f)
-        self.espacial=QCheckBox('Referência espacial confirmada para esta composição do modelo');self.espacial.setEnabled(False);f.addRow(self.espacial)
+        self.espacial=QCheckBox('Referência espacial confirmada para esta composição do modelo',self);self.espacial.setEnabled(False);self.espacial.hide()
         self.crs=QLineEdit();self.crs.setPlaceholderText('CRS projetado em metros, sem suposição automática')
         self.unidade=QComboBox()
         for nome,codigo in [('Não informada',None),('Metros','METRO'),('Pés internacionais','PE_INTERNACIONAL'),('Outra unidade, com fator declarado','OUTRA_DECLARADA')]:self.unidade.addItem(nome,codigo)
@@ -51,25 +53,31 @@ class WatergemsDialog(QDialog):
         self.evidencia=QLineEdit();f.addRow('CRS',self.crs);f.addRow('Fator bruto → metro',self.fator);f.addRow('Evidência de CRS/unidade',self.evidencia)
         self.metodo=QLineEdit('Sem validação');self.metodo.setReadOnly(True);f.addRow('Método de validação',self.metodo)
         self.evidencia.setPlaceholderText('Documento, conferência independente ou validação anterior identificável')
-        self.resp_evidencia=QLineEdit();f.addRow('Responsável pela confirmação',self.resp_evidencia)
+        self.resp_evidencia=QLineEdit(self);self.resp_evidencia.hide()  # Campo histórico, sem exigência ou controle de aprovação na interface.
         for texto,acao in [('Usar o CRS de processamento da auditoria GIS',self.usar_crs_gis),('Verificar evidência existente…',self.verificar_evidencia),('Validar correspondência espacial…',self.validar_espacial),('Consultar detalhes da validação',self.detalhes_validacao)]:
             b=QPushButton(texto);b.clicked.connect(acao);av_ref.addWidget(b)
         rv.addStretch()
         mapage=QWidget();self.tabs.insertTab(1,mapage,'2 · Correspondência GIS × Label');pv=QVBoxLayout(mapage)
         ajuda=QLabel('Selecione a coluna da camada GIS que contém o mesmo identificador utilizado como Label da tubulação no WaterGEMS. Label é o identificador de apresentação do modelo, não DomainElementID. O campo da auditoria geométrica pode ser diferente. Nada é escolhido automaticamente.');ajuda.setWordWrap(True);pv.addWidget(ajuda)
-        self.mapas={};self.geo_uid=None;self.mapeamento=QTableWidget(0,5);self.mapeamento.setHorizontalHeaderLabels(['Camada GIS','CRS da entrada GIS','Campo da auditoria','Campo GIS ↔ Label','Campo WaterGEMS']);pv.addWidget(self.mapeamento,1)
+        self.mapas={};self.geo_uid=None;self.mapeamento=QTableWidget(0,5);self.mapeamento.setHorizontalHeaderLabels(['Camada GIS','CRS da entrada GIS','Campo da auditoria','Campo GIS ↔ Label','Campo WaterGEMS']);self.mapeamento.horizontalHeader().setStretchLastSection(True);self.mapeamento.setMaximumHeight(210);pv.addWidget(self.mapeamento)
+        detalhes=QGroupBox('Colunas técnicas e tolerância');detalhes.setCheckable(True);detalhes.setChecked(False);pv.addWidget(detalhes);conteudo=QWidget();fl=QVBoxLayout(detalhes);fl.addWidget(conteudo);conteudo.hide();detalhes.toggled.connect(conteudo.setVisible);detalhes.toggled.connect(lambda visivel:[self.mapeamento.setColumnHidden(c,not visivel) for c in (1,2,4)])
+        for coluna in (1,2,4):self.mapeamento.setColumnHidden(coluna,True)
         self.tolerancia=QDoubleSpinBox();self.tolerancia.setDecimals(5);self.tolerancia.setRange(0,1000);self.tolerancia.setValue(.01)
-        f=QFormLayout();f.addRow('Tolerância da prova geométrica (m)',self.tolerancia);pv.addLayout(f)
-        b=QPushButton('Prévia: exemplos, nulos, repetidos e correspondências…');b.clicked.connect(self.previsualizar);pv.addWidget(b)
+        f=QFormLayout();f.addRow('Tolerância da prova geométrica (m)',self.tolerancia);QVBoxLayout(conteudo).addLayout(f)
+        b=QPushButton('Ver exemplos e correspondências…');b.clicked.connect(self.previsualizar);pv.addWidget(b)
         consultar=QPushButton('Consultar elementos, componentes e diagnósticos da base…');consultar.clicked.connect(self.consultar);v.addWidget(consultar)
         l=QHBoxLayout();v.addLayout(l)
-        for nome,acao in [('Criar base / salvar validação em nova versão…',self.criar),('Comparar com versão anterior',self.comparar),('Abrir diagnósticos integrados…',self.integrar),('Cancelar processamento',self.cancelar)]:
-            b=QPushButton(nome);b.clicked.connect(acao);l.addWidget(b)
+        self.criar_botao=QPushButton('Preparar base topológica…');self.criar_botao.clicked.connect(self.criar);l.addWidget(self.criar_botao)
+        self.integrar_botao=QPushButton('Criar investigação integrada…');self.integrar_botao.clicked.connect(self.integrar);l.addWidget(self.integrar_botao)
+        comparar=QPushButton('Comparar com versão anterior');comparar.clicked.connect(self.comparar);dl.addWidget(comparar);comparar.hide();self.detalhes_modelo.toggled.connect(comparar.setVisible)
+        self.cancelar_botao=QPushButton('Cancelar processamento');self.cancelar_botao.clicked.connect(self.cancelar);self.cancelar_botao.hide();l.addWidget(self.cancelar_botao)
         for w,sinal in [(self.crs,'textChanged'),(self.evidencia,'textChanged'),(self.fator,'valueChanged')]:getattr(w,sinal).connect(self.invalidar_prova)
         self.tolerancia.valueChanged.connect(self.invalidar_correspondencia)
         self.unidade.currentIndexChanged.connect(self.mudar_unidade)
         self.atualizar_geo()
-        adaptar_janela(self)
+        adaptar_janela(self);self.atualizar_acoes()
+    def atualizar_acoes(self):
+        self.criar_botao.setVisible(not self.base or self._ref_pendente);self.criar_botao.setText('Salvar referência em nova versão…' if self.base else 'Preparar base topológica…');self.integrar_botao.setVisible(bool(self.base));self.cancelar_botao.setVisible(self.ocupado)
     def atualizar_geo(self):
         d=self.app.geo.dossie
         uid=d['execucao_uid'] if d else None
@@ -124,9 +132,10 @@ class WatergemsDialog(QDialog):
         unidade=ref.get('unidade_bruta') or (referencias.unidade_fator(ref['fator']) if ref else None);self.unidade.setCurrentIndex(max(0,self.unidade.findData(unidade)))
         self._carregando=False;self._ref_pendente=False;estado=referencias.estado_referencia(ref)
         self._referencia_confirmada=ref if estado['estado']=='VALIDADO' else None;self.espacial.setChecked(bool(self._referencia_confirmada))
-        self.metodo.setText({'DECLARACAO_LEGADA':'Declaração preservada da base anterior','REUSO_CONTEXTUAL_CONFIRMADO':'Reaproveitamento de conteúdo tecnicamente equivalente','VERTICES_E_CONFIRMACAO_DOCUMENTAL':'Chaves únicas, vértices e confirmação documental','ASSISTENTE_METADADOS_E_VERTICES':'Metadados, unidades comparadas e aprovação técnica'}.get(estado['metodo'],'Sem validação'))
-        self.estado_espacial.setText(estado['estado']+' · '+estado['metodo']+(' · declaração preservada da base anterior; confira a fonte antes de reutilizar.' if estado['legada'] else '')+'\n'+'; '.join(estado['faltas']))
+        self.metodo.setText({'DECLARACAO_LEGADA':'Declaração preservada da base anterior','REUSO_CONTEXTUAL_CONFIRMADO':'Reaproveitamento de conteúdo tecnicamente equivalente','VERTICES_E_CONFIRMACAO_DOCUMENTAL':'Correspondências e vértices verificados','ASSISTENTE_METADADOS_E_VERTICES':'Metadados e comparação geométrica'}.get(estado['metodo'],'Sem validação'))
+        self.estado_espacial.setText(estado['estado']+' · '+self.metodo.text()+'\nCRS: '+str(ref.get('crs') or 'não identificado')+' · unidade bruta: '+str(ref.get('unidade_bruta') or 'não identificada')+' · fator: '+str(ref.get('fator','não determinado'))+(' · declaração legada: confira a origem.' if estado['legada'] else '')+'\n'+'; '.join(estado['faltas']))
         self.app.catalogo.registrar_opcional(base);self.informacao.setPlainText('Base recuperada sem extrair o modelo original. Os elementos completos só são carregados ao investigar/comparar.')
+        self.atualizar_acoes()
         p=getattr(self.app,'painel',None)
         if p is not None and not sip.isdeleted(p) and p._ativo and p.pacote['resultado']['meta']['topologia']['execucao_uid']!=m['uuid']:
             p.desativar();p.hide()
@@ -154,7 +163,7 @@ class WatergemsDialog(QDialog):
         if QMessageBox.question(self,'Confirmar extração/versionamento',resumo,QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
         pasta=Path(destino).parent/'_tecnicos'/uuid4().hex;pasta.parent.mkdir(parents=True,exist_ok=True)
         args=dict(fonte=self.fonte,cenario=self.cenario.currentData(),modo=self.modo.currentText(),pasta=pasta,nome=self.nome.text(),projeto=self.projeto.text(),anterior=self.anterior,referencia=ref)
-        self.destino=destino;self.ocupado=True;self.trabalho=Extracao(args,self);self.trabalho.pronto.connect(self.pronto);self.trabalho.erro.connect(lambda e:self.informacao.setPlainText('Não publicado: '+e));self.trabalho.finished.connect(self.terminar)
+        self.destino=destino;self.ocupado=True;self.trabalho=Extracao(args,self);self.atualizar_acoes();self.trabalho.pronto.connect(self.pronto);self.trabalho.erro.connect(lambda e:self.informacao.setPlainText('Não publicado: '+e));self.trabalho.finished.connect(self.terminar)
         self._atividade=sistema(self).iniciar('Analisando topologia WaterGEMS',self.nome.text()+' · '+self.projeto.text(),self.cancelar);self.trabalho.progresso.connect(self._atividade.sinal)
         self.trabalho.detalhes.connect(lambda texto:setattr(self._atividade,'detalhes',texto))
         self.trabalho.erro.connect(lambda e:self._atividade.finalizar('CANCELADO' if self.trabalho.isInterruptionRequested() else 'ERRO',e))
@@ -178,7 +187,8 @@ class WatergemsDialog(QDialog):
             self.informacao.setPlainText('Não publicado: '+str(e));self._atividade.finalizar('CANCELADO' if self.trabalho.isInterruptionRequested() else 'ERRO',str(e))
     def terminar(self):
         if getattr(self,'_atividade',None) and self._atividade.estado in ('EM_ANDAMENTO','CANCELANDO'):self._atividade.finalizar('CANCELADO','Publicação não aplicada; versões anteriores preservadas')
-        self.ocupado=False
+        self.ocupado=False;self.atualizar_acoes()
+        if self.informacao.toPlainText().startswith('Não publicado:'):self.detalhes_modelo.setChecked(True)
         for w in (self.nome,self.projeto,self.cenario,self.modo,self.unidade,self.crs,self.fator,self.evidencia,self.tolerancia,*self.mapas.values()):w.setEnabled(True)
     def cancelar(self):
         if self.trabalho and not sip.isdeleted(self.trabalho) and self.trabalho.isRunning():self.trabalho.requestInterruption();self.informacao.setPlainText('Cancelamento solicitado; aguarde a etapa atual terminar.')
@@ -223,7 +233,7 @@ class WatergemsDialog(QDialog):
     def invalidar_prova(self,*args):
         if self._carregando:return
         self._prova=None;self._referencia_confirmada=None;self._ref_pendente=False;self.espacial.setChecked(False)
-        self.metodo.setText('Sem validação confirmada para estes valores')
+        self.metodo.setText('Sem validação confirmada para estes valores');self.atualizar_acoes()
         estado=referencias.estado_referencia(self.dados_referencia())
         self.estado_espacial.setText(('INCOMPATÍVEL' if estado['estado']=='INCOMPATIVEL' else 'PENDENTE')+' · '+('; '.join(estado['faltas']) or 'valores do formulário ainda não comprovados')+'. A base e os resultados anteriores permanecem intactos.')
     def mudar_unidade(self):
@@ -265,7 +275,7 @@ class WatergemsDialog(QDialog):
             self.unidade.setCurrentIndex(max(0,self.unidade.findData(r.get('unidade_bruta') or referencias.unidade_fator(r.get('fator',1)))));self._carregando=False;self.invalidar_prova()
             if c['estado']!='VALIDADO':
                 self.estado_espacial.setText('PENDENTE · '+'; '.join(c['faltas'])+'. Os valores são candidatos; confira a prévia e valide novamente.');return
-            self._referencia_confirmada=referencias.referencia_reutilizada(t['modelo'],e,self.resp_evidencia.text());self._ref_pendente=True;self.espacial.setChecked(True)
+            self._referencia_confirmada=referencias.referencia_reutilizada(t['modelo'],e,self.resp_evidencia.text());self._ref_pendente=True;self.espacial.setChecked(True);self.atualizar_acoes()
             self.metodo.setText('Reaproveitamento de conteúdo tecnicamente equivalente')
             self.estado_espacial.setText('VALIDADO · reaproveitamento contextual confirmado. Salve a validação em nova versão antes da integração.')
         except Exception as e:self._carregando=False;QMessageBox.warning(self,'Evidência não recuperada',str(e))
@@ -308,8 +318,7 @@ class WatergemsDialog(QDialog):
                 self.previsualizar()
                 self.estado_espacial.setText('PENDENTE · examine a prévia, informe unidade/fonte e clique novamente em Validar correspondência espacial para confirmar.');return
             ref=referencias.confirmar_prova(self.topologia_atual()['modelo'],self.dados_referencia(),self._prova,self.resp_evidencia.text())
-            if QMessageBox.question(self,'Confirmação técnica explícita','Conferi o CRS e a unidade em fonte independente e examinei os pares/coordenadas da prévia. A prova cadastral e geométrica é complementar e não confirma conectividade. Confirmar a referência registrada?',QMessageBox.Ok|QMessageBox.Cancel,QMessageBox.Cancel)!=QMessageBox.Ok:return
-            self._referencia_confirmada=ref;self._ref_pendente=True;self.espacial.setChecked(True);self.estado_espacial.setText('VALIDADO · vértices e confirmação documental. Salve em nova versão; a base anterior permanece intacta.')
+            self._referencia_confirmada=ref;self._ref_pendente=True;self.espacial.setChecked(True);self.atualizar_acoes();self.estado_espacial.setText('Verificação concluída — pronto para salvar em nova versão. A base anterior permanece intacta.')
             self.metodo.setText('Chaves únicas, todos os vértices e confirmação documental')
         except Exception as e:QMessageBox.warning(self,'Referência permanece pendente',str(e))
     def detalhes_validacao(self):

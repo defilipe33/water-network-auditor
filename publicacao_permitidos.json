@@ -10,6 +10,16 @@
     "documentacao/publica/capturas/interface_guiada/D_cenarios.png": "ee133c042df9f9516c27eecaca256de5783c6db7341390149c333ed53743e7d8",
     "documentacao/publica/capturas/interface_guiada/central_requisitos.png": "cf3b902660dc254b3f0100d285a3c77b4ca7172263e37f63d607f43652b7640e",
     "documentacao/publica/capturas/interface_guiada/investigacao_janela.png": "e529e5881b73d9ebbbb5ced45d6e97c915df16591c38e5bb792a8150f5e819a0",
-    "documentacao/publica/capturas/interface_guiada/contexto_integrado.png": "e4d6df3e52df8b270266fdc3de23e626c16c80c239efb0f9262ac9aed2d5c232"
+    "documentacao/publica/capturas/interface_guiada/contexto_integrado.png": "e4d6df3e52df8b270266fdc3de23e626c16c80c239efb0f9262ac9aed2d5c232",
+    "documentacao/publica/capturas/refinamento_espacial/antes_responsavel.png": "d37a9884e3627725414d3b80c592a345524b4d00dde257a9b6048ae98ab026d2",
+    "documentacao/publica/capturas/refinamento_espacial/antes_aprovacao.png": "2a3a082bfb945b80cbef9869b889961e7a9fc468e87d281201d50dfb49724ec5",
+    "documentacao/publica/capturas/refinamento_espacial/antes_campos.png": "0c40edadbe0162a2a2c8c36989482c94dada40cb5e07ab955a5764b067bf0cfc",
+    "documentacao/publica/capturas/refinamento_espacial/depois_resultado.png": "b87f2442762e684f0d5d4e0abe99d0a2a953815f035b4617590e6b7dd3458eab",
+    "documentacao/publica/capturas/refinamento_espacial/depois_salvar.png": "3871ca9d8f7ff45271f3fdb13865a8a0d3664f2c77300802f695b273fa128bdc",
+    "documentacao/publica/capturas/refinamento_espacial/preparacao_guiada.png": "92c7714531e118706f5bda8e16375b623af6fce7d470956ab6752726ee497c57",
+    "documentacao/publica/capturas/refinamento_espacial/watergems.png": "3d199fdab0932a6de2a73a556e257b76110cf9d4d2a577ed5866127463e7d592",
+    "documentacao/publica/capturas/refinamento_espacial/correspondencias.png": "c736ea44054bf4283306f762c4b19030413852c5b6f5c055c1f3b25de16ccc3c",
+    "documentacao/publica/capturas/refinamento_espacial/pendencia.png": "73ae6a312a912f1456eb4d91e05f622784edff2b47e85d3936df586e7d5e4798",
+    "documentacao/publica/capturas/refinamento_espacial/base_salva.png": "8d80fdb79f1aea502a25f4becd86ad1e1f075a459289ef5c73b335e93172e79f"
   }
 }

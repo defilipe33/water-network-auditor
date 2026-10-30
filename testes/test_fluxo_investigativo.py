@@ -98,10 +98,10 @@ class AssistenteFimTest(unittest.TestCase):
         from test_deteccao_espacial import AssistenteUITest
         self.f=AssistenteUITest();self.f.setUp();self.a=self.f.a
     def tearDown(self):self.f.tearDown()
-    def test_responsavel_ausente_preserva_dados(self):
-        self.a.responsavel.clear();antes=self.a.relatorio
-        with patch('auditoria_aplicacao.assistente_espacial.QMessageBox.warning'):self.a.salvar()
-        self.assertIs(self.a.relatorio,antes);self.assertIn('border',self.a.responsavel.styleSheet())
+    def test_sem_responsavel_preserva_dados_ao_cancelar_destino(self):
+        antes=self.a.relatorio
+        with patch('auditoria_aplicacao.assistente_espacial.QFileDialog.getSaveFileName',return_value=('','')):self.a.salvar()
+        self.assertIs(self.a.relatorio,antes);self.assertIsNone(self.a.resultado)
     def test_versao_publicada_bloqueia_nova_gravacao(self):
         self.a._publicacao='nova.gpkg'
         with patch('auditoria_aplicacao.assistente_espacial.QFileDialog.getSaveFileName') as escolha:self.a.salvar();escolha.assert_not_called()

@@ -136,7 +136,7 @@ def salvar_decisao(base,pacote,caso,modo,situacao='PENDENTE',conclusao='NÃO AVA
     if modo not in MODOS:raise ValueError('Perspectiva não validada')
     if situacao not in SITUACOES or conclusao not in CONCLUSOES or natureza not in NATUREZAS or (fonte and fonte not in FONTES):raise ValueError('Opção de revisão inválida')
     definitiva=conclusao in CONCLUSOES[1:6] or conclusao=='NÃO APLICÁVEL'
-    if definitiva and not all(str(v).strip() for v in (justificativa,responsavel,fonte,evidencia)):raise ValueError('Conclusão definitiva exige justificativa, responsável, fonte e evidência identificada')
+    if definitiva and not all(str(v).strip() for v in (justificativa,fonte,evidencia)):raise ValueError('Conclusão definitiva exige justificativa e fundamento técnico identificado; operador é opcional')
     if definitiva and natureza in ('INDEFINIDO','HIPOTESE'):raise ValueError('Hipótese ou fonte indefinida não comprova conclusão definitiva')
     preparar_base(base,pacote)
     with conectar(base) as con:
@@ -168,7 +168,7 @@ def salvar_proposta(base,pacote,caso,modo,tipo,descricao='',justificativa='',req
     el=pacote['topologia']['modelo']['elementos'];ids=list(elementos)
     if any(not isinstance(i,int) or isinstance(i,bool) for i in ids):raise ValueError('DomainElementID deve ser inteiro explícito, sem arredondamento')
     if any(i not in el for i in ids):raise ValueError('DomainElementID inexistente nesta execução')
-    completa=bool(ids and elementos_confirmados and descricao.strip() and justificativa.strip() and requisitos.strip() and responsavel.strip() and evidencia.strip())
+    completa=bool(ids and elementos_confirmados and descricao.strip() and justificativa.strip() and requisitos.strip())
     if tipo=='Conectar dois nós':completa=completa and len(ids)==2 and all(el[i]['familia']=='NO' for i in ids)
     if tipo=='Corrigir vínculo Start/Stop Node':completa=completa and any(el[i]['familia']=='LINK' for i in ids) and any(el[i]['familia']=='NO' for i in ids)
     if tipo=='Corrigir vínculo de válvula':completa=completa and any(el[i]['familia']=='DISPOSITIVO' and el[i]['tipo'] not in ('StandardPump','VariableSpeedPumpBattery') for i in ids) and any(el[i]['familia']=='LINK' for i in ids)
@@ -179,7 +179,6 @@ def salvar_proposta(base,pacote,caso,modo,tipo,descricao='',justificativa='',req
     if tipo=='Corrigir correspondência cadastral GIS × WaterGEMS':completa=completa and bool(caso['gis_uids'])
     avancada=situacao not in ('RASCUNHO','AGUARDANDO_CONFIRMACAO','REJEITADA')
     if avancada and not completa:raise ValueError('Proposta incompleta: identifique e confirme elementos, descrição, justificativa e requisitos')
-    if situacao in ('APROVADA','APLICACAO_INFORMADA','VALIDADA','VALIDACAO_FALHOU') and (not confirmacao or not responsavel.strip() or not evidencia.strip()):raise ValueError('Ação exige confirmação humana, responsável e evidência identificada')
     preparar_base(base,pacote)
     with conectar(base) as con:
         con.execute('BEGIN IMMEDIATE');ig=_registrar(con,pacote,caso,modo)
@@ -199,10 +198,10 @@ def salvar_proposta(base,pacote,caso,modo,tipo,descricao='',justificativa='',req
             con.execute('INSERT INTO IGD_PROPOSTAS VALUES(?,?,?,?,?)',(prop_uid,ig,caso['uid'],modo,agora()))
         if situacao=='VALIDADA':
             v=con.execute('SELECT hist_uid,dados FROM IGD_VALIDACOES WHERE val_uid=? AND prop_uid=?',(validacao_uid,prop_uid)).fetchone()
-            if not v or v[0]!=esperada or not all(json.loads(v[1]).get(k) for k in ('cenarios_comparaveis','identidades_preservadas')):raise ValueError('Validação exige confronto técnico atual, cenários comparáveis e identidades preservadas, antes da confirmação humana')
+            if not v or v[0]!=esperada or not all(json.loads(v[1]).get(k) for k in ('cenarios_comparaveis','identidades_preservadas')):raise ValueError('Validação exige confronto técnico atual, cenários comparáveis e identidades preservadas antes de registrar VALIDADA')
             resultado=json.loads(v[1])['resultado']
             if resultado=='LIGACAO_DIRETA_NAO_OBSERVADA':raise ValueError('Ligação direta não observada; registre falha ou obtenha nova evidência de modelo')
-            if resultado=='INCONCLUSIVO' and not validacao_manual:raise ValueError('Tipo sem verificador automático: exige declaração explícita de verificação técnica adicional e evidência identificada')
+            if resultado=='INCONCLUSIVO' and (not validacao_manual or not evidencia.strip()):raise ValueError('Resultado inconclusivo: registre a verificação técnica adicional e seu fundamento antes de considerar validado')
         uid=uuid4().hex
         con.execute('INSERT INTO IGD_PROP_HIST VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',(uid,prop_uid,esperada,anterior,situacao,tipo,descricao,justificativa,requisitos,responsavel,agora(),evidencia,int(not completa),int(elementos_confirmados),int(confirmacao),validacao_uid,int(validacao_manual)))
         for k,i in enumerate(ids):con.execute('INSERT INTO IGD_PROP_ELEMENTOS VALUES(?,?,?,?,?,?)',(uid,k,pacote['topologia']['modelo']['projeto'],str(i),str(el[i]['label']),el[i]['tipo']))

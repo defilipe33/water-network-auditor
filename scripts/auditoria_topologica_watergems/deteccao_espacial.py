@@ -17,7 +17,7 @@ from .gerenciamento import registros_gis
 from auditoria_fronteiras.apresentacao import legivel
 from auditoria_fronteiras.entradas import valor_python
 
-REGRAS='referencia-assistida-1'
+REGRAS='referencia-assistida-2-sem-aprovacao-formal'
 
 def metro(crs):
     c=QgsCoordinateReferenceSystem(crs or '')
@@ -113,12 +113,12 @@ def candidatos_campos(d,modelo,cancelar=None,progresso=None):
             bons={v:n for v,n in co.items() if v is not None and str(v).strip()}
             saida.append(dict(origem=f['origem'],camada=f['camada'],campo=k,total=sum(co.values()),preenchidos=sum(bons.values()),nulos=co[None],vazios=sum(n for v,n in co.items() if isinstance(v,str) and not v.strip()),
                 repetidos=sum(n for n in bons.values() if n>1),exatas=sum(n for v,n in bons.items() if wg[v]),unicas=sum(1 for v,n in bons.items() if n==1 and wg[v]==1),
-                multiplas=sum(n for v,n in bons.items() if wg[v] and (n>1 or wg[v]>1)),nao_encontradas=sum(n for v,n in co.items() if not wg[v] or v is None or not str(v).strip())))
+                multiplas=sum(n for v,n in bons.items() if wg[v] and (n>1 or wg[v]>1)),nao_encontradas=sum(n for v,n in co.items() if not wg[v] or v is None or not str(v).strip()),exemplos=[dict(valor=v,quantidade=co[v]) for v in list(co)[:5]]))
         if progresso:progresso(int((n+1)*100/max(1,len(fontes))),'Analisando colunas GIS')
     for f in fontes:
         linhas=[r for r in saida if r['origem']==f['origem']];melhor=max((r['unicas'] for r in linhas),default=0)
         empate=sum(r['unicas']==melhor for r in linhas)>1
-        for r in linhas:r['recomendacao']='RECOMENDADO; confirmar' if melhor and r['unicas']==melhor and not empate else 'EMPATE; escolher explicitamente' if melhor and r['unicas']==melhor else ''
+        for r in linhas:r['recomendacao']='RECOMENDADO; revisar se necessário' if melhor and r['unicas']==melhor and not empate else 'EMPATE; escolher explicitamente' if melhor and r['unicas']==melhor else ''
     return saida
 
 def percentil(v,p):
@@ -172,27 +172,35 @@ def verificar_junction(modelo,controle,fator,contexto=None):
 def avaliar(t,relatorio,metadados,crs_documental=None):
     if relatorio.get('contexto_modelo')!=ref.contexto_modelo(t['modelo']):return dict(estado='INCOMPATIVEL',faltas=['Comparação pertence a outra versão ou composição do modelo'])
     motivos=[];crs=relatorio['crs'];fator=relatorio['fator_recomendado'];hs=[h for h in relatorio['hipoteses'] if h['fator']==fator]
+    if not metro(crs):return dict(estado='INCOMPATIVEL',faltas=['Escolha um CRS projetado em metros; a referência não foi salva'])
+    tolerancia=relatorio.get('tolerancia_m')
+    if not isinstance(tolerancia,(int,float)) or not isfinite(tolerancia) or tolerancia<0:return dict(estado='INCOMPATIVEL',faltas=['Tolerância inválida; execute novamente a comparação'])
     if metadados.get('estado')=='INCOMPATIVEL':return dict(estado='INCOMPATIVEL',faltas=metadados['problemas'])
     declarado=metadados.get('crs') or crs_documental
-    if not declarado:motivos.append('CRS WaterGEMS não comprovado: fornecer evidência documental; ajuste geométrico não prova datum')
+    if not declarado:motivos.append('CRS WaterGEMS não identificado: consulte as propriedades do modelo e informe o CRS observado nas opções avançadas, ou reutilize uma referência compatível. A coincidência geométrica sozinha não determina o datum.')
     elif QgsCoordinateReferenceSystem(declarado)!=QgsCoordinateReferenceSystem(crs):return dict(estado='INCOMPATIVEL',faltas=['CRS WaterGEMS declarado difere do CRS da comparação; não aplicar transformação sem definição confiável'])
-    if not hs:motivos.append('Unidade bruta inconclusiva: nenhuma hipótese vencedora única')
+    if len(hs)!=1:motivos.append('Unidade bruta inconclusiva: nenhuma hipótese vencedora única')
     else:
         h=hs[0];minimo=min(3,relatorio['wg_examinadas'])
+        if not isinstance(fator,(int,float)) or not isfinite(fator) or fator<=0 or h['unidade']!=ref.unidade_fator(fator):return dict(estado='INCOMPATIVEL',faltas=['Unidade e conversão incompatíveis; compare novamente'])
         if not minimo or h['compativeis']<minimo:motivos.append('Correspondências geométricas insuficientes')
-        if h['geometrias_comparadas'] and h['compativeis']/h['geometrias_comparadas']<.95:motivos.append('Menos de 95% dos pares comparáveis concordam; investigar divergências antes da aprovação')
+        if h['geometrias_comparadas'] and h['compativeis']/h['geometrias_comparadas']<.95:motivos.append('Menos de 95% dos pares comparáveis concordam; investigue as divergências antes de salvar')
         if any(c['estado']!='COMPATIVEL' for c in h['junctions']):motivos.append('Controle Junction ausente, alterado ou incompatível')
     return dict(estado='PENDENTE' if motivos else 'APTO_PARA_CONFIRMACAO',faltas=motivos)
 
 def confirmar_assistida(t,relatorio,metadados,aprovacao=False,responsavel='',documento=None):
+    """Contrato técnico; argumentos administrativos antigos são opcionais.
+
+    `aprovacao` permanece aceito para compatibilidade de chamadas, sem efeito.
+    Um nome ou aceite nunca substitui CRS, unidades, contexto e geometria.
+    """
     documento=documento or {};a=avaliar(t,relatorio,metadados,documento.get('crs'))
-    if a['estado']!='APTO_PARA_CONFIRMACAO' or not aprovacao:raise ValueError('; '.join(a['faltas']) or 'Confirmação técnica explícita necessária')
-    if not responsavel.strip():raise ValueError('Informe o responsável pela aprovação')
+    if a['estado']!='APTO_PARA_CONFIRMACAO':raise ValueError('; '.join(a['faltas']))
     h=next(h for h in relatorio['hipoteses'] if h['fator']==relatorio['fator_recomendado'])
-    fonte='Metadados SQLite '+str(metadados.get('sha256','')) if metadados.get('crs') else documento.get('fonte','')
-    if not fonte.strip():raise ValueError('Evidência documental ausente')
+    fonte='Metadados SQLite '+str(metadados.get('sha256','')) if metadados.get('crs') else documento.get('fonte') or 'CRS complementar observado nas propriedades WaterGEMS e informado no assistente'
     r=ref.confirmar_prova(t['modelo'],dict(crs=relatorio['crs'],fator=h['fator'],unidade_bruta=h['unidade'],fonte=fonte),h['prova'],responsavel)
     r['validacao'].update(metodo='ASSISTENTE_METADADOS_E_VERTICES',base_origem=t['meta_base']['uuid'],assinatura_base=t['meta_base']['assinatura'],
         extrator=t['meta_base'].get('extrator'),regras=REGRAS,metadados=metadados,documento=documento,
+        contrato='VERIFICACAO_TECNICA_SEM_APROVACAO_FORMAL',origem_crs='METADADOS_WATERGEMS' if metadados.get('crs') else 'REFERENCIA_ANTERIOR' if documento.get('base_evidencia') else 'CRS_COMPLEMENTAR_INFORMADO',
         estatisticas={k:v for k,v in relatorio.items() if k!='hipoteses'},hipoteses=[{k:v for k,v in hh.items() if k!='prova'} for hh in relatorio['hipoteses']])
     return r

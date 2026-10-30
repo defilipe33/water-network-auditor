@@ -123,3 +123,14 @@ identidade e resolução de rascunhos; não transferem decisões ou RESOLVIDO.
 Cenário base não é união dos filhos. Comparação avançada permanece futura.
 
 [Guia, arquitetura e aceitação](CENTRAL_E_FLUXO_GUIADO.md).
+
+
+## Refinamento espacial — 1.12.1
+
+O assistente usa quatro etapas, pode abrir diretamente nas correspondências e
+reutiliza verificações compatíveis. O contrato técnico não exige aprovação formal
+ou operador. Os campos antigos permanecem legíveis. Metadados, unidade, contexto
+e prova geométrica continuam obrigatórios para referência validada. Origem do CRS
+e regras do contrato são registradas; não se migram destrutivamente as bases.
+
+[Guia e validação](REFINAMENTO_ESPACIAL_1_12_1.md).
