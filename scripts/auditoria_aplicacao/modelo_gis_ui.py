@@ -1,19 +1,21 @@
 """Editor do Modelo GIS na Central de Trabalho."""
 from copy import deepcopy
 from collections import Counter
+from textwrap import fill
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QFormLayout, QGroupBox, QHBoxLayout, QHeaderView,
+    QListWidget, QListWidgetItem, QSizePolicy, QStackedWidget, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHeaderView, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
-from qgis.core import QgsProject
+from qgis.core import QgsProject, QgsVectorLayer, QgsVectorLayerFeatureSource
 
+from .cadastro_gis import OPERADORES, amostra, copiar_mapeamento, filtro_simples, incluir_fontes, sugerir_campos
 from .modelo_gis import (
     CATEGORIAS, CLASSIFICACOES, ESTRATEGIAS, PAPEIS, ROTULOS, VINCULOS_WG, conferir,
     configurar, descrever, estado_fonte, geometria, identificar, preparar_conferencia, relocalizar, revisoes,
-    salvar_modelo, sugerir,
+    salvar_modelo, expressao, origem_camada,
 )
 
 GEOMETRIAS = dict(Line='Linha', Point='Ponto', Polygon='Polígono', Table='Tabela', Raster='Raster')
@@ -21,6 +23,8 @@ GEOMETRIAS = dict(Line='Linha', Point='Ponto', Polygon='Polígono', Table='Tabel
 
 def combo(itens, atual=None):
     campo = QComboBox()
+    campo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+    campo.setMinimumContentsLength(8)
     for chave, rotulo in itens.items():
         campo.addItem(rotulo, chave)
     campo.setCurrentIndex(max(0, campo.findData(atual)))
@@ -56,226 +60,322 @@ def linha(tab, valores, dica=''):
         tab.setItem(n, j, item)
 
 
-class FormularioFonte(QDialog):
-    def __init__(self, pai, camadas, fonte=None, mover=False):
-        super().__init__(pai)
-        self.setWindowTitle('Relocalizar fonte GIS' if mover else 'Configurar fonte GIS')
-        self.fonte, self.mover, self.resultado = fonte, mover, None
-        self.camadas = {c.id(): c for c in camadas if c.isValid() and geometria(c)}
-        self._mapas = {}
-        self._categoria_anterior = None
-        self._camada_anterior = None
-        layout = QVBoxLayout(self)
-        rolagem = QScrollArea()
-        rolagem.setWidgetResizable(True)
-        conteudo = QWidget()
-        area = QVBoxLayout(conteudo)
-        rolagem.setWidget(conteudo)
-        layout.addWidget(rolagem)
-        form = QFormLayout()
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        area.addLayout(form)
-        nomes = {c.id(): f'{c.name()} · {GEOMETRIAS[geometria(c)]} · {c.crs().authid() or "sem CRS"}'
-                 for c in self.camadas.values()}
-        repetidos = {nome for nome, n in Counter(nomes.values()).items() if n > 1}
-        nomes = {uid: nome + (' · ' + uid[-8:] if nome in repetidos else '') for uid, nome in nomes.items()}
-        atual = identificar(fonte, self.camadas.values()) if fonte else None
-        self.camada = combo({'': 'Escolher camada carregada…', **nomes}, atual.id() if atual and not mover else '')
-        self.categoria = QComboBox()
-        self.papel = combo(PAPEIS, fonte['papel'] if fonte else 'EXISTENTE')
-        form.addRow('Camada no QGIS', self.camada)
-        form.addRow('Categoria', self.categoria)
-        form.addRow('Papel da fonte', self.papel)
-        self.sugestao = aviso()
-        form.addRow(self.sugestao)
-        self.filtro = QLineEdit(fonte['filtro'] if fonte else '')
-        self.filtro.setPlaceholderText('Ex.: "TIPO" = \'PRV\'')
-        self.filtro.setToolTip('Expressão de atributos aplicada apenas a esta fonte do Modelo GIS.')
-        form.addRow('Filtro de atributos', self.filtro)
-        self.basicos = QFormLayout()
-        self.basicos.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        area.addLayout(self.basicos)
-        self.alvo = combo({'': 'Sem associação', **{x: x for x in VINCULOS_WG}},
-                          fonte['alvo_wg'] if fonte else '')
-        self.vinculo = QFormLayout()
-        self.vinculo.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        self.vinculo.addRow('Atributo no WaterGEMS', self.alvo)
-        area.addLayout(self.vinculo)
-        area.addWidget(aviso('O identificador cadastral identifica a feição GIS. A associação WaterGEMS será conferida ao usar a ferramenta correspondente.'))
-        self.avancados = QGroupBox('Atributos técnicos e classificação')
-        self.avancados.setCheckable(True)
-        av = QVBoxLayout(self.avancados)
-        self.extra = QWidget()
-        self.atributos = QFormLayout(self.extra)
-        self.atributos.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        av.addWidget(self.extra)
-        self.avancados.toggled.connect(self.extra.setVisible)
-        self.avancados.setChecked(False)
-        area.addWidget(self.avancados)
+
+def botao(layout, texto, acao=None):
+    b = QPushButton(texto)
+    if acao is not None:
+        b.clicked.connect(acao)
+    layout.addWidget(b)
+    return b
+
+
+def expansivel(layout, texto, botao_em=None):
+    b = botao(botao_em if botao_em is not None else layout, texto)
+    b.setCheckable(True)
+    w = QWidget()
+    layout.addWidget(w)
+    w.hide()
+    b.toggled.connect(w.setVisible)
+    corpo = QVBoxLayout(w)
+    corpo.setContentsMargins(10, 2, 2, 4)
+    return b, corpo
+
+
+def formulario(layout):
+    form = QFormLayout()
+    form.setRowWrapPolicy(QFormLayout.WrapLongRows)
+    form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+    layout.addLayout(form)
+    return form
+
+
+def lista_compacta():
+    lista = QListWidget()
+    lista.setWordWrap(True)
+    lista.setTextElideMode(Qt.ElideNone)
+    lista.setMinimumHeight(95)
+    lista.setMaximumHeight(120)
+    return lista
+
+
+class EditorFonte(QWidget):
+    def __init__(self, painel, fonte, camada):
+        super().__init__()
+        self.painel, self.fonte = painel, fonte
+        self.meta = descrever(camada)
+        self.mapa = {}
+        area = QVBoxLayout(self)
+        area.addWidget(aviso(CATEGORIAS[fonte['categoria']].nome + ' · ' + fonte['nome']))
+        essenciais = formulario(area)
+        itens = {'': 'Não mapeado', **{f: f for f in self.meta['campos']}}
+        _, ambiguos = sugerir_campos(self.meta['campos'], fonte['categoria'])
+        for k in ('id', 'label', 'wg'):
+            self.campo(essenciais, k, itens, ambiguos)
+        self.alvo = combo({'': 'Sem associação', **{x: x for x in VINCULOS_WG}}, fonte['alvo_wg'])
+        essenciais.addRow('Atributo no WaterGEMS', self.alvo)
+        _, extra = expansivel(area, 'Propriedades adicionais')
+        avancados = formulario(extra)
+        for k in CATEGORIAS[fonte['categoria']].campos:
+            self.campo(avancados, k, itens, ambiguos)
+        self.papel = combo(PAPEIS, fonte['papel'])
+        self.classe = combo(CLASSIFICACOES, fonte['classificacao'])
+        avancados.addRow('Papel da fonte', self.papel)
+        if fonte['categoria'] == 'PIPE':
+            avancados.addRow('Classificação', self.classe)
+        self.estado_filtro = aviso()
+        area.addWidget(self.estado_filtro)
+        self.abrir_simples, simples = expansivel(area, 'Montar filtro simples')
+        form = formulario(simples)
+        self.coluna = combo(itens)
+        self.operador = combo(OPERADORES)
+        self.valor = QLineEdit()
+        self.operador.currentIndexChanged.connect(
+            lambda: self.valor.setEnabled(not self.operador.currentData().startswith('IS ')))
+        form.addRow('Campo', self.coluna)
+        form.addRow('Operador', self.operador)
+        form.addRow('Valor', self.valor)
+        self.usar_filtro_b = botao(simples, 'Usar este filtro', self.usar_filtro)
+        _, avancado = expansivel(area, 'Expressão avançada')
+        self.filtro = QLineEdit(fonte['filtro'])
+        formulario(avancado).addRow('Expressão', self.filtro)
+        botao(avancado, 'Limpar filtro', self.filtro.clear)
+        self.amostra = tabela([])
+        self.amostra.setMaximumHeight(145)
+        area.addWidget(self.amostra)
+        self.mensagem = aviso()
+        area.addWidget(self.mensagem)
+        self.filtro.textChanged.connect(self.atualizar_filtro)
+        self._regra_aplicada = self.regra()
+        self.atualizar_filtro()
+        botao(area, 'Ver amostra dos valores', self.prever).setEnabled(isinstance(camada, QgsVectorLayer))
         area.addStretch()
-        self.feedback = aviso()
-        layout.addWidget(self.feedback)
-        botoes = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        botoes.button(QDialogButtonBox.Ok).setText('Aplicar à configuração')
-        botoes.accepted.connect(self.aplicar)
-        botoes.rejected.connect(self.reject)
-        layout.addWidget(botoes)
-        self.camada.currentIndexChanged.connect(self.trocar_camada)
-        self.categoria.currentIndexChanged.connect(self.trocar_categoria)
-        if fonte and not mover:
-            self.camada.setEnabled(False)
-            if not atual:
-                self.feedback.setText('A camada de origem precisa estar carregada para editar. Use Relocalizar fonte.')
-        if mover:
-            for campo in (self.papel, self.filtro, self.alvo, self.avancados):
-                campo.setEnabled(False)
-        self.trocar_camada()
-        tela = pai.screen().availableGeometry()
-        self.resize(min(620, tela.width() - 40), min(590, tela.height() - 60))
 
-    def trocar_camada(self):
-        camada = self.camadas.get(self.camada.currentData())
-        inicial = self._camada_anterior is None
-        estado = self.fonte if inicial or self.mover else None
-        self._camada_anterior = self.camada.currentData()
-        self._categoria_anterior = None
-        self.categoria.blockSignals(True)
-        self.categoria.clear()
-        self.categoria.addItem('Escolher categoria…', '')
-        sugestoes = []
-        if camada:
-            sugestoes, _ = sugerir(camada)
-            for k, cat in CATEGORIAS.items():
-                if geometria(camada) in cat.geometrias:
-                    self.categoria.addItem(cat.grupo + ' / ' + cat.nome, k)
-        if estado:
-            self.categoria.setCurrentIndex(max(0, self.categoria.findData(estado['categoria'])))
-        self.categoria.blockSignals(False)
-        self.categoria.setEnabled(not self.mover)
-        self.sugestao.setText('Sugestão: ' + ', '.join(CATEGORIAS[k].nome for k in sugestoes) if sugestoes else '')
-        self.trocar_categoria()
+    def campo(self, form, k, itens, ambiguos):
+        rotulo = ROTULOS.get(k, k.replace('_', ' ').capitalize())
+        atual = self.fonte['campos_mapeados'].get(k)
+        opcoes = itens if not atual or atual in itens else {**itens, atual: atual + ' (ausente)'}
+        self.mapa[k] = combo(opcoes, atual)
+        form.addRow(rotulo, self.mapa[k])
+        if k in ambiguos and not atual:
+            form.addRow(aviso('Opções para ' + rotulo.lower() + ': ' + ', '.join(ambiguos[k])))
 
-    def trocar_categoria(self):
-        camada = self.camadas.get(self.camada.currentData())
-        categoria = self.categoria.currentData()
-        existente = self.fonte if self.fonte and self.fonte['categoria'] == categoria else None
-        anterior = {k: c.currentData() for k, c in self._mapas.items()} if self._categoria_anterior else {}
-        for form in (self.basicos, self.atributos):
-            while form.rowCount():
-                form.removeRow(0)
-        self._mapas = {}
-        self._categoria_anterior = categoria
-        if not camada or not categoria:
-            return
-        nomes = getattr(camada, 'fields', lambda: [])()
-        itens = {'': 'Não mapeado', **{f.name(): f.name() for f in nomes}}
-        _, sugestoes = sugerir(camada)
-        mapa = existente['campos_mapeados'] if existente else (anterior or sugestoes)
-        for k in ('id', 'label', 'wg', *CATEGORIAS[categoria].campos):
-            atual = mapa.get(k)
-            opcoes = itens if not atual or atual in itens else {**itens, atual: atual + ' (ausente)'}
-            self._mapas[k] = combo(opcoes, atual)
-            self._mapas[k].setEnabled(not self.mover)
-            form = self.basicos if k in ('id', 'label', 'wg') else self.atributos
-            form.addRow(ROTULOS.get(k, k.replace('_', ' ').capitalize()), self._mapas[k])
-        self.classificacao = combo(CLASSIFICACOES, existente['classificacao'] if existente else '')
-        if categoria == 'PIPE':
-            self.atributos.addRow('Classificação da tubulação', self.classificacao)
-        else:
-            self.classificacao.setParent(self)
-            self.classificacao.hide()
+    def atualizar_filtro(self):
+        self.estado_filtro.setText('Filtro: ' + (self.filtro.text().strip() or 'todas as feições'))
+        self.amostra.hide()
 
-    def aplicar(self):
-        camada = self.camadas.get(self.camada.currentData())
-        categoria = self.categoria.currentData()
-        if not camada or not categoria:
-            self.feedback.setText('Escolha a camada e a categoria.')
+    def usar_filtro(self):
+        try:
+            campo, operador, valor = self.regra()
+            self.filtro.setText(filtro_simples(campo, self.meta['campos'].get(campo, ''),
+                                              operador, valor))
+            self._regra_aplicada = self.regra()
+            self.mensagem.setText('Filtro definido. Use a amostra ou aplique à fonte.')
+        except ValueError as e:
+            self.mensagem.setText(str(e))
+
+    def camada(self):
+        camada = identificar(self.fonte, self.painel.camadas())
+        if camada is None:
+            raise ValueError('Carregue a fonte no QGIS ou relocalize antes de editar.')
+        return camada
+
+    def valores(self):
+        return ({k: c.currentData() for k, c in self.mapa.items() if c.currentData()},
+                self.filtro.text().strip(), self.alvo.currentData(),
+                self.papel.currentData(), self.classe.currentData())
+
+    def regra(self):
+        return self.coluna.currentData(), self.operador.currentData(), self.valor.text()
+
+    def regra_pendente(self):
+        return bool(self.coluna.currentData()) and self.regra() != self._regra_aplicada
+
+    def pendente(self):
+        f = self.fonte
+        return self.regra_pendente() or self.valores() != (
+            f['campos_mapeados'], f['filtro'], f['alvo_wg'], f['papel'], f['classificacao'])
+
+    def configurar(self):
+        if self.regra_pendente():
+            campo, operador, valor = self.regra()
+            self.filtro.setText(filtro_simples(campo, self.meta['campos'][campo], operador, valor))
+            self._regra_aplicada = self.regra()
+        mapa, filtro, alvo, papel, classe = self.valores()
+        nova = configurar(descrever(self.camada()), self.fonte['categoria'], papel,
+                          classe, mapa, filtro, alvo, self.fonte)
+        if 'relocalizacao' in self.fonte:
+            nova['relocalizacao'] = self.fonte['relocalizacao']
+        return nova
+
+    def prever(self):
+        if self.painel.central.ocupado():
             return
         try:
-            meta = descrever(camada)
-            if self.mover:
-                prova = relocalizar(self.fonte, meta)
-                self.resultado = {**self.fonte, **meta, 'relocalizacao': prova}
-                if prova == 'COMPATIVEL_IDENTIDADE_PENDENTE':
-                    self.resultado['origem_estavel'] = meta['origem']
-            else:
-                mapa = {k: c.currentData() for k, c in self._mapas.items()}
-                self.resultado = configurar(meta, categoria, self.papel.currentData(),
-                                            self.classificacao.currentData(), mapa, self.filtro.text(),
-                                            self.alvo.currentData(), self.fonte)
-                if self.fonte and self.fonte.get('relocalizacao'):
-                    self.resultado['relocalizacao'] = self.fonte['relocalizacao']
-        except ValueError as e:
-            self.feedback.setText(str(e))
-            return
-        self.accept()
+            mapa, texto, *_ = self.valores()
+            campos = list(dict.fromkeys(mapa.values()))
+            fonte = QgsVectorLayerFeatureSource(self.camada())
+            disponiveis = fonte.fields().names()
+            if not set(campos) <= set(disponiveis):
+                raise ValueError('Revise os campos ausentes antes de gerar a amostra.')
+            expr = expressao(texto, disponiveis)
+            if expr is not None and not campos:
+                campos = sorted(expr.referencedColumns())
+            self.mensagem.setText('Lendo uma amostra de até 250 feições.')
+            self.painel.central.app.atividades.executar_thread(
+                'Amostra de atributos', self.fonte['nome'],
+                lambda cancelar, _: amostra(fonte, campos, texto, cancelar),
+                lambda resultado: self.mostrar_amostra(campos, resultado),
+                self.mensagem.setText)
+        except (ValueError, RuntimeError) as e:
+            self.mensagem.setText(str(e))
+
+    def mostrar_amostra(self, campos, resultado):
+        linhas, n, completa = resultado
+        self.mensagem.setText(f'{n} feição(ões) correspondem ao filtro.' if completa else
+                              f'{n} correspondência(s) nas primeiras 250 feições. Total não calculado.')
+        self.amostra.setRowCount(0)
+        self.amostra.setColumnCount(max(1, len(campos)))
+        self.amostra.setHorizontalHeaderLabels(campos or ['Feições correspondentes'])
+        for i, valores in enumerate(linhas, 1):
+            linha(self.amostra, ['Nulo' if v is None else v for v in valores] or [i])
+        self.amostra.setVisible(bool(linhas))
+
+GRUPOS = {
+    'Redes': 'Redes',
+    'Válvulas e equipamentos': 'Válvulas e equipamentos',
+    'Reservatórios e bombas': 'Reservatórios e bombeamento',
+    'Zonas e setores': 'Zonas e setores',
+    'Nós': 'Junctions e conectividade',
+    'Intervenções': 'Intervenções e apoio',
+    'Camadas auxiliares': 'Intervenções e apoio',
+}
 
 
 class PainelModeloGIS(QWidget):
     def __init__(self, central):
         super().__init__(central)
-        self.central = central
-        self.projetos = central.projetos
-        self.projeto_uid = None
-        self.anterior = None
-        self.fontes = []
-        self.resultados = {}
-        self._carregando = False
-        self._referencia = ([], 'INFERIR')
+        self.central, self.projetos = central, central.projetos
         self.camadas = lambda: QgsProject.instance().mapLayers().values()
+        self.fontes, self.resultados, self.pares, self.alertas_lote = [], {}, {}, {}
+        self._referencia = ([], 'INFERIR')
+        self.categoria = self.editor = self.tarefa = self.selecionada = None
+        self._estado = {}
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
         self.contexto = aviso()
         layout.addWidget(self.contexto)
-        self.estrategia = combo(ESTRATEGIAS, 'INFERIR')
-        self.estrategia.setToolTip('A estratégia será usada quando a construção de topologia GIS estiver disponível.')
-        form = QFormLayout()
-        form.setRowWrapPolicy(QFormLayout.WrapLongRows)
-        form.addRow('Como obter os nós da rede?', self.estrategia)
-        layout.addLayout(form)
-        self.tabela = tabela(['Categoria', 'Camada', 'Filtro', 'Estado', 'Geometria / CRS', 'Identificador'])
-        for i, largura in enumerate((114, 129, 123, 103, 122)):
-            self.tabela.setColumnWidth(i, largura)
-        layout.addWidget(self.tabela, 1)
-        self.botoes = []
-        for linha_acoes in (
-            [('Adicionar fonte…', self.adicionar), ('Editar…', self.editar), ('Relocalizar…', self.mover),
-             ('Remover do rascunho', self.remover)],
-            [('Conferir fontes', self.conferir), ('Consultar alterações', self.historico),
-             ('Salvar Modelo GIS', self.salvar)],
-        ):
+        self.rolagem = QScrollArea()
+        self.rolagem.setWidgetResizable(True)
+        layout.addWidget(self.rolagem, 1)
+        self.paginas = QStackedWidget()
+        self.paginas.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
+        self.rolagem.setWidget(self.paginas)
+        self.inicio, area = self.pagina()
+        pergunta = aviso('O que você quer cadastrar?')
+        pergunta.setStyleSheet('font-weight: bold')
+        area.addWidget(pergunta)
+        self.grupos, self.categorias, self.contagens = {}, {}, {}
+        for grupo in dict.fromkeys(GRUPOS.values()):
+            chaves = [k for k, cat in CATEGORIAS.items() if GRUPOS[cat.grupo] == grupo]
             faixa = QHBoxLayout()
-            layout.addLayout(faixa)
-            for texto, acao in linha_acoes:
-                b = QPushButton(texto)
-                b.clicked.connect(acao)
-                faixa.addWidget(b)
-                self.botoes.append(b)
-        self.botoes[-1].setStyleSheet('font-weight: bold')
+            faixa.setSpacing(4)
+            area.addLayout(faixa)
+            if len(chaves) == 1:
+                chave = chaves[0]
+                b = botao(faixa, grupo, lambda _, k=chave: self.abrir_categoria(k))
+                self.categorias[chave] = b
+            else:
+                b, sub = expansivel(area, grupo, faixa)
+                for k in chaves:
+                    self.categorias[k] = botao(sub, CATEGORIAS[k].nome,
+                                              lambda _, c=k: self.abrir_categoria(c))
+            self.grupos[grupo] = b, chaves
+            b.setStyleSheet('font-weight: bold; text-align: left; padding: 3px')
+            r = self.contagens[grupo] = aviso()
+            faixa.addWidget(r, 1)
+        botao(area, 'Consultar alterações', self.historico)
+        area.addStretch()
+        self.detalhe, area = self.pagina()
+        botao(area, '‹ Categorias', self.abrir_inicio)
+        self.titulo = aviso()
+        self.titulo.setStyleSheet('font-weight: bold')
+        area.addWidget(self.titulo)
+        self.nos = QWidget()
+        area.addWidget(self.nos)
+        no_layout = QVBoxLayout(self.nos)
+        no_layout.setContentsMargins(0, 0, 0, 0)
+        no_layout.addWidget(aviso('Como serão obtidos os nós da rede?'))
+        self.estrategia = combo(ESTRATEGIAS, 'INFERIR')
+        no_layout.addWidget(self.estrategia)
+        no_layout.addWidget(aviso('A estratégia será usada na Etapa 2, durante a construção da topologia GIS.'))
+        self.adicionar_b = botao(area, 'Adicionar camadas…', self.adicionar)
+        self.lista = lista_compacta()
+        area.addWidget(self.lista)
+        self.info_fonte = aviso()
+        area.addWidget(self.info_fonte)
+        self.editar_b = botao(area, 'Configurar campos e filtro…', self.editar)
+        self.copiar_b = botao(area, 'Aplicar mapeamento a outras camadas…', self.escolher_lote)
+        self.conferir_b = botao(area, 'Conferir fontes', self.conferir)
+        self.alertas = QVBoxLayout()
+        area.addLayout(self.alertas)
+        self.mais_acoes, layout_extra = expansivel(area, 'Mais ações da fonte')
+        self.mover_b = botao(layout_extra, 'Relocalizar fonte…', self.mover)
+        self.remover_b = botao(layout_extra, 'Remover associação', self.remover)
+        area.addStretch()
+        self.lista.currentItemChanged.connect(self.atualizar_fonte)
+        self.lista.itemDoubleClicked.connect(lambda _: self.editar())
+        self.estrategia.currentIndexChanged.connect(self.atualizar)
         self.feedback = aviso()
         layout.addWidget(self.feedback)
-        self.estrategia.currentIndexChanged.connect(self.atualizar)
-        self.tabela.itemSelectionChanged.connect(self.acoes)
-        self.tabela.itemDoubleClicked.connect(lambda _: self.editar())
+        self.salvar_b = botao(layout, 'Salvar Modelo GIS', self.salvar)
+        self.salvar_b.setStyleSheet('font-weight: bold')
+        self.rodape_tarefa = QWidget()
+        faixa = QHBoxLayout(self.rodape_tarefa)
+        faixa.setContentsMargins(0, 0, 0, 0)
+        self.cancelar_b = botao(faixa, 'Voltar', self.cancelar_tarefa)
+        self.confirmar_b = botao(faixa, 'Aplicar', self.confirmar_tarefa)
+        self.acao_tarefa = None
+        layout.addWidget(self.rodape_tarefa)
+        self.rodape_tarefa.hide()
         self.recarregar()
+        QgsProject.instance().layersAdded.connect(self.ao_mudar_camadas)
+        QgsProject.instance().layersRemoved.connect(self.ao_mudar_camadas)
+
+    def ao_mudar_camadas(self, _):
+        self.limpar_conferencia()
+        self.atualizar()
+
+    def pagina(self):
+        w = QWidget()
+        self.paginas.addWidget(w)
+        area = QVBoxLayout(w)
+        area.setContentsMargins(4, 4, 4, 4)
+        return w, area
+
+    def mostrar(self, pagina):
+        self.paginas.setCurrentWidget(pagina)
+        self.rolagem.verticalScrollBar().setValue(0)
 
     def recarregar(self):
+        self.cancelar_tarefa()
         projeto = self.projetos.atual() or {}
         hist = revisoes(projeto)
         atual = hist[-1] if hist else {}
-        self.projeto_uid = projeto.get('uuid')
-        self.anterior = atual.get('uuid')
-        self._carregando = True
+        self.projeto_uid, self.anterior = projeto.get('uuid'), atual.get('uuid')
         self.fontes = deepcopy(atual.get('fontes', []))
         estrategia = atual.get('estrategia', 'INFERIR')
-        self._referencia = (deepcopy(self.fontes), estrategia)
+        self._referencia = deepcopy(self.fontes), estrategia
+        self.estrategia.blockSignals(True)
         self.estrategia.setCurrentIndex(self.estrategia.findData(estrategia))
-        self.resultados = {}
-        self._carregando = False
+        self.estrategia.blockSignals(False)
+        self.resultados, self.pares, self.alertas_lote = {}, {}, {}
         self.feedback.clear()
-        self.atualizar()
+        self.abrir_inicio()
 
     def pendente(self):
-        return bool(self.projeto_uid) and (self.fontes, self.estrategia.currentData()) != self._referencia
+        return bool(self.projeto_uid) and (
+            (self.fontes, self.estrategia.currentData()) != self._referencia or
+            bool(self.editor and self.editor.pendente()))
 
     def resolver(self):
         if not self.pendente():
@@ -290,128 +390,398 @@ class PainelModeloGIS(QWidget):
             return True
         return False
 
-    def acoes(self):
-        tem = self.projeto_uid is not None
-        selecao = self.tabela.currentRow() >= 0
-        self.estrategia.setEnabled(tem)
-        estados = [tem, tem and selecao, tem and selecao, tem and selecao,
-                   tem and bool(self.fontes), bool(self.anterior), tem and (self.pendente() or not self.anterior)]
-        for b, estado in zip(self.botoes, estados):
-            b.setEnabled(estado)
+    def abrir_inicio(self):
+        if self.tarefa is None:
+            self.categoria = None
+            self.mostrar(self.inicio)
+            self.atualizar()
+
+    def abrir_categoria(self, categoria):
+        if self.projeto_uid and not self.central.ocupado() and self.tarefa is None:
+            self.categoria, self.selecionada = categoria, None
+            self.feedback.clear()
+            self.mostrar(self.detalhe)
+            self.atualizar()
+
+    def mostrar_tarefa(self, widget, texto, acao, pode_confirmar=True):
+        self.tarefa = widget
+        self.acao_tarefa = acao
+        self.confirmar_b.setText(texto)
+        self.confirmar_b.setEnabled(pode_confirmar)
+        self.cancelar_b.setText('Cancelar edição' if self.editor else 'Voltar')
+        self.rodape_tarefa.show()
+        self.salvar_b.setVisible(bool(self.editor))
+        self.feedback.clear()
+        self.paginas.addWidget(widget)
+        self.mostrar(widget)
+        self.atualizar()
+
+    def confirmar_tarefa(self):
+        if self.acao_tarefa is not None and not self.central.ocupado():
+            self.acao_tarefa()
+
+    def cancelar_tarefa(self):
+        if self.tarefa is not None and not self.central.ocupado():
+            self.paginas.removeWidget(self.tarefa)
+            self.tarefa.deleteLater()
+            self.editor = self.tarefa = None
+            self.acao_tarefa = None
+            self.rodape_tarefa.hide()
+            self.salvar_b.show()
+            self.mostrar(self.detalhe if self.categoria else self.inicio)
+            self.atualizar()
+
+    def fontes_categoria(self):
+        return [f for f in self.fontes if f['categoria'] == self.categoria]
+
+    def fonte_selecionada(self):
+        return next((f for f in self.fontes_categoria() if f['uid'] == self.selecionada), None)
+
+    def pendencias_fonte(self, fonte):
+        uid = fonte['uid']
+        estado = self._estado.get(uid, 'Disponível')
+        msgs = [estado] if estado != 'Disponível' else []
+        mapa = fonte['campos_mapeados']
+        if fonte['campos'] and not mapa.get('id'):
+            msgs.append('Identificador por mapear')
+        _, ambiguos = sugerir_campos(fonte['campos'], fonte['categoria'])
+        if any(k not in mapa for k in ambiguos):
+            msgs.append('Campos com várias opções')
+        r = self.resultados.get(uid, {})
+        if r.get('erro'):
+            msgs.append(r['erro'])
+        if r.get('ausentes') or r.get('repetidos'):
+            msgs.append(f"IDs: {r['ausentes']} vazios, {r['repetidos']} repetidos")
+        if r.get('total') == 0 and fonte['filtro'] and not r.get('erro'):
+            msgs.append('Filtro sem resultados')
+        if any(uid in par for par in self.pares):
+            msgs.append('Filtro sobreposto a outra fonte')
+        return msgs + list(self.alertas_lote.get(uid, ()))
+
+    def resumo(self):
+        return len({f['categoria'] for f in self.fontes}), len(self.fontes), sum(
+            bool(self.pendencias_fonte(f)) for f in self.fontes)
 
     def atualizar(self):
-        if self._carregando:
-            return
         projeto = self.projetos.atual() or {}
         hist = revisoes(projeto)
         nome = projeto.get('nome')
-        info = 'Crie ou selecione um projeto para cadastrar suas fontes GIS.'
-        if nome:
-            estado = 'Rascunho com alterações' if self.pendente() else (
-                'Revisão ' + str(hist[-1]['versao']) if hist else 'Cadastro inicial')
-            info = f'{nome} · {estado} · {len(self.fontes)} fonte(s)\nCadastro de fontes · Topologia GIS ainda não construída.'
-            if not any(f['categoria'] == 'JUNCTION' for f in self.fontes):
-                if self.estrategia.currentData() == 'CADASTRADAS':
-                    info += '\nA estratégia de nós cadastrados ainda precisa de uma fonte.'
-                else:
-                    info += '\nSem camada de Junctions · inferência registrada como estratégia futura.'
-        self.contexto.setText(info)
-        selecionada = self.tabela.currentRow()
-        self.tabela.setRowCount(0)
+        estado = 'Rascunho' if self.pendente() else f'Revisão {hist[-1]["versao"]}' if hist else 'Cadastro inicial'
+        self.contexto.setText(f'{nome} · {estado}' if nome else 'Crie ou selecione um projeto para cadastrar as fontes.')
+        self.salvar_b.setEnabled(bool(nome) and (self.editor is not None or self.tarefa is None
+                                                 and (self.pendente() or not self.anterior)))
+        if self.tarefa is not None:
+            return
         camadas = list(self.camadas())
-        for fonte in self.fontes:
-            camada = identificar(fonte, camadas)
-            estado = estado_fonte(fonte, camada)
-            verificacao = self.resultados.get(fonte['uid'], {})
-            if estado == 'Disponível' and verificacao.get('total') is not None:
-                estado += f' · {verificacao["total"]} feição(ões)'
-                if verificacao['ausentes'] or verificacao['repetidos']:
-                    estado += f' · ID: {verificacao["ausentes"]} vazios, {verificacao["repetidos"]} repetidos'
-            chave = fonte['campos_mapeados'].get('id', 'Não mapeado')
-            linha(self.tabela, (CATEGORIAS[fonte['categoria']].nome, fonte['nome'], fonte['filtro'] or 'Todas', estado,
-                                GEOMETRIAS[fonte['geometria']] + ' / ' + (fonte['crs'] or 'personalizado'),
-                                chave))
-        if self.fontes and selecionada >= 0:
-            self.tabela.selectRow(min(selecionada, len(self.fontes) - 1))
-        self.acoes()
+        self._estado = {f['uid']: estado_fonte(f, identificar(f, camadas)) for f in self.fontes}
+        contagem = Counter(f['categoria'] for f in self.fontes)
+        pendencias = Counter(f['categoria'] for f in self.fontes if self.pendencias_fonte(f))
+        for k, b in self.categorias.items():
+            nome_cat = CATEGORIAS[k].nome if k != 'JUNCTION' else 'Junctions e conectividade'
+            if k in ('PIPE', 'JUNCTION'):
+                b.setText(nome_cat)
+                texto = f'{contagem[k]} fonte(s)' if contagem[k] else 'Sem fontes'
+                if pendencias[k]:
+                    texto += f' · {pendencias[k]} a revisar'
+                r = self.contagens[GRUPOS[CATEGORIAS[k].grupo]]
+                if k == 'JUNCTION':
+                    if self.estrategia.currentData() != 'CADASTRADAS':
+                        texto += ' · inferência prevista'
+                    r.setToolTip(self.estrategia.currentText())
+                r.setText(texto)
+            else:
+                texto = f'{contagem[k]} fonte(s)' if contagem[k] else 'sem fontes'
+                b.setText(f'{nome_cat} · {texto}' + (f' · {pendencias[k]} a revisar' if pendencias[k] else ''))
+            b.setEnabled(bool(nome))
+        for grupo, (b, chaves) in self.grupos.items():
+            if len(chaves) > 1:
+                n = sum(bool(contagem[c]) for c in chaves)
+                p = sum(pendencias[c] for c in chaves)
+                self.contagens[grupo].setText((f'{n} categoria(s)' if n else 'Sem fontes') +
+                                             (f' · {p} a revisar' if p else ''))
+        if self.categoria is not None:
+            self.atualizar_categoria()
+
+    def atualizar_categoria(self):
+        fontes = self.fontes_categoria()
+        titulo = CATEGORIAS[self.categoria].nome if self.categoria != 'JUNCTION' else 'Junctions e conectividade'
+        self.titulo.setText(f'{titulo}\n{len(fontes)} fonte(s) cadastrada(s)')
+        self.nos.setVisible(self.categoria == 'JUNCTION')
+        self.lista.blockSignals(True)
+        self.lista.clear()
+        for f in fontes:
+            uid = f['uid']
+            msgs = self.pendencias_fonte(f)
+            item = QListWidgetItem(f['nome'] + ('\n' + ' · '.join(msgs) if msgs else ''))
+            item.setData(Qt.UserRole, uid)
+            item.setToolTip(f['nome'] + '\n' + self._estado[uid])
+            self.lista.addItem(item)
+            if uid == self.selecionada:
+                self.lista.setCurrentItem(item)
+        if self.lista.currentItem() is None and fontes:
+            self.lista.setCurrentRow(0)
+        self.lista.blockSignals(False)
+        self.atualizar_fonte(self.lista.currentItem())
+        self.lista.setVisible(bool(fontes))
+        self.conferir_b.setEnabled(bool(fontes))
+        self.desenhar_alertas(fontes)
+
+    def atualizar_fonte(self, item, _=None):
+        self.selecionada = item.data(Qt.UserRole) if item else None
+        fonte = self.fonte_selecionada()
+        for b in (self.editar_b, self.mover_b, self.remover_b, self.copiar_b):
+            b.setVisible(bool(fonte))
+        self.mais_acoes.setVisible(bool(fonte))
+        if not fonte:
+            self.mais_acoes.setChecked(False)
+        if not fonte:
+            self.info_fonte.setText('Adicione as camadas usadas nesta categoria.')
+            return
+        mapa = fonte['campos_mapeados']
+        itens = [f"{GEOMETRIAS[fonte['geometria']]} · {fonte['crs'] or 'CRS personalizado'}",
+                 f"Identificador: {mapa.get('id', 'por mapear')} · Label: {mapa.get('label', '—')}",
+                 'Filtro: ' + (fonte['filtro'] or 'todas as feições')]
+        r = self.resultados.get(fonte['uid'], {})
+        if r.get('total') is not None and not r.get('erro'):
+            itens.append(f"{r['total']} feição(ões) na conferência")
+        self.info_fonte.setText('\n'.join(itens))
+        self.editar_b.setEnabled(identificar(fonte, self.camadas()) is not None)
+        self.copiar_b.setEnabled(bool(mapa) and len(self.fontes_categoria()) > 1)
+
+    def escolhas(self, titulo, opcoes, acao, executar, incompativeis=()):
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.addWidget(aviso(titulo))
+        lista = lista_compacta()
+        layout.addWidget(lista)
+        for chave, rotulo, motivo in opcoes:
+            item = QListWidgetItem(rotulo + ('\n' + motivo if motivo else ''))
+            item.setData(Qt.UserRole, chave)
+            item.setFlags(Qt.ItemIsEnabled)
+            if not motivo:
+                item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+            lista.addItem(item)
+        if not opcoes:
+            layout.addWidget(aviso('Carregue camadas compatíveis no projeto QGIS.'))
+        if incompativeis:
+            _, sub = expansivel(layout, 'Consultar camadas incompatíveis')
+            sub.addWidget(aviso('\n'.join(incompativeis)))
+
+        def selecionadas():
+            return [lista.item(i).data(Qt.UserRole) for i in range(lista.count())
+                    if lista.item(i).checkState() == Qt.Checked]
+
+        lista.itemChanged.connect(lambda _: self.confirmar_b.setEnabled(bool(selecionadas())))
+        layout.addStretch()
+        self.mostrar_tarefa(w, acao, lambda: executar(selecionadas()), False)
+        return lista
 
     def adicionar(self):
-        self.formulario()
+        if self.categoria is None or self.central.ocupado():
+            return
+        cat = CATEGORIAS[self.categoria]
+        cadastradas = {f['origem'] for f in self.fontes_categoria()}
+        opcoes, incompativeis = [], []
+        camadas = sorted(self.camadas(), key=lambda c: (c.name().casefold(), c.id()))
+        nomes = Counter(c.name() for c in camadas)
+        for c in camadas:
+            tipo = geometria(c)
+            if not c.isValid() or tipo not in cat.geometrias:
+                incompativeis.append(c.name() + ' · ' + GEOMETRIAS.get(tipo, 'tipo não suportado'))
+                continue
+            nome = c.name() + (' · ' + c.id()[-8:] if nomes[c.name()] > 1 else '')
+            r = f"{nome} · {c.crs().authid() or GEOMETRIAS[tipo]}"
+            motivo = 'Já cadastrada nesta categoria' if origem_camada(c) in cadastradas else ''
+            opcoes.append((c.id(), r, motivo))
+        return self.escolhas('Adicionar camadas · ' + cat.nome, opcoes,
+                             'Adicionar selecionadas', self.adicionar_selecionadas, incompativeis)
+
+    def adicionar_selecionadas(self, ids):
+        ids = set(ids)
+        novas, avisos, detalhes = incluir_fontes(
+            self.fontes, self.categoria, [c for c in self.camadas() if c.id() in ids])
+        self.fontes.extend(novas)
+        if novas:
+            self.selecionada = novas[0]['uid']
+            self.limpar_conferencia()
+        m = f'{len(novas)} fonte(s) adicionada(s).'
+        if any(detalhes.values()):
+            m += ' Revise os campos com mais de uma opção.'
+        self.cancelar_tarefa()
+        self.atualizar()
+        self.feedback.setText('\n'.join([m, *avisos]))
 
     def editar(self):
-        self.formulario(self.tabela.currentRow())
+        fonte = self.fonte_selecionada()
+        if not fonte or self.central.ocupado():
+            return
+        camada = identificar(fonte, self.camadas())
+        if camada is not None:
+            try:
+                self.editor = EditorFonte(self, fonte, camada)
+                self.mostrar_tarefa(self.editor, 'Aplicar à fonte', self.aplicar_editor)
+            except ValueError as e:
+                self.feedback.setText(str(e))
+
+    def aplicar_editor(self):
+        if self.editor is None:
+            return True
+        if self.central.ocupado():
+            return False
+        try:
+            nova = self.editor.configurar()
+        except ValueError as e:
+            self.editor.mensagem.setText(str(e))
+            self.feedback.setText(str(e))
+            return False
+        self.substituir(nova)
+        self.cancelar_tarefa()
+        self.feedback.setText('Fonte atualizada no rascunho.')
+        return True
+
+    def limpar_conferencia(self):
+        self.resultados.clear()
+        self.pares.clear()
+
+    def substituir(self, fonte):
+        uid = fonte['uid']
+        pos = next(i for i, f in enumerate(self.fontes) if f['uid'] == uid)
+        self.fontes[pos] = fonte
+        self.alertas_lote.pop(uid, None)
+        self.limpar_conferencia()
+
+    def escolher_lote(self):
+        origem = self.fonte_selecionada()
+        if not origem or self.central.ocupado():
+            return
+        opcoes = [(f['uid'], f['nome'], '' if identificar(f, self.camadas()) else 'Fonte indisponível')
+                  for f in self.fontes_categoria() if f['uid'] != origem['uid']]
+        return self.escolhas('Aplicar mapeamento de ' + origem['nome'], opcoes,
+                             'Aplicar às selecionadas', lambda ids: self.aplicar_lote(origem, ids))
+
+    def aplicar_lote(self, origem, ids):
+        avisos = []
+        atualizadas = 0
+        camadas = list(self.camadas())
+        for f in self.fontes_categoria():
+            if f['uid'] not in ids or f['uid'] == origem['uid']:
+                continue
+            try:
+                camada = identificar(f, camadas)
+                if camada is None:
+                    raise ValueError('Fonte indisponível.')
+                nova, pendencias = copiar_mapeamento(origem, f, descrever(camada))
+                self.substituir(nova)
+                atualizadas += 1
+                if pendencias:
+                    msgs = [f'{ROTULOS.get(p, p)}: {n} ({m})' for p, n, m in pendencias]
+                    self.alertas_lote[f['uid']] = msgs
+                    avisos.append(f['nome'] + ' — ' + ', '.join(msgs))
+            except ValueError as e:
+                avisos.append(f['nome'] + ' — ' + str(e))
+        self.cancelar_tarefa()
+        self.atualizar()
+        self.feedback.setText('\n'.join([f'Mapeamento aplicado a {atualizadas} fonte(s).', *avisos]))
 
     def mover(self):
-        self.formulario(self.tabela.currentRow(), mover=True)
+        fonte = self.fonte_selecionada()
+        if not fonte or self.central.ocupado():
+            return
+        w = QWidget()
+        layout = QVBoxLayout(w)
+        layout.addWidget(aviso('Relocalizar ' + fonte['nome']))
+        alternativas = {c.id(): c.name() + ' · ' + c.id()[-8:] for c in self.camadas()
+                        if c.isValid() and geometria(c) == fonte['geometria']}
+        escolha = combo({'': 'Escolha uma camada carregada…', **alternativas})
+        layout.addWidget(escolha)
 
-    def formulario(self, pos=None, mover=False):
-        if not self.projeto_uid or (pos is not None and pos < 0) or self.central.ocupado():
-            return
-        fonte = self.fontes[pos] if pos is not None else None
-        dialogo = FormularioFonte(self, self.camadas(), fonte, mover)
-        if dialogo.exec_() != QDialog.Accepted:
-            return
-        if pos is None:
-            self.fontes.append(dialogo.resultado)
-        else:
-            self.fontes[pos] = dialogo.resultado
-        self.resultados.clear()
-        self.feedback.setText('Alteração no rascunho. Use Salvar Modelo GIS para registrar uma revisão.')
-        self.atualizar()
-        self.tabela.selectRow(len(self.fontes) - 1 if pos is None else pos)
+        def aplicar():
+            try:
+                c = next((c for c in self.camadas() if c.id() == escolha.currentData()), None)
+                if c is None:
+                    raise ValueError('Escolha a camada que corresponde à origem.')
+                meta = descrever(c)
+                if any(f['uid'] != fonte['uid'] and f['origem'] == meta['origem'] and
+                       f['filtro'] == fonte['filtro'] for f in self.fontes_categoria()):
+                    raise ValueError('A camada já está associada com o mesmo filtro nesta categoria.')
+                prova = relocalizar(fonte, meta)
+                nova = {**fonte, **meta, 'relocalizacao': prova}
+                if prova == 'COMPATIVEL_IDENTIDADE_PENDENTE':
+                    nova['origem_estavel'] = meta['origem']
+                self.substituir(nova)
+            except ValueError as e:
+                self.feedback.setText(str(e))
+                return
+            self.cancelar_tarefa()
+            self.feedback.setText('Origem atualizada no rascunho.')
+
+        layout.addStretch()
+        self.mostrar_tarefa(w, 'Relocalizar', aplicar)
 
     def remover(self):
-        if self.central.ocupado():
-            return
-        pos = self.tabela.currentRow()
-        if pos >= 0:
-            del self.fontes[pos]
-            self.resultados.clear()
-            self.feedback.setText('Fonte retirada do rascunho. As revisões salvas continuam disponíveis.')
+        fonte = self.fonte_selecionada()
+        if fonte and not self.central.ocupado():
+            self.fontes.remove(fonte)
+            self.limpar_conferencia()
+            self.alertas_lote.pop(fonte['uid'], None)
+            self.feedback.setText('Associação retirada do rascunho. A revisão salva pode ser recuperada.')
             self.atualizar()
 
     def conferir(self):
-        if self.central.ocupado():
+        if self.central.ocupado() or self.tarefa is not None or not self.fontes:
             return
-        atividades = self.central.app.atividades
         try:
             dados = preparar_conferencia(self.fontes, list(self.camadas()))
-            def trabalhar(cancelar, sinal):
-                return conferir(dados, cancelar, lambda etapa: sinal(0, etapa))
             self.feedback.setText('Acompanhe a leitura das fontes em Atividade.')
-            atividades.executar_thread(
-                'Conferir fontes do Modelo GIS', self.contexto.text(), trabalhar, self.receber_conferencia,
-                lambda erro: self.feedback.setText(erro),
-            )
-        except Exception as e:
+            self.central.app.atividades.executar_thread(
+                'Conferir fontes do Modelo GIS', self.contexto.text(),
+                lambda parar, sinal: conferir(dados, parar, lambda etapa: sinal(0, etapa)),
+                self.receber_conferencia, self.feedback.setText)
+        except (ValueError, RuntimeError) as e:
             self.feedback.setText(str(e))
 
     def receber_conferencia(self, dados):
-        self.resultados, pares = dados
-        alertas = []
-        fontes = {f['uid']: f for f in self.fontes}
-        for (a, b), n in pares.items():
-            x, y = fontes[a], fontes[b]
-            alertas.append(f'{x["nome"]} ({CATEGORIAS[x["categoria"]].nome} / {CATEGORIAS[y["categoria"]].nome}): {n}')
-        ids = sum(r['ausentes'] + r['repetidos'] for r in self.resultados.values())
-        msg = f'Conferência concluída. {ids} identificador(es) ausente(s) ou repetido(s).'
-        if alertas:
-            msg += f' {len(alertas)} par(es) de fontes compartilham feições.'
-        self.feedback.setText(self.resumo_conferencia(msg, alertas))
+        self.resultados, self.pares = dados
         self.atualizar()
+        categorias, fontes, pendentes = self.resumo()
+        self.feedback.setText(f'Conferência concluída · {fontes} fonte(s) em {categorias} categoria(s) · {pendentes} a revisar.')
+        self.central.atualizar()
 
-    def resumo_conferencia(self, mensagem, sobreposicoes):
-        linhas = [mensagem]
-        if sobreposicoes:
-            linhas.extend(['Feições em mais de uma configuração:', *sobreposicoes[:12]])
-        if len(sobreposicoes) > 12:
-            linhas.append(f'Mais {len(sobreposicoes) - 12} combinações.')
-        if not any(f['categoria'] == 'JUNCTION' for f in self.fontes):
-            linhas.append('Sem camada de Junctions cadastrada.')
-        return '\n'.join(linhas)
+    def desenhar_alertas(self, fontes):
+        while self.alertas.count():
+            self.alertas.takeAt(0).widget().deleteLater()
+        pendentes = [f for f in fontes if self.pendencias_fonte(f)]
+        if not self.resultados and not pendentes:
+            return
+        indisponiveis = sum(self._estado[f['uid']].startswith('Localizar') for f in fontes)
+        resumo = f'{len(pendentes)} a revisar · {indisponiveis} indisponível(is)'
+        if self.resultados:
+            revisadas = [f for f in fontes if self.resultados.get(f['uid'], {}).get('total') is not None]
+            resumo = f'{sum(not self.pendencias_fonte(f) for f in revisadas)} conferida(s) sem pendências · ' + resumo
+        self.alertas.addWidget(aviso(resumo))
+        por_uid = {f['uid']: f for f in self.fontes}
+        for f in pendentes:
+            _, detalhe = expansivel(self.alertas, fill('Detalhes de ' + f['nome'], 32))
+            uid = f['uid']
+            r = self.resultados.get(uid, {})
+            msgs = self.pendencias_fonte(f)
+            if r.get('exemplos'):
+                msgs.append('Exemplos de IDs repetidos: ' + ', '.join(r['exemplos']))
+            if r.get('total') is not None and not r.get('erro'):
+                msgs.append(f"Feições: {r['total']} · Campo ID: {f['campos_mapeados'].get('id', 'por mapear')}")
+            for par, n in self.pares.items():
+                if uid in par:
+                    outra = por_uid[par[0] if par[1] == uid else par[1]]
+                    msgs.append(f"{n} feição(ões) também em {CATEGORIAS[outra['categoria']].nome} · {outra['nome']}")
+            msgs.append('Carregue ou relocalize a camada no QGIS.' if self._estado[uid].startswith('Localizar')
+                        else 'Revise o mapeamento e o filtro da fonte.')
+            detalhe.addWidget(aviso('\n'.join(msgs)))
 
     def salvar(self):
-        if not self.projeto_uid or self.central.ocupado():
+        if not self.projeto_uid or self.central.ocupado() or (self.tarefa is not None and self.editor is None):
+            return False
+        if not self.aplicar_editor():
             return False
         try:
             nova = salvar_modelo(self.projetos, self.projeto_uid, self.anterior,
@@ -420,7 +790,7 @@ class PainelModeloGIS(QWidget):
             self.feedback.setText('Cadastro mantido no rascunho. ' + str(e))
             return False
         self.anterior = nova['uuid']
-        self._referencia = (deepcopy(self.fontes), self.estrategia.currentData())
+        self._referencia = deepcopy(self.fontes), self.estrategia.currentData()
         msg = f'Modelo GIS salvo na revisão {nova["versao"]}.'
         if nova['referencias_para_conferir']:
             msg += ' Confira a aplicabilidade das análises vinculadas antes de reutilizá-las.'

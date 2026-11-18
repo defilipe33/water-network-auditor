@@ -1,5 +1,7 @@
 # Modelo GIS do Projeto — Etapa 1
 
+O [guia da 1.13.1](MODELO_GIS_1_13_1.md) descreve a interface atual. As instruções e capturas abaixo retratam a 1.13.0.
+
 O Water Network Auditor usa o QGIS para preparar dados, investigar a rede e propor intervenções. A consolidação e a simulação hidráulica continuam no WaterGEMS. A versão 1.13.0 acrescenta o cadastro multifonte por projeto como base para as próximas etapas.
 
 ## Configurar no QGIS

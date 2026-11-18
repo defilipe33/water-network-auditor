@@ -1,12 +1,11 @@
 """Central de trabalho: navegação sobre os controladores existentes."""
-from collections import Counter
 from pathlib import Path
 from qgis.PyQt.QtCore import Qt,QTimer
 from qgis.PyQt.QtWidgets import QDockWidget,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QTableWidget,QTableWidgetItem,QTabWidget,QScrollArea,QInputDialog,QMessageBox
 from qgis.core import QgsSettings
 from .dependencias import avaliar,disponibilidade,recomendar,FERRAMENTAS
 from .contexto_trabalho import Projetos,fatos,validar_registro
-from .modelo_gis import CATEGORIAS, ESTRATEGIAS, revisoes
+from .modelo_gis import revisoes
 from .modelo_gis_ui import PainelModeloGIS
 
 class CentralTrabalho(QDockWidget):
@@ -15,14 +14,15 @@ class CentralTrabalho(QDockWidget):
         self.setAllowedAreas(Qt.LeftDockWidgetArea|Qt.RightDockWidgetArea);w=QWidget();self.setWidget(w);v=QVBoxLayout(w)
         topo=QHBoxLayout();self.barra_topo=topo;v.addLayout(topo);titulo=QLabel('WATER NETWORK AUDITOR');titulo.setStyleSheet('font-size:17px;font-weight:bold;');topo.addWidget(titulo);topo.addStretch();self.nivel=QComboBox();self.nivel.addItems(['Guiado','Avançado']);self.nivel.setCurrentText(self.settings.value('navegacao/nivel','Guiado'));self.nivel.currentTextChanged.connect(self.mudar_nivel);topo.addWidget(self.nivel)
         self.contexto=QLabel();self.contexto.setWordWrap(True);self.contexto.setTextFormat(Qt.PlainText);v.addWidget(self.contexto)
-        h=QHBoxLayout();v.addLayout(h);self.projeto=QComboBox();h.addWidget(self.projeto,1)
+        self.seletor_projeto=QWidget();h=QHBoxLayout(self.seletor_projeto);h.setContentsMargins(0,0,0,0);v.addWidget(self.seletor_projeto);self.projeto=QComboBox();h.addWidget(self.projeto,1)
         for t,fn in [('Criar projeto',self.criar_projeto),('Abrir projeto / recentes',self.abrir_projeto),('Atualizar',self.atualizar)]:b=QPushButton(t);b.clicked.connect(fn);h.addWidget(b)
         self.tabs=QTabWidget();v.addWidget(self.tabs,1);inicio=QWidget();iv=QVBoxLayout(inicio);self.tabs.addTab(inicio,'Começar / continuar')
         self.progresso=QTableWidget(0,2);self.progresso.setHorizontalHeaderLabels(['Pré-requisito','Estado verificado']);self.progresso.setEditTriggers(QTableWidget.NoEditTriggers);iv.addWidget(self.progresso)
         self.recomendacao=QPushButton();self.recomendacao.clicked.connect(lambda:self.acionar(self._recomendado));iv.addWidget(self.recomendacao)
         self.ultima=QPushButton('Retomar última base do projeto');self.ultima.clicked.connect(self.retomar_ultima);iv.addWidget(self.ultima)
         self.resumo_gis=QLabel();self.resumo_gis.setWordWrap(True);self.resumo_gis.setTextFormat(Qt.PlainText);iv.addWidget(self.resumo_gis)
-        b=QPushButton('Configurar Modelo GIS');b.clicked.connect(self.abrir_modelo_gis);iv.addWidget(b)
+        self.abrir_gis=QPushButton('Configurar fontes GIS');self.abrir_gis.clicked.connect(self.abrir_modelo_gis);iv.addWidget(self.abrir_gis)
+        self.conferir_gis=QPushButton('Conferir pendências das fontes');self.conferir_gis.clicked.connect(self.conferir_modelo_gis);iv.addWidget(self.conferir_gis)
         self.pendencias=QLabel();self.pendencias.setWordWrap(True);iv.addWidget(self.pendencias);self.retomar=QPushButton('Retomar operação desejada');self.retomar.clicked.connect(self.retomar_operacao);iv.addWidget(self.retomar);self.retomar.hide()
         self.acoes={}
         grupos=[('Preparar fontes',['gis','continuar_gis','preparar_wg','espacial','correspondencia','integrar']),('Investigar',['continuar','topologia','corredores','ilhas']),('Cenários e conjuntos',['cenarios','selection_sets']),('Apresentar e recuperar',['relatorio','historico'])]
@@ -64,6 +64,9 @@ class CentralTrabalho(QDockWidget):
     def abrir_modelo_gis(self):
         self.tabs.setCurrentWidget(self.modelo_gis)
         self.modelo_gis.atualizar()
+    def conferir_modelo_gis(self):
+        self.abrir_modelo_gis()
+        self.modelo_gis.conferir()
     def mudar_nivel(self,t):
         self.settings.setValue('navegacao/nivel',t)
         if hasattr(self,'preparacao'):self.tabs.setTabVisible(self.tabs.indexOf(self.preparacao),t=='Guiado')
@@ -75,6 +78,7 @@ class CentralTrabalho(QDockWidget):
         self.settings.setValue('navegacao/secao_id',self.tabs.tabText(n))
         no_modelo=self.tabs.widget(n) is self.modelo_gis
         self.contexto.setVisible(not no_modelo)
+        self.seletor_projeto.setVisible(not no_modelo)
         if no_modelo:self.modelo_gis.atualizar()
     def atualizar(self):
         if not hasattr(self,'progresso'):return
@@ -90,11 +94,12 @@ class CentralTrabalho(QDockWidget):
             ok,faltas=disponibilidade(k,self._requisitos);b.setText(FERRAMENTAS[k][0]+('' if ok else ' · preparar requisitos…'))
         self.ultima.setVisible(bool(p and p.get('ultima')))
         hist=revisoes(p)
-        if hist:
-            cadastro=hist[-1]
-            contagem=Counter(f['categoria'] for f in cadastro['fontes'])
-            resumo=' · '.join(f'{CATEGORIAS[k].nome} {n}' for k,n in contagem.items())
-            self.resumo_gis.setText(f"Modelo GIS · revisão {cadastro['versao']} · {resumo or 'Nenhuma fonte'}\n"+ESTRATEGIAS[cadastro['estrategia']])
+        categorias,fontes,pendentes=self.modelo_gis.resumo()
+        self.abrir_gis.setText('Continuar configuração' if hist or fontes else 'Configurar fontes GIS')
+        self.conferir_gis.setVisible(bool(fontes))
+        if hist or fontes:
+            estado='rascunho' if self.modelo_gis.pendente() else f"revisão {hist[-1]['versao']}"
+            self.resumo_gis.setText(f'Modelo GIS · {estado}\n{categorias} categoria(s) · {fontes} fonte(s) · {pendentes} a revisar')
         else:
             self.resumo_gis.setText('Modelo GIS · '+('cadastro inicial' if p else 'selecione um projeto'))
         # Catálogo não é prova de validação. Verificação de abertura ocorre ao

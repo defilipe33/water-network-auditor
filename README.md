@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A pré-release **1.13.1** simplifica o [cadastro multifonte do Modelo GIS](documentacao/publica/MODELO_GIS_1_13_1.md). A navegação começa pela categoria e permite adicionar camadas em lote, revisar campos e compor filtros dentro da Central de Trabalho.
+
 A pré-release **1.13.0** acrescenta o [Modelo GIS do Projeto](documentacao/publica/MODELO_GIS_PROJETO.md). Cadastre várias fontes por categoria, reutilize uma camada com filtros independentes e mantenha o mapeamento por fonte em revisões do projeto. O cadastro aceita configurações parciais e permite planejar a obtenção de Junctions.
 
 A pré-release **1.12.1** refina as [telas internas e a referência espacial](documentacao/publica/REFINAMENTO_ESPACIAL_1_12_1.md): quatro etapas, sugestões e exemplos GIS, detalhes recolhíveis e salvamento técnico sem responsável, aceite formal ou anexo obrigatório. As barreiras de CRS, unidades, identidade e geometria permanecem.

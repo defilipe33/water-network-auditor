@@ -263,7 +263,7 @@ def preparar_conferencia(fontes, camadas):
     for fonte in fontes:
         camada = identificar(fonte, camadas)
         estado = estado_fonte(fonte, camada)
-        r = dict(estado=estado, total=None, ausentes=0, repetidos=0)
+        r = dict(estado=estado, total=None, ausentes=0, repetidos=0, exemplos=[])
         resultados[fonte['uid']] = r
         if estado == 'Disponível' and isinstance(camada, QgsVectorLayer):
             chave = camada.id() if camada.isModified() else fonte['assinatura']
@@ -298,10 +298,14 @@ def conferir(preparacao, ponto=lambda: False, etapa=lambda _: None):
             contexto.setFeature(feicao)
             ativos = []
             for pos, filtro in enumerate(filtros):
+                if contadores[pos].get('erro'):
+                    continue
                 if filtro is not None:
                     valor = filtro.evaluate(contexto)
                     if filtro.hasEvalError():
-                        raise ValueError('Falha ao avaliar o filtro de ' + CATEGORIAS[grupo[pos]['categoria']].nome)
+                        contadores[pos].update(erro='Filtro inválido para os valores da camada',
+                                               total=None, ausentes=0, repetidos=0, exemplos=[])
+                        continue
                     if QgsVariantUtils.isNull(valor) or not valor:
                         continue
                 ativos.append(pos)
@@ -314,6 +318,8 @@ def conferir(preparacao, ponto=lambda: False, etapa=lambda _: None):
                     else:
                         if chave in vistos[pos]:
                             r['repetidos'] += 1
+                            if len(r['exemplos']) < 5 and chave[-1] not in r['exemplos']:
+                                r['exemplos'].append(chave[-1])
                         vistos[pos].add(chave)
             for indice, a in enumerate(ativos):
                 for b in ativos[indice + 1:]:
@@ -321,7 +327,8 @@ def conferir(preparacao, ponto=lambda: False, etapa=lambda _: None):
                     pares[par] = pares.get(par, 0) + 1
         if ponto():
             raise InterruptedError('Conferência cancelada.')
-    return resultados, pares
+    return resultados, {par: n for par, n in pares.items()
+                        if not any(resultados[uid].get('erro') for uid in par)}
 
 
 def revisoes(projeto):
