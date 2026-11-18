@@ -10,6 +10,8 @@ hidráulica direta nem irregularidade operacional.
 
 ## Funcionalidades disponíveis
 
+A pré-release **1.14.0 — Nova Interface** abre no [Quadro do Modelo](documentacao/publica/NOVA_INTERFACE_1_14_0.md), com Redes, Equipamentos, Áreas e Conectividade. A navegação reúne Preparar minha rede, Investigar minha rede e Meus trabalhos, com destaque temporário das fontes no mapa QGIS. Cadastro, revisões, investigação e exportações reutilizam os serviços existentes.
+
 A pré-release **1.13.1** simplifica o [cadastro multifonte do Modelo GIS](documentacao/publica/MODELO_GIS_1_13_1.md). A navegação começa pela categoria e permite adicionar camadas em lote, revisar campos e compor filtros dentro da Central de Trabalho.
 
 A pré-release **1.13.0** acrescenta o [Modelo GIS do Projeto](documentacao/publica/MODELO_GIS_PROJETO.md). Cadastre várias fontes por categoria, reutilize uma camada com filtros independentes e mantenha o mapeamento por fonte em revisões do projeto. O cadastro aceita configurações parciais e permite planejar a obtenção de Junctions.

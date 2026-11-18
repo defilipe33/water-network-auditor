@@ -60,6 +60,8 @@ class Aplicacao:
         r=validar_registro(registro)
         if not r['valido']:raise ValueError(r['erro'])
         if self.ocupado or self.atividades.em_execucao() or self.geo._executando or self.wg and self.wg.ocupado:return False
+        central=getattr(self,'central',None)
+        if central and not sip.isdeleted(central) and not central.modelo_gis.resolver():return False
         if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
         self.bases();self.wg.usar_base(registro['base'])
         if self.wg.base!=str(registro['base']):return False
@@ -83,9 +85,9 @@ class Aplicacao:
     def botao_janelas(self,w):
         b=QPushButton('Janelas / painéis');b.setMenu(self.menu_janelas);w.layout().insertWidget(0,b)
     def abrir(self):
-        from .central import CentralTrabalho
+        from .ambiente import AmbienteTrabalho as CentralTrabalho
         if getattr(self,'central',None) is None or sip.isdeleted(self.central):
-            self.central=CentralTrabalho(self);self.janelas.registrar('central',self.central,'Central de Trabalho');self.atividades.vincular(self.central)
+            self.central=CentralTrabalho(self);self.janelas.registrar('central',self.central,'Quadro do Modelo');self.atividades.vincular(self.central)
             if hasattr(self.iface,'addDockWidget'):self.iface.addDockWidget(Qt.RightDockWidgetArea,self.central)
             else:self.iface.mainWindow().addDockWidget(Qt.RightDockWidgetArea,self.central)
             from .apresentacao import Apresentacao
@@ -197,6 +199,8 @@ class Aplicacao:
         anterior=(self.geo.base_revisao,self.geo.dossie['execucao_uid']) if self.geo.dossie and self.geo.base_revisao else None
         # A auditoria exibida na janela principal deve ser a mesma do painel.
         # O fluxo existente resolve rascunhos e mantém o contexto ao cancelar.
+        central=getattr(self,'central',None)
+        if central and hasattr(central,'limpar_mapa'):central.limpar_mapa()
         if not self.geo.abrir_auditoria(str(base),pacote['dossie']['execucao_uid']):return False
         self.geo.voltar_inspecao()
         try:novo=abrir_diagnosticos(pacote,base,QgsProject.instance(),self.iface.mainWindow(),self.iface.mapCanvas(),gerenciar_saida=False)

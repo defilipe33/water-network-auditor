@@ -1,5 +1,7 @@
 # Instalação e operação
 
+A partir da **1.14.0**, o complemento abre no Quadro do Modelo. Escolha **Preparar minha rede**, **Investigar minha rede** ou **Meus trabalhos** no seletor de área. As ferramentas anteriores ficam em **⋯ → Ferramentas avançadas**. O [guia da nova interface](NOVA_INTERFACE_1_14_0.md) descreve o cadastro, os destaques no mapa e a recuperação de trabalhos.
+
 Na **1.9.0**, expanda RESTRIÇÕES DE PERCURSO no módulo de corredores para permitir, evitar ou bloquear equipamentos. Exceções podem ser escolhidas por mapa, seleção QGIS ou tabela. [Guia, critérios e aceitação](RESTRICOES_CORREDORES.md).
 
 Na **1.8.1**, use **✓ Marcar como resolvido** ou **Resolvido e próxima** para retirar um caso da fila Em aberto sem alterar sua interpretação técnica. Em Resolvidas, use Reabrir investigação. Relatórios funcionam offline por padrão, com filtro de resolvidas e prévia de um caso. [Instruções e roteiro de aceitação](RELATORIOS_QUERIES_ACOMPANHAMENTO.md).

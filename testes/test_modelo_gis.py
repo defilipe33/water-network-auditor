@@ -208,7 +208,7 @@ class CentralModeloGIS(unittest.TestCase):
         self.assertTrue(self.painel.pendente())
         self.central.apresentacao.alterar(0)
         self.assertEqual(len(self.painel.fontes), 1)
-        self.assertIs(self.central.tabs.currentWidget(), self.painel)
+        self.assertIs(self.central.paginas.currentWidget(), self.central.quadro)
         self.painel.recarregar()
 
     def test_encerramento_cancelado_sem_perda(self):
@@ -337,7 +337,7 @@ class FluxoModeloGIS(unittest.TestCase):
         self.selecionar(lista)
 
     def test_fluxo_multifonte_sem_formulario_repetido(self):
-        self.assertIs(self.painel.paginas.currentWidget(), self.painel.inicio)
+        self.assertIs(self.central.paginas.currentWidget(), self.central.quadro)
         self.cadastrar_redes()
         self.assertEqual(len(self.painel.fontes), 3)
         self.assertTrue(all(f['campos_mapeados'].get('id') == 'id' for f in self.painel.fontes))

@@ -375,7 +375,8 @@ class PainelModeloGIS(QWidget):
     def pendente(self):
         return bool(self.projeto_uid) and (
             (self.fontes, self.estrategia.currentData()) != self._referencia or
-            bool(self.editor and self.editor.pendente()))
+            bool(self.editor and self.editor.pendente()) or
+            bool(self.tarefa is not None and getattr(self.tarefa, '_wna_pendente', lambda: False)()))
 
     def resolver(self):
         if not self.pendente():
@@ -572,6 +573,7 @@ class PainelModeloGIS(QWidget):
             return [lista.item(i).data(Qt.UserRole) for i in range(lista.count())
                     if lista.item(i).checkState() == Qt.Checked]
 
+        w._wna_pendente = lambda: bool(selecionadas())
         lista.itemChanged.connect(lambda _: self.confirmar_b.setEnabled(bool(selecionadas())))
         layout.addStretch()
         self.mostrar_tarefa(w, acao, lambda: executar(selecionadas()), False)
@@ -779,8 +781,13 @@ class PainelModeloGIS(QWidget):
             detalhe.addWidget(aviso('\n'.join(msgs)))
 
     def salvar(self):
-        if not self.projeto_uid or self.central.ocupado() or (self.tarefa is not None and self.editor is None):
+        if not self.projeto_uid or self.central.ocupado():
             return False
+        if self.tarefa is not None and self.editor is None:
+            anterior = self.tarefa
+            self.confirmar_tarefa()
+            if self.tarefa is anterior:
+                return False
         if not self.aplicar_editor():
             return False
         try:
