@@ -35,18 +35,8 @@ class AmbienteTrabalho(CentralTrabalho):
         self.legado.setParent(self.raiz)
         self.legado.hide()
         self.raiz.setMinimumWidth(300)
-        self.raiz.setStyleSheet("""
-            QWidget#AmbienteWNA {background:#f3f5fc;color:#1e2a3b;}
-            QLabel {color:#1e2a3b;}
-            QPushButton {padding:5px 7px;border:1px solid #cbd3e5;border-radius:6px;background:white;color:#263751;}
-            QPushButton:hover {background:#e7ecfc;}
-            QPushButton#ComponenteModelo {text-align:left;padding:9px;font-weight:600;}
-            QPushButton#ComponenteModelo:checked {background:#e5eafb;border-color:#4b5993;}
-            QPushButton#Principal {background:#3b4a8a;color:white;font-weight:600;}
-            QPushButton#Secundaria {text-align:left;}
-            QLineEdit,QComboBox {padding:4px;min-width:60px;}
-            QScrollArea {border:0;}
-        """)
+        from .aparencia import Aparencia
+        self.aparencia = Aparencia(self.raiz, app.iface.mainWindow())
         v = QVBoxLayout(self.raiz)
         v.setContentsMargins(10, 8, 10, 8)
         v.setSpacing(5)
@@ -70,6 +60,7 @@ class AmbienteTrabalho(CentralTrabalho):
         menu_b.setMenu(menu)
         self.barra_topo.addWidget(menu_b)
         self.contexto_curto = aviso()
+        self.contexto_curto.setProperty("papel", "secundario")
         v.addWidget(self.contexto_curto)
         self.cenarios = QComboBox()
         self.cenarios.setMinimumContentsLength(10)

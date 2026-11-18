@@ -1,5 +1,7 @@
 # Instalação e operação
 
+
+Correção 1.14.1: [aparência clara e escura, capturas e validação](TEMAS_1_14_1.md).
 A partir da **1.14.0**, o complemento abre no Quadro do Modelo. Escolha **Preparar minha rede**, **Investigar minha rede** ou **Meus trabalhos** no seletor de área. As ferramentas anteriores ficam em **⋯ → Ferramentas avançadas**. O [guia da nova interface](NOVA_INTERFACE_1_14_0.md) descreve o cadastro, os destaques no mapa e a recuperação de trabalhos.
 
 Na **1.9.0**, expanda RESTRIÇÕES DE PERCURSO no módulo de corredores para permitir, evitar ou bloquear equipamentos. Exceções podem ser escolhidas por mapa, seleção QGIS ou tabela. [Guia, critérios e aceitação](RESTRICOES_CORREDORES.md).
