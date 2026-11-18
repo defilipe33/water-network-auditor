@@ -1,10 +1,13 @@
 """Central de trabalho: navegação sobre os controladores existentes."""
+from collections import Counter
 from pathlib import Path
 from qgis.PyQt.QtCore import Qt,QTimer
 from qgis.PyQt.QtWidgets import QDockWidget,QWidget,QVBoxLayout,QHBoxLayout,QLabel,QPushButton,QComboBox,QTableWidget,QTableWidgetItem,QTabWidget,QScrollArea,QInputDialog,QMessageBox
 from qgis.core import QgsSettings
 from .dependencias import avaliar,disponibilidade,recomendar,FERRAMENTAS
 from .contexto_trabalho import Projetos,fatos,validar_registro
+from .modelo_gis import CATEGORIAS, ESTRATEGIAS, revisoes
+from .modelo_gis_ui import PainelModeloGIS
 
 class CentralTrabalho(QDockWidget):
     def __init__(self,app):
@@ -18,6 +21,8 @@ class CentralTrabalho(QDockWidget):
         self.progresso=QTableWidget(0,2);self.progresso.setHorizontalHeaderLabels(['Pré-requisito','Estado verificado']);self.progresso.setEditTriggers(QTableWidget.NoEditTriggers);iv.addWidget(self.progresso)
         self.recomendacao=QPushButton();self.recomendacao.clicked.connect(lambda:self.acionar(self._recomendado));iv.addWidget(self.recomendacao)
         self.ultima=QPushButton('Retomar última base do projeto');self.ultima.clicked.connect(self.retomar_ultima);iv.addWidget(self.ultima)
+        self.resumo_gis=QLabel();self.resumo_gis.setWordWrap(True);self.resumo_gis.setTextFormat(Qt.PlainText);iv.addWidget(self.resumo_gis)
+        b=QPushButton('Configurar Modelo GIS');b.clicked.connect(self.abrir_modelo_gis);iv.addWidget(b)
         self.pendencias=QLabel();self.pendencias.setWordWrap(True);iv.addWidget(self.pendencias);self.retomar=QPushButton('Retomar operação desejada');self.retomar.clicked.connect(self.retomar_operacao);iv.addWidget(self.retomar);self.retomar.hide()
         self.acoes={}
         grupos=[('Preparar fontes',['gis','continuar_gis','preparar_wg','espacial','correspondencia','integrar']),('Investigar',['continuar','topologia','corredores','ilhas']),('Cenários e conjuntos',['cenarios','selection_sets']),('Apresentar e recuperar',['relatorio','historico'])]
@@ -31,8 +36,13 @@ class CentralTrabalho(QDockWidget):
         b=QPushButton('Abrir base selecionada');b.clicked.connect(self.abrir_registro);pv.addWidget(b);b=QPushButton('Catálogo: adicionar, localizar arquivos, histórico…');b.clicked.connect(lambda:self.app.catalogar());pv.addWidget(b)
         from .preparacao_guiada import PreparacaoGuiada
         self.preparacao=PreparacaoGuiada(self);self.tabs.insertTab(1,self.preparacao,'Preparação guiada')
+        self.modelo_gis=PainelModeloGIS(self);self.tabs.insertTab(2,self.modelo_gis,'Modelo GIS')
         h=QHBoxLayout();v.addLayout(h);self.janelas=QPushButton('Janelas / painéis');self.janelas.setMenu(app.menu_janelas);h.addWidget(self.janelas);b=QPushButton('Ajuda da seção');b.clicked.connect(self.ajuda);h.addWidget(b)
-        self.projeto.activated.connect(self.escolher_projeto);self._carregar_projetos();self.tabs.currentChanged.connect(self.guardar_secao);self.tabs.setCurrentIndex(min(int(self.settings.value('navegacao/secao',0)),self.tabs.count()-1))
+        self.projeto.activated.connect(self.escolher_projeto);self._carregar_projetos();self.tabs.currentChanged.connect(self.guardar_secao)
+        secao=self.settings.value('navegacao/secao_id','')
+        n=next((i for i in range(self.tabs.count()) if self.tabs.tabText(i)==secao),None)
+        anterior=int(self.settings.value('navegacao/secao',0))
+        self.tabs.setCurrentIndex(n if n is not None else min(anterior+int(anterior>=2),self.tabs.count()-1))
         self.timer=QTimer(self);self.timer.setInterval(2500);self.timer.timeout.connect(self.atualizar);self.timer.start();self.mudar_nivel(self.nivel.currentText())
     def ocupado(self):return self.app.ocupado or self.app.geo._executando or self.app.atividades.em_execucao() or bool(self.app.wg and self.app.wg.ocupado)
     def _carregar_projetos(self):
@@ -42,20 +52,30 @@ class CentralTrabalho(QDockWidget):
     def criar_projeto(self):
         if self.ocupado() or not self.app.resolver() or not self.app.geo.resolver_pendencias() or not self.app.resolver_configuracao_wg():return
         nome,ok=QInputDialog.getText(self,'Criar projeto de trabalho','Nome do projeto (identidade UUID será criada)')
-        if ok and nome.strip():self.projetos.criar(nome);self._carregar_projetos();self.atualizar()
+        if ok and nome.strip() and self.modelo_gis.resolver():
+            self.projetos.criar(nome);self._carregar_projetos();self.modelo_gis.recarregar();self.atualizar()
     def abrir_projeto(self):self.projeto.showPopup()
     def escolher_projeto(self,i):
         uid=self.projeto.itemData(i)
-        if not uid:return
+        if not uid or uid==self.projetos.dados['ativo']:self._carregar_projetos();return
         if self.ocupado() or not self.app.resolver() or not self.app.geo.resolver_pendencias() or not self.app.resolver_configuracao_wg():self._carregar_projetos();return
-        self.projetos.ativar(uid);self.atualizar()
+        if not self.modelo_gis.resolver():self._carregar_projetos();return
+        self.projetos.ativar(uid);self.modelo_gis.recarregar();self.atualizar()
+    def abrir_modelo_gis(self):
+        self.tabs.setCurrentWidget(self.modelo_gis)
+        self.modelo_gis.atualizar()
     def mudar_nivel(self,t):
         self.settings.setValue('navegacao/nivel',t)
         if hasattr(self,'preparacao'):self.tabs.setTabVisible(self.tabs.indexOf(self.preparacao),t=='Guiado')
         for l in self.findChildren(QLabel):
             if l.property('wna/ajuda_curta'):l.setVisible(t=='Guiado')
         self.atualizar()
-    def guardar_secao(self,n):self.settings.setValue('navegacao/secao',n)
+    def guardar_secao(self,n):
+        self.settings.setValue('navegacao/secao',n)
+        self.settings.setValue('navegacao/secao_id',self.tabs.tabText(n))
+        no_modelo=self.tabs.widget(n) is self.modelo_gis
+        self.contexto.setVisible(not no_modelo)
+        if no_modelo:self.modelo_gis.atualizar()
     def atualizar(self):
         if not hasattr(self,'progresso'):return
         if self.ocupado():self.pendencias.setText('Atividade em andamento. Acompanhe etapas e cancelamento em Janelas / painéis.');return
@@ -69,6 +89,14 @@ class CentralTrabalho(QDockWidget):
         for k,b in self.acoes.items():
             ok,faltas=disponibilidade(k,self._requisitos);b.setText(FERRAMENTAS[k][0]+('' if ok else ' · preparar requisitos…'))
         self.ultima.setVisible(bool(p and p.get('ultima')))
+        hist=revisoes(p)
+        if hist:
+            cadastro=hist[-1]
+            contagem=Counter(f['categoria'] for f in cadastro['fontes'])
+            resumo=' · '.join(f'{CATEGORIAS[k].nome} {n}' for k,n in contagem.items())
+            self.resumo_gis.setText(f"Modelo GIS · revisão {cadastro['versao']} · {resumo or 'Nenhuma fonte'}\n"+ESTRATEGIAS[cadastro['estrategia']])
+        else:
+            self.resumo_gis.setText('Modelo GIS · '+('cadastro inicial' if p else 'selecione um projeto'))
         # Catálogo não é prova de validação. Verificação de abertura ocorre ao
         # selecionar; nenhuma base de outro projeto vira ativa por coincidência.
         self._registros=self.app.catalogo.listar_opcional();refs={(r['uuid'],r['tipo']) for r in (p or {}).get('bases',[])};rs=[r for r in self._registros if not p or (r['uuid'],r['tipo']) in refs];self._visiveis=rs;self.tabela.setRowCount(len(rs))

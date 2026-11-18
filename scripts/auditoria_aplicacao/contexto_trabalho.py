@@ -14,14 +14,24 @@ class Projetos:
         if d.get('versao')!=1 or not isinstance(d.get('projetos'),list):raise ValueError('Índice de projetos incompatível; arquivo preservado')
         return d
     def salvar(self):
-        tmp=self.path.with_name(self.path.name+'.'+uuid4().hex+'.tmp');tmp.write_text(json.dumps(self.dados,ensure_ascii=False,indent=2),encoding='utf8')
+        self.gravar(self.dados)
+    def gravar(self,dados):
+        tmp=self.path.with_name(self.path.name+'.'+uuid4().hex+'.tmp')
         # No Windows, indexadores podem reter o destino durante uma leitura.
         # Não se apaga o índice antigo; erro persistente é comunicado ao chamador.
-        for tentativa in range(4):
-            try:os.replace(tmp,self.path);break
-            except PermissionError:
-                if tentativa==3:raise
-                time.sleep(.03)
+        try:
+            with tmp.open('x',encoding='utf8') as arq:
+                json.dump(dados,arq,ensure_ascii=False,indent=2)
+                arq.flush()
+                os.fsync(arq.fileno())
+            for tentativa in range(4):
+                try:os.replace(tmp,self.path);break
+                except PermissionError:
+                    if tentativa==3:raise
+                    time.sleep(.03)
+            self.dados=dados
+        finally:
+            tmp.unlink(missing_ok=True)
     def criar(self,nome):
         if not nome.strip():raise ValueError('Informe o nome do projeto')
         self.dados=self.ler();p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={});self.dados['projetos'].append(p);self.dados['ativo']=p['uuid'];self.salvar();return p

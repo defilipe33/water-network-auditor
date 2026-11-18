@@ -278,6 +278,8 @@ class Aplicacao:
             direta=getattr(self,'topologia_direta',None)
             if direta is not None and not sip.isdeleted(direta) and not direta.resolver():return False
             if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
+            central=getattr(self,'central',None)
+            if central is not None and not sip.isdeleted(central) and not central.modelo_gis.resolver():return False
             if self.geo.pendente():
                 f=self.geo._formulario_resultado if self.geo.dossie else self.geo._config_inicial
                 if f:self.geo.restaurar_formulario(f)

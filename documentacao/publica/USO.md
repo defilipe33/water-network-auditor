@@ -110,3 +110,7 @@ Busca multiorigem no grafo completo; estrutural fraca e restrita dirigida separa
 ## Selection Sets — 1.11.0
 
 Adaptador HMI sobre Banco, com nomes/membros/pastas por identidade; persistência reutiliza IGD_OBJETOS/IGD_OBJ_HIST/IGD_OBJ_VINCULOS e publicação transacional. Queries desconhecidas não são avaliadas. Camadas próprias persistentes e organização local separada da hierarquia original, filtros de identidade, comparação e relatórios existentes. [Guia e aceitação](SELECTION_SETS_WATERGEMS.md).
+
+## Modelo GIS do Projeto
+
+Na Central de Trabalho, selecione um projeto e escolha **Configurar Modelo GIS**. Você pode cadastrar várias fontes para uma categoria e reutilizar uma camada com filtros diferentes. Use **Conferir fontes** para revisar os identificadores e as sobreposições e **Salvar Modelo GIS** para registrar a revisão. O [guia do Modelo GIS](MODELO_GIS_PROJETO.md) descreve a recuperação de fontes e a estratégia de Junctions.
