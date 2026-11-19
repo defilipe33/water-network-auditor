@@ -322,6 +322,8 @@ class FluxosAuditoria(EstadoOperacional):
             self.aplicar_estado()
 
     def preparar_reprocessamento(self,redes,limites,parametros,opcoes):
+        if (self.auditoria_origem or {}).get('configuracao',{}).get('modelo_gis'):
+            raise ValueError('Esta execução utiliza filtros do Modelo GIS. Reexecute pelo Quadro do Modelo para preservar as fontes e os filtros cadastrados.')
         if not self.auditoria_origem:
             raise ValueError('Selecione a auditoria de origem antes de reprocessar.')
         proposta=configuracao_proposta(redes,limites,parametros,opcoes,self.campos_inspecao(redes),

@@ -218,7 +218,11 @@ def salvar_execucao(caminho,dossie,conexao=None,reconciliar=None,origens_reconci
         if con.execute('SELECT 1 FROM EXECUCOES WHERE exe_uid=?',(exe,)).fetchone():
             return carregar_execucao(caminho,exe,conexao=con)
         srs=con.execute("SELECT srs_id FROM gpkg_contents WHERE table_name='EVENTOS_FRONTEIRAS'").fetchone()[0]
-        crs_existente=QgsVectorLayer(str(caminho)+'|layername=EVENTOS_FRONTEIRAS','crs','ogr').crs()
+        # Ler o CRS pelo próprio GPKG evita abrir um provedor OGR temporário.
+        # O pool de conexões desse provedor pode reter o arquivo no Windows e
+        # impedir a publicação atômica de uma execução criada em worker.
+        definicao=con.execute('SELECT definition FROM gpkg_spatial_ref_sys WHERE srs_id=?',(srs,)).fetchone()
+        crs_existente=QgsCoordinateReferenceSystem(definicao[0] if definicao else '')
         if crs_existente!=QgsCoordinateReferenceSystem(resultado.parametros.crs):
             raise ValueError('CRS diferente da base existente; escolha outro GeoPackage')
         antigos=[(r[0],json.loads(r[1])) for r in con.execute('SELECT exe_uid,snapshot FROM EXECUCOES ORDER BY rowid DESC')]

@@ -168,3 +168,19 @@ class MapaFontes(QObject):
         caixa.scale(1.2)
         self.canvas.setExtent(caixa)
         self.canvas.refresh()
+
+    def destacar_geometria(self, geometria, crs, nome):
+        if self.app.atividades.em_execucao() or not self.canvas:
+            return False
+        self.limpar()
+        g = QgsGeometry(geometria)
+        if not crs.isValid() or not self.canvas.mapSettings().destinationCrs().isValid():
+            self.mensagem.emit('Confira o CRS do resultado e do mapa.'); return False
+        trans = QgsCoordinateTransform(crs, self.canvas.mapSettings().destinationCrs(), QgsProject.instance())
+        if g.transform(trans) != 0:
+            self.mensagem.emit('Não foi possível transformar o destaque.'); return False
+        b = QgsRubberBand(self.canvas, g.type())
+        b.setColor(QColor(45, 110, 230, 200)); b.setWidth(3); b.setToGeometry(g, None)
+        self.itens.append(b); self.caixas.append(g.boundingBox())
+        self.mensagem.emit(nome + ' · destaque temporário; use Enquadrar para aproximar.')
+        return True

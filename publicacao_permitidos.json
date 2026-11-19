@@ -112,6 +112,14 @@
     "documentacao/publica/capturas/ajustes_gis/investigar_gis.png": "225f83d66ddf2fb14e0ec327018ef6a2e000db9ba998c8e3fd9fc3cfd49c1b5f",
     "documentacao/publica/capturas/ajustes_gis/independente.png": "ed98a78fa4964bfbc08951b6cd4b0cdedd065c29b14cd0009ad9407427d497e8",
     "documentacao/publica/capturas/ajustes_gis/painel.png": "3ff1c31562350f9cd06754f3ba83318d8e9440b4c60661b9ad10945ccb4b328b",
-    "documentacao/publica/capturas/ajustes_gis/reabertura.png": "43bcd045c289c3f4f415bab79c3f77c2833f4f05cc70cca52b66794bdd92e462"
+    "documentacao/publica/capturas/ajustes_gis/reabertura.png": "43bcd045c289c3f4f415bab79c3f77c2833f4f05cc70cca52b66794bdd92e462",
+    "documentacao/publica/capturas/integracao_modelo_gis/editor_escuro.png": "e94086b5db14c4dd5f84b34d1bb442711dd329ab150ae93abc44e28b62ba21e9",
+    "documentacao/publica/capturas/integracao_modelo_gis/resultado_escuro.png": "3dd18709c85e0f04e2998ece3b3dc6dbc1fe6b12d307cf32ac3b5f589d187a01",
+    "documentacao/publica/capturas/integracao_modelo_gis/resultado_claro.png": "b9295a71fe088f103e6974d204822361ba0db8158b1238aa04329bc1b1aeb396",
+    "documentacao/publica/capturas/integracao_modelo_gis/reabertura.png": "8310f43f467dfa14d5bbd52ec9d22f7c52a363a3ab444b081e000da9b622bb19",
+    "documentacao/publica/capturas/integracao_modelo_gis/filtros.png": "928c798390202204e507d6b6e521bdad82f1267aaeee0d1ba9eabdf0bf665473",
+    "documentacao/publica/capturas/integracao_modelo_gis/mapa.png": "8330f3ab7ce2a44f2c7640fe35f55233b875bbeb1b426a765f169f54db8e8a25",
+    "documentacao/publica/capturas/integracao_modelo_gis/independente.png": "f98cf46b91468179cdb90d1863aba673b8b8e71d0207b0974a5a9a169bb3818a",
+    "documentacao/publica/capturas/integracao_modelo_gis/estreito.png": "8cc8c5b709ec51c8a073a7f72a5bd7164a91ddd763908778fb19224411ba228b"
   }
 }

@@ -377,6 +377,9 @@ class AmbienteTrabalho(CentralTrabalho):
         if self._pronto and antes != self.projetos.dados['ativo']:
             self.limpar_mapa()
             self.quadro.escolher(self.quadro.grupo)
+            if self.__dict__.get('analise_gis') is not None:
+                self.analise_gis.abrir(self.analise_gis.objetivo)
+                self.abrir_modelo_gis()
 
     def escolher_projeto(self, i):
         antes = self.projetos.dados['ativo']
@@ -421,8 +424,21 @@ class AmbienteTrabalho(CentralTrabalho):
         i = self.objetivo.currentIndex()
         if i == 4:
             self.historico_aberto()
+        elif i in (0, 2, 3):
+            self.abrir_analise_gis({0: 'verificar', 2: 'fronteiras', 3: 'interferencias'}[i])
         else:
-            self.acionar(['gis', 'corredores', 'gis', 'gis'][i])
+            self.acionar('corredores')
+
+    def abrir_analise_gis(self, objetivo):
+        if self.ocupado() or not self.modelo_gis.resolver(): return False
+        pagina = self.__dict__.get('analise_gis')
+        if pagina is None:
+            from .analise_gis_ui import AnaliseGIS
+            pagina = self.analise_gis = AnaliseGIS(self)
+            self.paginas.addWidget(pagina)
+        if not pagina.abrir(objetivo): return False
+        self.paginas.setCurrentWidget(pagina)
+        return True
 
     def listar_trabalhos(self):
         if not self._pronto:
@@ -493,6 +509,9 @@ class AmbienteTrabalho(CentralTrabalho):
                 self.avisos.setText(check['erro'])
                 self.avisos.show()
                 return False
+            if r['tipo'] == 'AUDITORIA_GIS':
+                if not self.abrir_analise_gis('verificar'): return False
+                return self.analise_gis.abrir_persistida(r)
             if self.app.abrir_registro(r):
                 self.projetos.vincular(r)
                 self.atualizar()

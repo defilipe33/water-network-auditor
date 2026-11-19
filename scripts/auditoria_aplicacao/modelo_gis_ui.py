@@ -7,7 +7,7 @@ from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtWidgets import (
     QListWidget, QListWidgetItem, QSizePolicy, QStackedWidget, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHeaderView, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
-    QVBoxLayout, QWidget,
+    QVBoxLayout, QWidget, QFrame, QMenu,
 )
 from qgis.core import QgsProject, QgsVectorLayer, QgsVectorLayerFeatureSource
 
@@ -89,6 +89,11 @@ def formulario(layout):
     return form
 
 
+def secao(layout, titulo):
+    linha_ = QFrame(); linha_.setFrameShape(QFrame.HLine); layout.addWidget(linha_)
+    rotulo = aviso(titulo); rotulo.setStyleSheet('font-weight:600'); layout.addWidget(rotulo)
+
+
 def lista_compacta():
     lista = QListWidget()
     lista.setWordWrap(True)
@@ -121,20 +126,23 @@ class EditorFonte(QWidget):
         self.mapa = CamposSobDemanda(self.preparar_avancados)
         area = QVBoxLayout(self)
         area.addWidget(aviso(CATEGORIAS[fonte['categoria']].nome + ' · ' + fonte['nome']))
+        secao(area, 'Identificação')
         essenciais = formulario(area)
         itens = {'': 'Não mapeado', **{f: f for f in self.meta['campos']}}
         _, ambiguos = sugerir_campos(self.meta['campos'], fonte['categoria'])
         self._opcoes_campos, self._ambiguos = itens, ambiguos
         self._extras_iniciais = {k: fonte['campos_mapeados'].get(k) for k in CATEGORIAS[fonte['categoria']].campos}
-        for k in ('id', 'label', 'wg'):
+        for k in ('id', 'label', *(('nome',) if fonte['categoria'] == 'PRV' else ())):
             self.campo(essenciais, k, itens, ambiguos)
+        _, wg = expansivel(area, 'Correspondência WaterGEMS — opcional')
+        wg_form = formulario(wg)
+        self.campo(wg_form, 'wg', itens, ambiguos)
         self.alvo = combo({'': 'Sem associação', **{x: x for x in VINCULOS_WG}}, fonte['alvo_wg'])
         self.alvo.setToolTip('Escolha GIS-ID, Label ou DomainElementID. Correspondência opcional; não é o FID interno do QGIS.')
-        essenciais.addRow('Identificador correspondente no WaterGEMS', self.alvo)
+        wg_form.addRow('Identificador correspondente no WaterGEMS', self.alvo)
         if CATEGORIAS[fonte['categoria']].grupo == 'Zonas e setores':
             area.addWidget(aviso('Referência espacial GIS. Não é um elemento hidráulico; correspondência WaterGEMS dispensável.'))
-        self.abrir_adicionais, self._extra = expansivel(area, 'Propriedades adicionais')
-        self.abrir_adicionais.toggled.connect(lambda aberto: self.preparar_avancados() if aberto else None)
+        secao(area, 'Filtros e elementos')
         self.estado_filtro = aviso()
         area.addWidget(self.estado_filtro)
         self.construtor = None
@@ -152,7 +160,7 @@ class EditorFonte(QWidget):
         form.addRow('Operador', self.operador)
         form.addRow('Valor', self.valor)
         self.usar_filtro_b = botao(simples, 'Usar este filtro', self.usar_filtro)
-        _, avancado = expansivel(area, 'Modo especialista — expressão QGIS')
+        _, avancado = expansivel(self._visual, 'Modo especialista')
         self.filtro = QLineEdit(fonte['filtro'])
         formulario(avancado).addRow('Expressão', self.filtro)
         botao(avancado, 'Limpar filtro', self.filtro.clear)
@@ -165,14 +173,22 @@ class EditorFonte(QWidget):
         self._regra_aplicada = self.regra()
         self.atualizar_filtro()
         botao(area, 'Verificar elementos encontrados', lambda: self.prever()).setEnabled(isinstance(camada, QgsVectorLayer))
-        botao(area, 'Ampliar amostra para até 100', lambda: self.prever(100)).setEnabled(isinstance(camada, QgsVectorLayer))
-        botao(area, 'Destacar elemento da amostra', self.destacar_amostra)
-        botao(area, 'Enquadrar elemento destacado', lambda: self.painel.central.mapa.aproximar() if hasattr(self.painel.central, 'mapa') else None)
-        botao(area, 'Limpar destaque', lambda: self.painel.central.mapa.limpar() if hasattr(self.painel.central, 'mapa') else None)
+        self.amostra_mais = botao(area, 'Ações da amostra'); self.amostra_mais.setEnabled(False)
+        menu = QMenu(self.amostra_mais)
+        menu.addAction('Ampliar para até 100', lambda: self.prever(100))
+        menu.addAction('Destacar elemento selecionado', self.destacar_amostra)
+        menu.addAction('Enquadrar destaque', lambda: self.painel.central.mapa.aproximar() if hasattr(self.painel.central, 'mapa') else None)
+        menu.addAction('Limpar destaque', lambda: self.painel.central.mapa.limpar() if hasattr(self.painel.central, 'mapa') else None)
+        self.amostra_mais.setMenu(menu)
+        self.amostra.itemDoubleClicked.connect(lambda _: self.destacar_amostra())
         if fonte['categoria'] in ('RESERVOIR', 'TANK'):
+            secao(area, 'Relações com a rede')
             self.abrir_conexoes, self._conexoes_area = expansivel(area, 'Definir conexões com a rede')
             self.abrir_conexoes.toggled.connect(self.preparar_conexoes)
             self._conexoes_lista = None
+        secao(area, 'Configurações avançadas')
+        self.abrir_adicionais, self._extra = expansivel(area, 'Propriedades adicionais')
+        self.abrir_adicionais.toggled.connect(lambda aberto: self.preparar_avancados() if aberto else None)
         if isinstance(camada, QgsVectorLayer):
             for nome_sinal in ('dataChanged', 'dataSourceChanged', 'updatedFields', 'subsetStringChanged'):
                 getattr(camada, nome_sinal).connect(self.invalidar_amostra)
@@ -182,6 +198,7 @@ class EditorFonte(QWidget):
         self._amostra_geracao += 1
         self._amostra_fids = []
         self.amostra.hide()
+        self.amostra_mais.setEnabled(False)
         self.mensagem.setText('A fonte mudou. Consulte a amostra novamente antes de destacar elementos.')
 
     def preparar_conexoes(self, aberto):
@@ -282,7 +299,7 @@ class EditorFonte(QWidget):
         if aberto and self.construtor is None:
             from .filtros_gis_ui import ConstrutorFiltros
             self.construtor = ConstrutorFiltros(self)
-            self._visual.addWidget(self.construtor)
+            self._visual.insertWidget(0, self.construtor)
 
     def preparar_avancados(self):
         if self._avancados:
@@ -290,7 +307,8 @@ class EditorFonte(QWidget):
         self._avancados = True
         form = formulario(self._extra)
         for k in CATEGORIAS[self.fonte['categoria']].campos:
-            self.campo(form, k, self._opcoes_campos, self._ambiguos)
+            if k not in self.mapa:
+                self.campo(form, k, self._opcoes_campos, self._ambiguos)
         self._papel = combo(PAPEIS, self.fonte['papel'])
         self._classe = combo(CLASSIFICACOES, self.fonte['classificacao'])
         form.addRow('Papel da fonte', self._papel)
@@ -327,6 +345,7 @@ class EditorFonte(QWidget):
         self.estado_filtro.setText('Filtro: ' + (self.filtro.text().strip() or 'todas as feições'))
         self.amostra.hide()
         self._amostra_fids = []
+        if hasattr(self, 'amostra_mais'): self.amostra_mais.setEnabled(False)
 
     def usar_filtro(self):
         try:
@@ -422,6 +441,7 @@ class EditorFonte(QWidget):
         self.mensagem.setText(f"{len(self._amostra_fids)} exibida(s); total: {total}. {resultado['lidas']} feições examinadas." +
                               (' Filtro válido sem resultados.' if resultado['completa'] and not self._amostra_fids else ''))
         self.amostra.show()
+        self.amostra_mais.setEnabled(bool(self._amostra_fids))
 
     def destacar_amostra(self):
         i = self.amostra.currentRow()
@@ -541,6 +561,7 @@ class PainelModeloGIS(QWidget):
         self.feedback = aviso()
         layout.addWidget(self.feedback)
         self.salvar_b = botao(layout, 'Salvar Modelo GIS', self.salvar)
+        self.salvar_b.setObjectName('Principal')
         self.salvar_b.setStyleSheet('font-weight: bold')
         self.rodape_tarefa = QWidget()
         faixa = QHBoxLayout(self.rodape_tarefa)

@@ -151,7 +151,8 @@ class FluxosAjustadosTest(unittest.TestCase):
     def test_investigar_gis_sem_wg(self):
         for i in (0,2,3):
             self.c.objetivo.setCurrentIndex(i)
-            with patch.object(self.c,'acionar') as a:self.c.iniciar_objetivo();a.assert_called_once_with('gis')
+            with patch.object(self.c,'abrir_analise_gis') as a:
+                self.c.iniciar_objetivo();a.assert_called_once_with({0:'verificar',2:'fronteiras',3:'interferencias'}[i])
     def test_poligono_sem_wg(self):
         e=self.editor('SETOR',[self.fx.zona]);self.assertEqual(e.configurar()['alvo_wg'],'')
     def test_declarar_reservatorio_afastado_e_reabrir(self):

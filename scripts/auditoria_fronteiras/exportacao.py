@@ -19,9 +19,11 @@ def _csv(caminho,campos,linhas):
         escritor.writerows(linhas)
 
 
-def exportar_shp(dossie,pasta):
+def exportar_shp(dossie,pasta,contexto_transformacao=None,cancelar=None):
     """Pasta deve ser nova. Valores DBF longos são sinalizados, nunca truncados."""
     pasta=Path(pasta)
+    from .modelos import verificar_cancelamento
+    verificar_cancelamento(cancelar)
     if pasta.exists():
         raise FileExistsError('Escolha uma subpasta nova para o conjunto SHP')
     if not pasta.parent.is_dir():
@@ -52,6 +54,7 @@ def exportar_shp(dossie,pasta):
         esperados={}
         feicoes=[]
         for item in itens:
+            verificar_cancelamento(cancelar)
             r=item['registro']
             valores=[dossie['execucao_uid'],item['uid']]+[r[c] for c in campos]
             for n,v in enumerate(valores):
@@ -73,7 +76,9 @@ def exportar_shp(dossie,pasta):
         op.fileEncoding='UTF-8'
         op.layerOptions=['RESIZE=NO']
         arquivo=pasta/(nome+'.shp')
-        erro=QgsVectorFileWriter.writeAsVectorFormatV3(camada,str(arquivo),QgsProject.instance().transformContext(),op)
+        verificar_cancelamento(cancelar)
+        contexto=contexto_transformacao if contexto_transformacao is not None else QgsProject.instance().transformContext()
+        erro=QgsVectorFileWriter.writeAsVectorFormatV3(camada,str(arquivo),contexto,op)
         if erro[0]!=QgsVectorFileWriter.NoError:
             raise RuntimeError('Exportação SHP falhou: '+str(erro))
         for ext in ('.shp','.shx','.dbf','.prj','.cpg'):
