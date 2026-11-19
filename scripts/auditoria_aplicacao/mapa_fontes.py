@@ -184,3 +184,39 @@ class MapaFontes(QObject):
         self.itens.append(b); self.caixas.append(g.boundingBox())
         self.mensagem.emit(nome + ' · destaque temporário; use Enquadrar para aproximar.')
         return True
+
+    def destacar_investigacao(self, itens, crs, aproximar=False,toda_extensao=False):
+        if self.app.atividades.em_execucao() or not self.canvas:return False
+        self.limpar()
+        destino=self.canvas.mapSettings().destinationCrs()
+        if not crs.isValid() or not destino.isValid():raise ValueError('Confira o CRS do trabalho e do mapa.')
+        trans=QgsCoordinateTransform(crs,destino,QgsProject.instance())
+        caixas=[]
+        for papel,geom in itens:
+            if geom is None or geom.isNull() or geom.isEmpty():continue
+            g=QgsGeometry(geom)
+            if g.transform(trans)!=0:raise ValueError('Falha na transformação do destaque.')
+            cor={'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240)}[papel]
+            b=QgsRubberBand(self.canvas,g.type());b.setColor(cor);b.setFillColor(QColor(0,0,0,0));b.setWidth(4 if papel=='tubo' else 3)
+            b.setIcon(QgsRubberBand.ICON_BOX if papel=='local' else QgsRubberBand.ICON_CIRCLE);b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
+            self.itens.append(b);self.caixas.append(g.boundingBox())
+            if papel!='local':caixas.append(geom.boundingBox())
+        if aproximar and self.itens:
+            caixas=caixas or [g.boundingBox() for _,g in itens if g is not None]
+            caixa=QgsRectangle(caixas[0])
+            for c in caixas[1:]:caixa.combineExtentWith(c)
+            eventos=[g.boundingBox() for papel,g in itens if papel=='evento' and g is not None and not g.isEmpty()]
+            if eventos and not toda_extensao:
+                local=QgsRectangle(eventos[0])
+                for c in eventos[1:]:local.combineExtentWith(c)
+                # Um tubo extenso não deve afastar a vista do ponto investigado.
+                # O desenho continua integral; somente o enquadramento é local.
+                janela=max(200,4*max(local.width(),local.height()))
+                if max(caixa.width(),caixa.height())>janela:
+                    caixa=local
+                    self.mensagem.emit('Aproximação focada nas ocorrências. Tubulações extensas continuam destacadas; use Ver toda a extensão para enquadrá-las integralmente.')
+            # O CRS dos trabalhos é métrico validado; mínimo de 30 m antes da margem.
+            centro=caixa.center();w=max(30,caixa.width());h=max(30,caixa.height())
+            caixa=QgsRectangle(centro.x()-w/2,centro.y()-h/2,centro.x()+w/2,centro.y()+h/2);caixa.scale(1.15)
+            self.canvas.setExtent(trans.transformBoundingBox(caixa));self.canvas.refresh()
+        return bool(self.itens)

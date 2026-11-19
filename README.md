@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+Pré-release 1.15.1: [investigação GIS com detalhes, decisões individuais, estados mistos, mapa e histórico](documentacao/publica/INVESTIGACAO_GIS_1_15_1.md).
+
 Pré-release 1.15.0 — Entrega 1: [Modelo GIS alimentando as análises, uso, testes e limitações](documentacao/publica/INTEGRACAO_MODELO_GIS_1_15_0.md). Topologia GIS independente e consolidação completa do histórico são entregas posteriores.
 
 

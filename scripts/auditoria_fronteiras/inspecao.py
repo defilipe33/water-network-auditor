@@ -82,7 +82,8 @@ def restaurar(dossie):
     return resultado,analise
 
 
-def detalhes_local(dossie,uid):
+def detalhes_local(dossie,uid,indice=None,evento=None):
+    if indice is not None:return indice.detalhes(uid,evento)
     local=next(l for l in dossie['locais'] if l['uid']==uid)
     eventos=[e for e in dossie['eventos'] if e['uid'] in local['eventos']]
     tubos={r['tubo_uid'] for r in dossie['evento_rede'] if r['evento_uid'] in local['eventos']}

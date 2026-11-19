@@ -150,7 +150,8 @@ class AmbienteTrabalho(CentralTrabalho):
         v.addWidget(self.mapa_info)
         mapa_faixa = QHBoxLayout()
         v.addLayout(mapa_faixa)
-        acao(mapa_faixa, 'Enquadrar destaque', self.mapa.aproximar)
+        self.aproximar_b = acao(mapa_faixa, 'Enquadrar destaque', self.aproximar_contexto)
+        self.paginas.currentChanged.connect(self.atualizar_comando_mapa)
         acao(mapa_faixa, 'Limpar', self.limpar_mapa)
         self.avisos = aviso()
         self.avisos.hide()
@@ -437,8 +438,19 @@ class AmbienteTrabalho(CentralTrabalho):
             pagina = self.analise_gis = AnaliseGIS(self)
             self.paginas.addWidget(pagina)
         if not pagina.abrir(objetivo): return False
+        self.area.setCurrentIndex(self.area.findData('investigar'))
         self.paginas.setCurrentWidget(pagina)
         return True
+
+    def atualizar_comando_mapa(self, *_):
+        gis = self.__dict__.get('analise_gis')
+        ativo = gis is not None and self.paginas.currentWidget() is gis
+        self.aproximar_b.setText('Aproximar local' if ativo else 'Enquadrar destaque')
+
+    def aproximar_contexto(self):
+        gis = self.__dict__.get('analise_gis')
+        if gis is not None and self.paginas.currentWidget() is gis: return gis.aproximar()
+        return self.mapa.aproximar()
 
     def listar_trabalhos(self):
         if not self._pronto:

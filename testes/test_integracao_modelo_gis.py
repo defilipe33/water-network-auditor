@@ -4,7 +4,8 @@ from copy import deepcopy
 from pathlib import Path
 from unittest.mock import patch
 from qgis.core import QgsProject,QgsCoordinateTransformContext,QgsCoordinateReferenceSystem,QgsGeometry,QgsCoordinateTransform
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt,QCoreApplication,QEvent
+from qgis.PyQt import sip
 from qgis.PyQt.QtWidgets import QMessageBox
 from test_auditoria_fronteiras import APP,camada
 import test_nova_interface as fixture
@@ -89,9 +90,17 @@ class AdaptadorGIS(unittest.TestCase):
   self.rede.selectAll();ids=self.rede.selectedFeatureIds();xml=self.rede.renderer().dump();self.rodar()
   self.assertEqual(self.rede.selectedFeatureIds(),ids);self.assertEqual(self.rede.renderer().dump(),xml)
 
+def limpar_fixture(f):
+ f.doCleanups()
+ # O cenário embutido cria uma janela e um canvas por caso. Fechar apenas oculta:
+ # destruir deterministicamente enquanto o runtime QGIS ainda está disponível.
+ for w in (f.f.canvas,f.f.main):
+  if not sip.isdeleted(w):w.deleteLater()
+ QCoreApplication.sendPostedEvents(None,QEvent.DeferredDelete)
+
 class PaginaGIS(unittest.TestCase):
  def setUp(self):
-  self.f=fixture.AmbienteTest();self.f.setUp();self.addCleanup(self.f.doCleanups)
+  self.f=fixture.AmbienteTest();self.f.setUp();self.addCleanup(limpar_fixture,self.f)
   self.c,self.m,self.app=self.f.c,self.f.m,self.f.f.app
   r=camada('LineString',['LINESTRING(-2 5,12 5)','LINESTRING(-2 6,12 6)'],ids=[101,202],nome='Distribuição')
   r2=camada('LineString',['LINESTRING(5 -2,5 12)'],ids=[303],nome='Rede complementar')

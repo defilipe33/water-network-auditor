@@ -39,6 +39,7 @@ class FonteSnapshot:
         self.contexto = QgsCoordinateTransformContext(contexto)
         self.wkb = camada.wkbType()
         self.erros = []
+        self.reter = set(); self.geometrias = {}
 
     def isValid(self): return True
     def name(self): return self.fonte['nome']
@@ -63,6 +64,12 @@ class FonteSnapshot:
                 except Exception as e:
                     self.erros.append(dict(fid_diagnostico=f.id(), motivo=str(e)))
                     f.setGeometry(QgsGeometry())
+            if self.reter:
+                from auditoria_fronteiras.entradas import digest, valor_python
+                attrs={campo.name():valor_python(f[campo.name()]) for campo in self.snapshot.fields()}
+                wkb=bytes(f.geometry().asWkb()).hex()
+                chave=digest([self.fonte['uid'],attrs,wkb])
+                if chave in self.reter:self.geometrias[chave]=wkb
             yield f
 
 
@@ -141,12 +148,17 @@ def executar(preparacao, nome, projeto, cancelar=lambda: False, progresso=lambda
                               for k in ('diametro', 'material')} for c in preparacao.redes}
     d = construir_dossie(r, a, campos)
     inicializar(d, nome, projeto)
+    for c in preparacao.redes:
+        c.camada.reter={t['uid'].rsplit('_',1)[0] for t in d['tubulacoes'] if t['origem']==c.chave_origem}
     d['configuracao'] = configuracao_proposta(preparacao.redes, preparacao.limites,
         preparacao.parametros, opcoes, campos, cancelar=cancelar)
     for f in d['configuracao']['fontes']:
         s = por_origem[f['origem']]
         f.update(crs_origem=s.origem_crs.authid() or s.origem_crs.toWkt(),
                  filtro_modelo_gis=s.fonte['filtro'])
+    for t in d['tubulacoes']:
+        g=por_origem[t['origem']].geometrias.get(t['uid'].rsplit('_',1)[0])
+        if g:t['geometria_wkb_hex']=g
     d['configuracao']['modelo_gis'] = deepcopy(preparacao.proveniencia)
     d['configuracao']['modelo_gis']['avisos'] = list(preparacao.avisos)
     d['configuracao']['modelo_gis']['erros_transformacao'] = [
