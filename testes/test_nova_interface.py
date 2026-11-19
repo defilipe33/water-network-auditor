@@ -156,7 +156,8 @@ class AmbienteTest(unittest.TestCase):
         self.c.projetos.vincular(b)
         self.c._registros = [a, b, fora]
         self.c._fatos = dict(wg={'valido': True, 'uuid': 'a'}, contexto={'modelo': 'Nome legível', 'cenario': 1})
-        self.c.atualizar_cenarios()
+        with patch.object(self.c.app.catalogo, 'listar_opcional', return_value=self.c._registros):
+            self.c.atualizar_cenarios()
         rs = [self.c.cenarios.itemData(i) for i in range(self.c.cenarios.count())]
         self.assertIn(b, rs)
         self.assertNotIn(fora, rs)
@@ -229,7 +230,8 @@ class AmbienteTest(unittest.TestCase):
         ]
         for r in self.c._registros[:2]:
             self.c.projetos.vincular(r)
-        self.c.area.setCurrentIndex(2)
+        with patch.object(self.c.app.catalogo, 'listar_opcional', return_value=self.c._registros):
+            self.c.area.setCurrentIndex(2)
         self.c.listar_trabalhos()
         self.assertEqual(self.c.trabalhos_lista.count(), 1)
         self.c.trabalhos_lista.setCurrentRow(0)

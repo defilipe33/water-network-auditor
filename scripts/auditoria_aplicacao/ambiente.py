@@ -24,7 +24,9 @@ class AmbienteTrabalho(CentralTrabalho):
     def __init__(self, app):
         self._pronto = False
         self._fonte_mapa = None
-        super().__init__(app)
+        self._central_legada = None
+        self._contexto_lido = self._catalogo_lido = None
+        super().__init__(app, leve=True)
         self.setWindowTitle('Water Network Auditor — Quadro do Modelo')
         self.legado = self.widget()
         self.legado.setParent(None)
@@ -181,6 +183,26 @@ class AmbienteTrabalho(CentralTrabalho):
         self.paginas.addWidget(scroll)
         return scroll, v
 
+    def __getattr__(self, nome):
+        # Compatibilidade dos acessos avançados, sem construir a Central na entrada.
+        if self.__dict__.get('_pronto') and nome in ('tabs', 'nivel', 'preparacao', 'tabela', 'progresso', 'acoes', 'resumo_gis'):
+            return getattr(self.obter_legado(), nome)
+        raise AttributeError(nome)
+
+    def obter_legado(self):
+        if self._central_legada is None:
+            legado = CentralTrabalho(self.app, dono=self)
+            legado.setObjectName('WNA_Central_Legada')
+            legado.timer.stop()
+            legado.setParent(self)
+            antigo = self.legado
+            self.legado = legado.widget()
+            self.legado.setParent(self.raiz)
+            self.legado.hide()
+            antigo.deleteLater()
+            self._central_legada = legado
+        return self._central_legada
+
     def mudar_area(self):
         if not self._pronto:
             return
@@ -191,6 +213,7 @@ class AmbienteTrabalho(CentralTrabalho):
                                        'trabalhos': self.trabalhos}[codigo])
         self.settings.setValue('ambiente/area', codigo)
         if codigo == 'trabalhos':
+            self.garantir_catalogo()
             self.listar_trabalhos()
 
     def abrir_modelo_gis(self):
@@ -201,11 +224,11 @@ class AmbienteTrabalho(CentralTrabalho):
         self.area.show()
         self.area.setCurrentIndex(0)
         self.paginas.setCurrentWidget(self.quadro)
-        self.modelo_gis.atualizar()
 
     def abrir_avancados(self):
         if self.ocupado():
             return
+        self.obter_legado().atualizar()
         self.paginas.hide()
         self.area.hide()
         if not getattr(self, '_legado_inserido', False):
@@ -223,15 +246,66 @@ class AmbienteTrabalho(CentralTrabalho):
 
     def atualizar(self):
         if not self._pronto:
-            return super().atualizar()
-        super().atualizar()
+            return
+        if self.ocupado():
+            self.pendencias.setText('Atividade em andamento. Acompanhe etapas e cancelamento em Janelas / painéis.')
+            return
+        if self.pendencias.text().startswith('Atividade em andamento.'):
+            self.pendencias.clear()
+        from .contexto_trabalho import fatos
+        from .dependencias import avaliar
+        g, w, p = self.app.geo, self.app.wg, self.app.painel
+        from qgis.PyQt import sip
+        if w and sip.isdeleted(w): w = None
+        if p and sip.isdeleted(p): p = None
+        base = getattr(w, 'base', None)
+        chave = (self.projetos.dados['ativo'], id(g.dossie), (g.dossie or {}).get('execucao_uid'),
+                 g.base_revisao, g._executando, g.pendente(),
+                 base, self.marca(base), id(getattr(w, '_prova', None)),
+                 w.modo.currentText() if w else None,
+                 tuple(c.currentData() for c in w.mapas.values()) if w else (),
+                 id(p), p.pacote['resultado']['meta']['uid'] if p else None,
+                 p._ativo if p else None, p.modo.currentData() if p else None)
+        if chave != self._contexto_lido:
+            self._fatos = fatos(self.app)
+            self._requisitos = avaliar(self._fatos)
+            self._contexto_lido = chave
+            if self._central_legada is not None and self.legado.isVisible():
+                self._central_legada._carregar_projetos()
+                self._central_legada.atualizar()
         self.atualizar_contexto()
         self.avisos.setText(self.pendencias.text())
         self.avisos.setVisible(bool(self.avisos.text()))
         self.atualizar_cenarios()
         self.quadro.atualizar()
         self.preparar_avisos()
-        self.listar_trabalhos()
+        if self.area.currentData() == 'trabalhos':
+            self.garantir_catalogo()
+            self.listar_trabalhos()
+
+    @staticmethod
+    def marca(arquivo):
+        if not arquivo:
+            return None
+        marcas = []
+        for nome in (str(arquivo), str(arquivo) + '-wal'):
+            try:
+                s = Path(nome).stat()
+                marcas.append((s.st_size, s.st_mtime_ns))
+            except OSError:
+                marcas.append(None)
+        return tuple(marcas)
+
+    def garantir_catalogo(self):
+        chave = self.marca(self.app.catalogo.raiz / 'catalogo_bases.sqlite')
+        if chave != self._catalogo_lido:
+            self._registros = self.app.catalogo.listar_opcional()
+            self._catalogo_lido = self.marca(self.app.catalogo.raiz / 'catalogo_bases.sqlite')
+
+    def acionar(self, chave):
+        # Os requisitos são verificados no instante da ação, não na troca de categoria.
+        self._contexto_lido = None
+        return super().acionar(chave)
 
     def atualizar_contexto(self):
         f = self._fatos
@@ -256,11 +330,18 @@ class AmbienteTrabalho(CentralTrabalho):
         f = self._fatos
         ctx = f.get('contexto', {})
         atual = f.get('wg', {}).get('uuid')
+        if atual:
+            self.garantir_catalogo()
         modelo = next((r.get('modelo_uid') for r in self._registros
                        if r['uuid'] == atual and r['tipo'] == 'TOPOLOGIA_WG'), None)
         rs = [r for r in self._registros if r['tipo'] == 'TOPOLOGIA_WG' and modelo
               and self.projetos.contem(r['tipo'], r['uuid'])
               and r.get('modelo_uid') == modelo]
+        chave_cenarios = (self.projetos.dados['ativo'], atual, str(ctx.get('cenario')), str(ctx.get('nome_cenario')),
+                          tuple((r['uuid'], r.get('nome'), r.get('cenario'), r.get('versao')) for r in rs))
+        if chave_cenarios == getattr(self, '_chave_cenarios', None):
+            return
+        self._chave_cenarios = chave_cenarios
         self.cenarios.blockSignals(True)
         self.cenarios.clear()
         rotulo = ('Cenário ' + str(ctx.get('nome_cenario', ctx.get('cenario', '—'))) + ' · versão incorporada'
@@ -350,11 +431,18 @@ class AmbienteTrabalho(CentralTrabalho):
         identidade = antigo.data(Qt.UserRole) if antigo else None
         termo = self.pesquisa.text().casefold()
         tipo = self.tipo_trabalho.currentData()
+        p = self.projetos.atual()
+        refs = {(r['uuid'], r['tipo']) for r in (p or {}).get('bases', [])}
+        chave_lista = (self.projetos.dados['ativo'], termo, tipo, tuple(sorted(refs)),
+                       tuple(tuple(str(r.get(k, '')) for k in ('uuid','tipo','base','nome','versao','estado_catalogo','classe_arquivo'))
+                             for r in self._registros))
+        if chave_lista == getattr(self, '_lista_trabalhos_chave', None):
+            self.detalhar_trabalho(self.trabalhos_lista.currentItem())
+            return
+        self._lista_trabalhos_chave = chave_lista
         self.trabalhos_lista.blockSignals(True)
         self.trabalhos_lista.clear()
         self._trabalhos = []
-        p = self.projetos.atual()
-        refs = {(r['uuid'], r['tipo']) for r in (p or {}).get('bases', [])}
         for r in self._registros:
             if p and (r['uuid'], r['tipo']) not in refs:
                 continue

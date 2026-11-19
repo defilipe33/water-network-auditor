@@ -113,7 +113,6 @@ class QuadroModelo(QWidget):
         self.categorias.blockSignals(False)
         self.categorias.setVisible(len(GRUPOS_QUADRO[grupo]) > 1)
         self.escolher_categoria()
-        self.atualizar()
 
     def escolher_categoria(self):
         categoria = self.categorias.currentData()

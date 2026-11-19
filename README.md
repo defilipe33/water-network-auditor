@@ -1,6 +1,8 @@
 # Water Network Auditor — GIS & WaterGEMS
 
 
+Otimização 1.14.2: [medições, arquitetura e limitações](documentacao/publica/DESEMPENHO_1_14_2.md).
+
 Correção 1.14.1: [aparência clara e escura, capturas e validação](documentacao/publica/TEMAS_1_14_1.md).
 Ferramenta Python/PyQGIS para auditar fronteiras espaciais, examinar a conectividade
 de modelos Bentley WaterGEMS e acompanhar investigações técnicas no QGIS.

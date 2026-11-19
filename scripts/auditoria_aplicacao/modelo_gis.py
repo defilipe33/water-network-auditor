@@ -141,6 +141,13 @@ def descrever(camada):
 
 def identificar(fonte, camadas):
     """Resolve a fonte pelo provedor e URI; o ID do projeto desambigua visualizações."""
+    camadas = list(camadas)
+    # O ID só é atalho quando a identidade da fonte também confere.
+    for c in camadas:
+        if c.id() == fonte['camada_id'] and c.isValid() and c.providerType() == fonte['provedor'] and origem_camada(c) == fonte['origem']:
+            return c
+    if fonte['provedor'] == 'memory':
+        return None
     candidatas = [
         c for c in camadas if c.isValid() and c.providerType() == fonte['provedor']
         and origem_camada(c) == fonte['origem']

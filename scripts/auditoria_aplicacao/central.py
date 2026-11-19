@@ -9,8 +9,18 @@ from .modelo_gis import revisoes
 from .modelo_gis_ui import PainelModeloGIS
 
 class CentralTrabalho(QDockWidget):
-    def __init__(self,app):
+    def __init__(self,app,leve=False,dono=None):
         super().__init__('Water Network Auditor — Central de Trabalho',app.iface.mainWindow());self.app=app;self.setObjectName('WNA_Central');self.projetos=Projetos(app.catalogo.raiz);self.settings=__import__('qgis.PyQt.QtCore',fromlist=['QSettings']).QSettings(str(app.catalogo.raiz/'preferencias_interface.ini'),__import__('qgis.PyQt.QtCore',fromlist=['QSettings']).QSettings.IniFormat);self.pendente=None;self._registros=[];self._requisitos={};self._fatos={}
+        self.dono=dono
+        if dono:self.projetos=dono.projetos
+        if leve:
+            self.setAllowedAreas(Qt.LeftDockWidgetArea|Qt.RightDockWidgetArea)
+            self.setWidget(QWidget());self.projeto=QComboBox();self.pendencias=QLabel()
+            self.retomar=QPushButton();self.retomar.hide();self.retomar.clicked.connect(self.retomar_operacao)
+            self.modelo_gis=PainelModeloGIS(self)
+            self.projeto.activated.connect(self.escolher_projeto);self._carregar_projetos()
+            self.timer=QTimer(self);self.timer.setInterval(2500);self.timer.timeout.connect(self.atualizar);self.timer.start()
+            return
         self.setAllowedAreas(Qt.LeftDockWidgetArea|Qt.RightDockWidgetArea);w=QWidget();self.setWidget(w);v=QVBoxLayout(w)
         topo=QHBoxLayout();self.barra_topo=topo;v.addLayout(topo);titulo=QLabel('WATER NETWORK AUDITOR');titulo.setStyleSheet('font-size:17px;font-weight:bold;');topo.addWidget(titulo);topo.addStretch();self.nivel=QComboBox();self.nivel.addItems(['Guiado','Avançado']);self.nivel.setCurrentText(self.settings.value('navegacao/nivel','Guiado'));self.nivel.currentTextChanged.connect(self.mudar_nivel);topo.addWidget(self.nivel)
         self.contexto=QLabel();self.contexto.setWordWrap(True);self.contexto.setTextFormat(Qt.PlainText);v.addWidget(self.contexto)
@@ -36,7 +46,8 @@ class CentralTrabalho(QDockWidget):
         b=QPushButton('Abrir base selecionada');b.clicked.connect(self.abrir_registro);pv.addWidget(b);b=QPushButton('Catálogo: adicionar, localizar arquivos, histórico…');b.clicked.connect(lambda:self.app.catalogar());pv.addWidget(b)
         from .preparacao_guiada import PreparacaoGuiada
         self.preparacao=PreparacaoGuiada(self);self.tabs.insertTab(1,self.preparacao,'Preparação guiada')
-        self.modelo_gis=PainelModeloGIS(self);self.tabs.insertTab(2,self.modelo_gis,'Modelo GIS')
+        self.modelo_gis=dono.modelo_gis if dono else PainelModeloGIS(self)
+        if not dono:self.tabs.insertTab(2,self.modelo_gis,'Modelo GIS')
         h=QHBoxLayout();v.addLayout(h);self.janelas=QPushButton('Janelas / painéis');self.janelas.setMenu(app.menu_janelas);h.addWidget(self.janelas);b=QPushButton('Ajuda da seção');b.clicked.connect(self.ajuda);h.addWidget(b)
         self.projeto.activated.connect(self.escolher_projeto);self._carregar_projetos();self.tabs.currentChanged.connect(self.guardar_secao)
         secao=self.settings.value('navegacao/secao_id','')
@@ -50,21 +61,25 @@ class CentralTrabalho(QDockWidget):
         for p in self.projetos.dados['projetos']:self.projeto.addItem(p['nome']+' · '+p['uuid'][:8],p['uuid'])
         self.projeto.setCurrentIndex(max(0,self.projeto.findData(self.projetos.dados['ativo'])))
     def criar_projeto(self):
+        if self.dono:return self.dono.criar_projeto()
         if self.ocupado() or not self.app.resolver() or not self.app.geo.resolver_pendencias() or not self.app.resolver_configuracao_wg():return
         nome,ok=QInputDialog.getText(self,'Criar projeto de trabalho','Nome do projeto (identidade UUID será criada)')
         if ok and nome.strip() and self.modelo_gis.resolver():
             self.projetos.criar(nome);self._carregar_projetos();self.modelo_gis.recarregar();self.atualizar()
     def abrir_projeto(self):self.projeto.showPopup()
     def escolher_projeto(self,i):
+        if self.dono:return self.dono.escolher_projeto(self.dono.projeto.findData(self.projeto.itemData(i)))
         uid=self.projeto.itemData(i)
         if not uid or uid==self.projetos.dados['ativo']:self._carregar_projetos();return
         if self.ocupado() or not self.app.resolver() or not self.app.geo.resolver_pendencias() or not self.app.resolver_configuracao_wg():self._carregar_projetos();return
         if not self.modelo_gis.resolver():self._carregar_projetos();return
         self.projetos.ativar(uid);self.modelo_gis.recarregar();self.atualizar()
     def abrir_modelo_gis(self):
+        if self.dono:return self.dono.abrir_modelo_gis()
         self.tabs.setCurrentWidget(self.modelo_gis)
         self.modelo_gis.atualizar()
     def conferir_modelo_gis(self):
+        if self.dono:return self.dono.conferir_modelo_gis()
         self.abrir_modelo_gis()
         self.modelo_gis.conferir()
     def mudar_nivel(self,t):

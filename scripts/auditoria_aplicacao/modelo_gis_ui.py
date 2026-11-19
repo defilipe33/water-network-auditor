@@ -3,7 +3,7 @@ from copy import deepcopy
 from collections import Counter
 from textwrap import fill
 
-from qgis.PyQt.QtCore import Qt
+from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtWidgets import (
     QListWidget, QListWidgetItem, QSizePolicy, QStackedWidget, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHeaderView, QHBoxLayout,
     QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
@@ -98,30 +98,37 @@ def lista_compacta():
     return lista
 
 
+class CamposSobDemanda(dict):
+    def __init__(self, criar):
+        super().__init__()
+        self.criar = criar
+
+    def __missing__(self, chave):
+        self.criar()
+        return dict.__getitem__(self, chave)
+
+
 class EditorFonte(QWidget):
     def __init__(self, painel, fonte, camada):
         super().__init__()
         self.painel, self.fonte = painel, fonte
         self.meta = descrever(camada)
-        self.mapa = {}
+        self._avancados = False
+        self._papel = self._classe = None
+        self.mapa = CamposSobDemanda(self.preparar_avancados)
         area = QVBoxLayout(self)
         area.addWidget(aviso(CATEGORIAS[fonte['categoria']].nome + ' · ' + fonte['nome']))
         essenciais = formulario(area)
         itens = {'': 'Não mapeado', **{f: f for f in self.meta['campos']}}
         _, ambiguos = sugerir_campos(self.meta['campos'], fonte['categoria'])
+        self._opcoes_campos, self._ambiguos = itens, ambiguos
+        self._extras_iniciais = {k: fonte['campos_mapeados'].get(k) for k in CATEGORIAS[fonte['categoria']].campos}
         for k in ('id', 'label', 'wg'):
             self.campo(essenciais, k, itens, ambiguos)
         self.alvo = combo({'': 'Sem associação', **{x: x for x in VINCULOS_WG}}, fonte['alvo_wg'])
         essenciais.addRow('Atributo no WaterGEMS', self.alvo)
-        _, extra = expansivel(area, 'Propriedades adicionais')
-        avancados = formulario(extra)
-        for k in CATEGORIAS[fonte['categoria']].campos:
-            self.campo(avancados, k, itens, ambiguos)
-        self.papel = combo(PAPEIS, fonte['papel'])
-        self.classe = combo(CLASSIFICACOES, fonte['classificacao'])
-        avancados.addRow('Papel da fonte', self.papel)
-        if fonte['categoria'] == 'PIPE':
-            avancados.addRow('Classificação', self.classe)
+        self.abrir_adicionais, self._extra = expansivel(area, 'Propriedades adicionais')
+        self.abrir_adicionais.toggled.connect(lambda aberto: self.preparar_avancados() if aberto else None)
         self.estado_filtro = aviso()
         area.addWidget(self.estado_filtro)
         self.abrir_simples, simples = expansivel(area, 'Montar filtro simples')
@@ -149,6 +156,29 @@ class EditorFonte(QWidget):
         self.atualizar_filtro()
         botao(area, 'Ver amostra dos valores', self.prever).setEnabled(isinstance(camada, QgsVectorLayer))
         area.addStretch()
+
+    def preparar_avancados(self):
+        if self._avancados:
+            return
+        self._avancados = True
+        form = formulario(self._extra)
+        for k in CATEGORIAS[self.fonte['categoria']].campos:
+            self.campo(form, k, self._opcoes_campos, self._ambiguos)
+        self._papel = combo(PAPEIS, self.fonte['papel'])
+        self._classe = combo(CLASSIFICACOES, self.fonte['classificacao'])
+        form.addRow('Papel da fonte', self._papel)
+        if self.fonte['categoria'] == 'PIPE':
+            form.addRow('Classificação', self._classe)
+
+    @property
+    def papel(self):
+        self.preparar_avancados()
+        return self._papel
+
+    @property
+    def classe(self):
+        self.preparar_avancados()
+        return self._classe
 
     def campo(self, form, k, itens, ambiguos):
         rotulo = ROTULOS.get(k, k.replace('_', ' ').capitalize())
@@ -180,9 +210,13 @@ class EditorFonte(QWidget):
         return camada
 
     def valores(self):
-        return ({k: c.currentData() for k, c in self.mapa.items() if c.currentData()},
+        campos = {} if self._avancados else dict(self._extras_iniciais)
+        campos.update({k: c.currentData() for k, c in self.mapa.items()})
+        papel = self._papel.currentData() if self._avancados else self.fonte['papel']
+        classe = self._classe.currentData() if self._avancados else self.fonte['classificacao']
+        return ({k: v for k, v in campos.items() if v},
                 self.filtro.text().strip(), self.alvo.currentData(),
-                self.papel.currentData(), self.classe.currentData())
+                papel, classe)
 
     def regra(self):
         return self.coluna.currentData(), self.operador.currentData(), self.valor.text()
@@ -260,6 +294,13 @@ class PainelModeloGIS(QWidget):
         self._referencia = ([], 'INFERIR')
         self.categoria = self.editor = self.tarefa = self.selecionada = None
         self._estado = {}
+        self._pendencias_cache = {}
+        self._observadas = set()
+        self._resolvidas_ids = set()
+        self._fontes_sujas = False
+        self._refresh_fontes = QTimer(self)
+        self._refresh_fontes.setSingleShot(True)
+        self._refresh_fontes.timeout.connect(self.atualizar)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         self.contexto = aviso()
@@ -345,6 +386,15 @@ class PainelModeloGIS(QWidget):
         self.limpar_conferencia()
         self.atualizar()
 
+    def fonte_mudou(self, *_):
+        origem = self.sender()
+        if origem is not None and origem.id() not in self._resolvidas_ids:
+            return
+        self.limpar_conferencia()
+        self._pendencias_cache.clear()
+        self._fontes_sujas = True
+        self._refresh_fontes.start(0)
+
     def pagina(self):
         w = QWidget()
         self.paginas.addWidget(w)
@@ -357,6 +407,7 @@ class PainelModeloGIS(QWidget):
         self.rolagem.verticalScrollBar().setValue(0)
 
     def recarregar(self):
+        self._pendencias_cache = {}
         self.cancelar_tarefa()
         projeto = self.projetos.atual() or {}
         hist = revisoes(projeto)
@@ -402,7 +453,10 @@ class PainelModeloGIS(QWidget):
             self.categoria, self.selecionada = categoria, None
             self.feedback.clear()
             self.mostrar(self.detalhe)
-            self.atualizar()
+            if self._fontes_sujas:
+                self.atualizar()
+            else:
+                self.atualizar_categoria()
 
     def mostrar_tarefa(self, widget, texto, acao, pode_confirmar=True):
         self.tarefa = widget
@@ -440,6 +494,15 @@ class PainelModeloGIS(QWidget):
 
     def pendencias_fonte(self, fonte):
         uid = fonte['uid']
+        resultado = self.resultados.get(uid, {})
+        chave = (fonte['categoria'], tuple(fonte['campos'].items()), tuple(fonte['campos_mapeados'].items()),
+                 fonte['filtro'], self._estado.get(uid),
+                 tuple(str(resultado.get(k)) for k in ('erro','ausentes','repetidos','total')),
+                 any(uid in par for par in self.pares), tuple(self.alertas_lote.get(uid, ())))
+        anterior = self._pendencias_cache.get(uid)
+        if anterior and anterior[0] == chave:
+            return list(anterior[1])
+        uid = fonte['uid']
         estado = self._estado.get(uid, 'Disponível')
         msgs = [estado] if estado != 'Disponível' else []
         mapa = fonte['campos_mapeados']
@@ -457,13 +520,16 @@ class PainelModeloGIS(QWidget):
             msgs.append('Filtro sem resultados')
         if any(uid in par for par in self.pares):
             msgs.append('Filtro sobreposto a outra fonte')
-        return msgs + list(self.alertas_lote.get(uid, ()))
+        msgs += list(self.alertas_lote.get(uid, ()))
+        self._pendencias_cache[uid] = (chave, tuple(msgs))
+        return msgs
 
     def resumo(self):
         return len({f['categoria'] for f in self.fontes}), len(self.fontes), sum(
             bool(self.pendencias_fonte(f)) for f in self.fontes)
 
     def atualizar(self):
+        self._refresh_fontes.stop()
         projeto = self.projetos.atual() or {}
         hist = revisoes(projeto)
         nome = projeto.get('nome')
@@ -474,7 +540,17 @@ class PainelModeloGIS(QWidget):
         if self.tarefa is not None:
             return
         camadas = list(self.camadas())
-        self._estado = {f['uid']: estado_fonte(f, identificar(f, camadas)) for f in self.fontes}
+        resolvidas = {f['uid']: identificar(f, camadas) for f in self.fontes}
+        self._resolvidas_ids = {c.id() for c in resolvidas.values() if c is not None}
+        for camada in (c for c in resolvidas.values() if c is not None):
+            if camada.id() not in self._observadas:
+                self._observadas.add(camada.id())
+                for nome in ('dataChanged', 'dataSourceChanged', 'updatedFields', 'crsChanged', 'subsetStringChanged'):
+                    sinal = getattr(camada, nome, None)
+                    if sinal is not None:
+                        sinal.connect(self.fonte_mudou)
+        self._estado = {f['uid']: estado_fonte(f, resolvidas[f['uid']]) for f in self.fontes}
+        self._fontes_sujas = False
         contagem = Counter(f['categoria'] for f in self.fontes)
         pendencias = Counter(f['categoria'] for f in self.fontes if self.pendencias_fonte(f))
         for k, b in self.categorias.items():

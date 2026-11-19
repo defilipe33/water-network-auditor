@@ -1,6 +1,8 @@
 # Instalação e operação
 
 
+Otimização 1.14.2: [medições, arquitetura e limitações](DESEMPENHO_1_14_2.md).
+
 Correção 1.14.1: [aparência clara e escura, capturas e validação](TEMAS_1_14_1.md).
 A partir da **1.14.0**, o complemento abre no Quadro do Modelo. Escolha **Preparar minha rede**, **Investigar minha rede** ou **Meus trabalhos** no seletor de área. As ferramentas anteriores ficam em **⋯ → Ferramentas avançadas**. O [guia da nova interface](NOVA_INTERFACE_1_14_0.md) descreve o cadastro, os destaques no mapa e a recuperação de trabalhos.
 

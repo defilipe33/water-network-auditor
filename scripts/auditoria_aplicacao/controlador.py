@@ -1,4 +1,6 @@
 """Unificação operacional; reaproveita as janelas e suas guardas de estado."""
+from .watergems_ui import WatergemsDialog
+from .catalogo_ui import SeletorBases
 from pathlib import Path
 from uuid import uuid4
 from qgis.PyQt.QtWidgets import QPushButton,QHBoxLayout,QGridLayout,QWidget,QFileDialog,QMessageBox,QDialog,QProgressDialog,QApplication,QSizePolicy,QCheckBox,QGroupBox,QMenu
@@ -9,13 +11,21 @@ from auditoria_fronteiras.interface import AuditoriaFronteirasDialog
 from auditoria_fronteiras.estados import Estado,OCUPADOS
 from auditoria_fronteiras.persistencia import exportar_gpkg
 from auditoria_topologica_watergems.gerenciamento import Catalogo,sugestao,preparar_integracao
-from auditoria_topologica_watergems.saidas_integracao import salvar_gpkg,reabrir
-from auditoria_topologica_watergems.painel_diagnosticos import abrir_diagnosticos
-from .catalogo_ui import SeletorBases
-from .watergems_ui import WatergemsDialog
 from auditoria_fronteiras.janelas import Janelas
 from auditoria_fronteiras.atividade import Atividades,etapa,Progresso as QProgressDialog
 
+
+def salvar_gpkg(*args, **kwargs):
+    from auditoria_topologica_watergems.saidas_integracao import salvar_gpkg as executar
+    return executar(*args, **kwargs)
+
+def reabrir(*args, **kwargs):
+    from auditoria_topologica_watergems.saidas_integracao import reabrir as executar
+    return executar(*args, **kwargs)
+
+def abrir_diagnosticos(*args, **kwargs):
+    from auditoria_topologica_watergems.painel_diagnosticos import abrir_diagnosticos as executar
+    return executar(*args, **kwargs)
 
 class Aplicacao:
     def __init__(self,iface,raiz):
