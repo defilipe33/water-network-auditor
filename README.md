@@ -205,3 +205,6 @@ referências de terceiros conservam seus próprios direitos e condições.
 
 Corredores completos, Queries, gestão reversível e relatório ilustrado offline.
 [Guia, privacidade, requisitos e roteiro de validação](documentacao/publica/EXPORTACAO_CATALOGO_RELATORIOS.md).
+
+
+[Modelo GIS 1.14.3: filtros visuais, amostras, identificação e conexões declaradas](documentacao/publica/AJUSTES_GIS_1_14_3.md).

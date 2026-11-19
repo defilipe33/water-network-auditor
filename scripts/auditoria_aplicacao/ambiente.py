@@ -406,11 +406,11 @@ class AmbienteTrabalho(CentralTrabalho):
 
     def atualizar_objetivo(self):
         textos = [
-            ('Consultar a conectividade WaterGEMS e os dispositivos da versão aberta.', 'Abrir consulta topológica'),
-            ('Calcular corredores entre origens e destinos com os critérios disponíveis.', 'Identificar corredores'),
-            ('Investigar travessias, dispositivos próximos e correspondências na investigação.', 'Abrir investigação'),
-            ('Consultar ocorrências e evidências entre regiões na investigação integrada.', 'Examinar ocorrências'),
-            ('Recuperar propostas e criar intervenções investigativas na ocorrência selecionada.', 'Consultar propostas'),
+            ('Auditoria geométrica das redes GIS. Não exige WaterGEMS. A conectividade hidráulica não é inferida por proximidade.', 'Verificar redes GIS'),
+            ('Disponível sobre topologia WaterGEMS persistida. Corredores sobre topologia GIS serão uma etapa futura.', 'Identificar corredores WaterGEMS'),
+            ('Auditoria GIS de travessias entre redes e limites. Não exige WaterGEMS. Zonas topológicas são futuras.', 'Investigar fronteiras GIS'),
+            ('Examinar travessias e dispositivos próximos nas camadas GIS. Comparação topológica com WaterGEMS é adicional.', 'Examinar interferências GIS'),
+            ('Propostas existentes pertencem à investigação integrada aberta. Planejamento sobre topologia GIS independente é futuro.', 'Consultar propostas existentes'),
         ]
         descricao, acao_ = textos[self.objetivo.currentIndex()]
         self.descricao.setText(descricao)
@@ -422,7 +422,7 @@ class AmbienteTrabalho(CentralTrabalho):
         if i == 4:
             self.historico_aberto()
         else:
-            self.acionar(['topologia', 'corredores', 'continuar', 'continuar'][i])
+            self.acionar(['gis', 'corredores', 'gis', 'gis'][i])
 
     def listar_trabalhos(self):
         if not self._pronto:

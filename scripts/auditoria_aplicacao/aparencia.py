@@ -2,9 +2,10 @@
 
 Não altera QApplication, configurações de tema ou simbologias cartográficas.
 """
-from qgis.PyQt.QtCore import QObject, QEvent, QTimer
+from qgis.PyQt.QtCore import QObject, QEvent, QTimer, Qt
 from qgis.PyQt.QtGui import QColor, QPalette
-from qgis.PyQt.QtWidgets import QApplication, QAbstractItemView, QComboBox, QStyledItemDelegate
+from qgis.PyQt.QtWidgets import QApplication, QAbstractItemView, QComboBox, QStyledItemDelegate, QStyle, QStyleOptionViewItem
+from qgis.PyQt import sip
 
 
 def luminancia(cor):
@@ -103,8 +104,11 @@ def estilo(c):
         QLineEdit:disabled, QComboBox:disabled, QTextEdit:disabled,
         QAbstractItemView:disabled {background-color:%(cartao)s; color:%(desabilitado)s;}
         QAbstractItemView::item:selected {background-color:%(destaque)s; color:%(selecionado_texto)s;}
+        QAbstractItemView::item:hover:!selected:enabled {background-color:%(hover)s; color:%(hover_texto)s;}
+        QAbstractItemView::item:selected:hover {background-color:%(destaque)s; color:%(selecionado_texto)s;}
+        QAbstractItemView::item:disabled {background-color:%(cartao)s; color:%(desabilitado)s;}
         QComboBox QAbstractItemView::item:selected, QComboBox QListView::item:selected,
-        QComboBox QAbstractItemView::item:hover {background-color:%(destaque)s; color:%(selecionado_texto)s;}
+        QComboBox QAbstractItemView::item:selected:hover {background-color:%(destaque)s; color:%(selecionado_texto)s;}
         QAbstractItemView {alternate-background-color:%(secundario)s;}
         QComboBox QAbstractItemView, QMenu {background-color:%(superficie)s; color:%(campo_texto)s;}
         QMenu::item:selected {background-color:%(destaque)s; color:%(selecionado_texto)s;}
@@ -117,6 +121,41 @@ def estilo(c):
         QScrollBar::handle:hover {background-color:%(foco)s;}
         QToolTip {background-color:%(superficie)s; color:%(campo_texto)s; border:1px solid %(borda)s;}
     ''' % t
+
+
+class DelegateFontes(QStyledItemDelegate):
+    """Pintura das fontes textuais: o estilo nativo não redefine hover/seleção.
+
+    Restrito à lista de fontes, sem checkboxes ou ícones. Modelo, seleção,
+    acessibilidade, tamanho e navegação por teclado continuam sendo Qt.
+    """
+    def __init__(self, view):
+        super().__init__(view)
+        self._marca = None
+
+    def paint(self, painter, option, index):
+        opt = QStyleOptionViewItem(option)
+        self.initStyleOption(opt, index)
+        paleta = opt.widget.palette()
+        if self._marca != paleta.cacheKey():
+            self._marca = paleta.cacheKey()
+            self._cores = cores(paleta)
+        c = self._cores
+        if not opt.state & QStyle.State_Enabled:
+            fundo, texto = c['cartao'], c['desabilitado']
+        elif opt.state & QStyle.State_Selected:
+            fundo, texto = c['destaque'], c['selecionado_texto']
+        elif opt.state & QStyle.State_MouseOver:
+            fundo, texto = c['hover'], c['hover_texto']
+        else:
+            fundo, texto = c['superficie'], c['campo_texto']
+        painter.save()
+        painter.fillRect(opt.rect, fundo)
+        painter.setPen(texto); painter.setFont(opt.font)
+        painter.drawText(opt.rect.adjusted(4, 0, -4, 0), Qt.AlignLeft | Qt.AlignVCenter | Qt.TextWordWrap, opt.text)
+        if opt.state & QStyle.State_HasFocus:
+            painter.setPen(c['foco']); painter.drawRect(opt.rect.adjusted(0, 0, -1, -1))
+        painter.restore()
 
 
 class Aparencia(QObject):
@@ -133,6 +172,8 @@ class Aparencia(QObject):
         QApplication.instance().installEventFilter(self)
 
     def eventFilter(self, objeto, evento):
+        if sip.isdeleted(self.raiz) or sip.isdeleted(self.origem) or sip.isdeleted(objeto):
+            return False
         if objeto is self.origem and evento.type() in (QEvent.PaletteChange, QEvent.ApplicationPaletteChange, QEvent.StyleChange):
             self.timer.start(0)
         if evento.type() == QEvent.Show and isinstance(objeto, QAbstractItemView):
@@ -144,21 +185,30 @@ class Aparencia(QObject):
         return False
 
     def popup(self, view):
+        if view is None or sip.isdeleted(view):
+            return
         # O popup é uma janela Qt própria; alguns temas aplicam um delegate que
         # não herda as regras ::item do widget ancestral.
         t = {k: v.name() for k, v in self.tokens.items()}
         css = ('QAbstractItemView {background:%(superficie)s; color:%(campo_texto)s; '
                'selection-background-color:%(destaque)s; selection-color:%(selecionado_texto)s;}'
-               'QAbstractItemView::item:selected, QAbstractItemView::item:hover {'
-               'background:%(destaque)s; color:%(selecionado_texto)s;}') % t
+               'QAbstractItemView::item:hover:!selected:enabled {background:%(hover)s; color:%(hover_texto)s;}'
+               'QAbstractItemView::item:selected, QAbstractItemView::item:selected:hover {'
+               'background:%(destaque)s; color:%(selecionado_texto)s;}'
+               'QAbstractItemView::item:disabled {background:%(cartao)s; color:%(desabilitado)s;}') % t
         if view.styleSheet() != css:
             view.setStyleSheet(css)
+        if sip.isdeleted(view):
+            return
         # O delegate de menu nativo de alguns estilos ignora a paleta da view.
         # O delegate Qt padrão respeita seleção, estados e os dados do modelo.
-        if view.itemDelegate().metaObject().className() in ('QComboMenuDelegate', 'QComboBoxDelegate'):
+        delegate = view.itemDelegate()
+        if delegate is not None and not sip.isdeleted(delegate) and delegate.metaObject().className() in ('QComboMenuDelegate', 'QComboBoxDelegate'):
             view.setItemDelegate(QStyledItemDelegate(view))
 
     def atualizar(self):
+        if sip.isdeleted(self.raiz) or sip.isdeleted(self.origem):
+            return
         self.tokens = cores(self.origem.palette())
         assinatura = tuple((k, v.name()) for k, v in self.tokens.items())
         if assinatura != self.assinatura:

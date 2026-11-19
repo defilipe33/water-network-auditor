@@ -37,7 +37,7 @@ CATEGORIAS = {
     'PUMP': _categoria('Reservatórios e bombas', 'Bombas', 'Point', 'nome tipo instalacao'),
     'BOOSTER': _categoria('Reservatórios e bombas', 'Boosters / instalações', 'Point Polygon', 'nome tipo instalacao'),
     **{
-        codigo: _categoria('Válvulas e equipamentos', nome, 'Point', 'tipo diametro situacao')
+        codigo: _categoria('Válvulas e equipamentos', nome, 'Point', 'nome tipo diametro situacao' if codigo == 'PRV' else 'tipo diametro situacao')
         for codigo, nome in (
             ('PRV', 'PRVs'), ('TCV', 'TCVs'), ('FCV', 'FCVs'), ('PBV', 'PBVs'),
             ('AIR_VALVE', 'Ventosas'), ('HYDRANT', 'Hidrantes'),
@@ -73,7 +73,7 @@ CLASSIFICACOES = {
 }
 VINCULOS_WG = ('Label', 'GIS-ID', 'DomainElementID')
 ROTULOS = {
-    'id': 'Identificador cadastral', 'label': 'Rótulo GIS', 'wg': 'Campo GIS para associação',
+    'id': 'ID da feição', 'label': 'Nome exibido', 'wg': 'Campo de correspondência WaterGEMS',
     'gis_id': 'GIS-ID', 'diametro': 'Diâmetro', 'comprimento': 'Comprimento',
     'rugosidade': 'Rugosidade', 'elevacao': 'Elevação', 'ano': 'Ano de instalação',
     'situacao': 'Situação cadastral', 'nivel': 'Nível', 'nivel_minimo': 'Nível mínimo',
@@ -198,7 +198,7 @@ def expressao(texto, campos):
     if expr.hasParserError():
         raise ValueError('Filtro inválido. Confira a expressão de atributos.')
     # Mantém o filtro reprodutível fora do mapa e evita referências a outras fontes.
-    permitidas = {'lower', 'upper', 'trim', 'length', 'abs', 'round', 'coalesce', 'to_int', 'to_real', 'to_string'}
+    permitidas = {'lower', 'upper', 'trim', 'length', 'abs', 'round', 'coalesce', 'to_int', 'to_real', 'to_string', 'to_date', 'to_datetime'}
     if expr.needsGeometry() or expr.referencedVariables() or not expr.referencedFunctions() <= permitidas:
         raise ValueError('Use comparações de atributos e funções locais no filtro.')
     faltam = expr.referencedColumns() - set(campos)
@@ -223,7 +223,8 @@ def configurar(meta, categoria, papel, classificacao, campos, filtro='', alvo_wg
     if bool(alvo_wg) != bool(mapeados.get('wg')) or alvo_wg and alvo_wg not in VINCULOS_WG:
         raise ValueError('Informe o campo GIS e o atributo WaterGEMS da associação, ou deixe ambos vazios.')
     expressao(filtro, meta['campos'])
-    return dict(**meta, uid=anterior['uid'] if anterior else uuid4().hex,
+    extensoes = {k: deepcopy(anterior[k]) for k in ('associacoes_rede',) if anterior and k in anterior}
+    return dict(**meta, **extensoes, uid=anterior['uid'] if anterior else uuid4().hex,
                 origem_estavel=anterior['origem_estavel'] if anterior else meta['origem'],
                 categoria=categoria, papel=papel, classificacao=classificacao, campos_mapeados=mapeados,
                 filtro=filtro.strip(), alvo_wg=alvo_wg)

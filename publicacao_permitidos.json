@@ -97,6 +97,21 @@
     "documentacao/publica/capturas/desempenho/mapa.png": "9299e0536e160eb27f0e863b4be78b76800017c1f13007be836220f0d5f695e9",
     "documentacao/publica/capturas/desempenho/estreito.png": "03a7ce42c3445ba04229ae5dcf0ba5ce880ba10f6908bf0d248c79ba88e24d85",
     "documentacao/publica/capturas/desempenho/independente.png": "ea7879a24eb22414e8b5db64039c406ae1f6af106098472c36789300cac75ab4",
-    "documentacao/publica/capturas/desempenho/reabertura.png": "c738434712e9236b5b176c5d7a884d5c4d80f4687458bc8301ee5472a454f768"
+    "documentacao/publica/capturas/desempenho/reabertura.png": "c738434712e9236b5b176c5d7a884d5c4d80f4687458bc8301ee5472a454f768",
+    "documentacao/publica/capturas/ajustes_gis/selecionado_escuro.png": "73d7b06c29dec5f107e603b683f6271cc4cf810fe9046f0fbefd91a677ee9c47",
+    "documentacao/publica/capturas/ajustes_gis/hover_escuro.png": "e4f104b512ae939603dd7bf22138f4693ba94908ba17be0269b86b2b75fd3e98",
+    "documentacao/publica/capturas/ajustes_gis/selecionado_hover.png": "73d7b06c29dec5f107e603b683f6271cc4cf810fe9046f0fbefd91a677ee9c47",
+    "documentacao/publica/capturas/ajustes_gis/hover_claro.png": "0f8b9efcde25490d2839198f1da8ef19d8c3996e23b7e0b1f7c7752cb427bb06",
+    "documentacao/publica/capturas/ajustes_gis/construtor.png": "a9b23a06fc7f4b4cb474394d2982dfd201628048d1d49309c3dc40ce8e26eeb5",
+    "documentacao/publica/capturas/ajustes_gis/amostra.png": "e8a93c292d23f1e3d063962bc023ba8ffbd9012b16c9088a9b6fb97d93a7f07c",
+    "documentacao/publica/capturas/ajustes_gis/mapa.png": "7609e193b15cdb74830a6f56ebfdb16ef716d571d455d259ab3b647f35b98b28",
+    "documentacao/publica/capturas/ajustes_gis/nome_vrp.png": "5936b00335f75c542ba7273335c179606c47b5968e50572377ccf590b7733452",
+    "documentacao/publica/capturas/ajustes_gis/reservatorio.png": "9301866361dfdadba9388530d4d4e915fa6c71c5f0639fc45a8864d55d2c06bc",
+    "documentacao/publica/capturas/ajustes_gis/relacao_no_painel.png": "977700727ca92b833de46dd7f7c0071140d26df2a98914a27b7e6eddb5f5276a",
+    "documentacao/publica/capturas/ajustes_gis/areas.png": "4d5c0b39d9be299427dcfc50bc73506a228006dbb2c23dddc22c1341f6a33da5",
+    "documentacao/publica/capturas/ajustes_gis/investigar_gis.png": "225f83d66ddf2fb14e0ec327018ef6a2e000db9ba998c8e3fd9fc3cfd49c1b5f",
+    "documentacao/publica/capturas/ajustes_gis/independente.png": "ed98a78fa4964bfbc08951b6cd4b0cdedd065c29b14cd0009ad9407427d497e8",
+    "documentacao/publica/capturas/ajustes_gis/painel.png": "3ff1c31562350f9cd06754f3ba83318d8e9440b4c60661b9ad10945ccb4b328b",
+    "documentacao/publica/capturas/ajustes_gis/reabertura.png": "43bcd045c289c3f4f415bab79c3f77c2833f4f05cc70cca52b66794bdd92e462"
   }
 }

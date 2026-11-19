@@ -11,7 +11,7 @@ from qgis.PyQt.QtWidgets import (
 )
 from qgis.core import QgsProject, QgsVectorLayer, QgsVectorLayerFeatureSource
 
-from .cadastro_gis import OPERADORES, amostra, copiar_mapeamento, filtro_simples, incluir_fontes, sugerir_campos
+from .cadastro_gis import OPERADORES, amostra, amostra_elementos, copiar_mapeamento, filtro_simples, incluir_fontes, sugerir_campos
 from .modelo_gis import (
     CATEGORIAS, CLASSIFICACOES, ESTRATEGIAS, PAPEIS, ROTULOS, VINCULOS_WG, conferir,
     configurar, descrever, estado_fonte, geometria, identificar, preparar_conferencia, relocalizar, revisoes,
@@ -112,6 +112,9 @@ class EditorFonte(QWidget):
     def __init__(self, painel, fonte, camada):
         super().__init__()
         self.painel, self.fonte = painel, fonte
+        self._associacoes = deepcopy(fonte.get('associacoes_rede', []))
+        self._amostra_fids = []
+        self._amostra_geracao = 0
         self.meta = descrever(camada)
         self._avancados = False
         self._papel = self._classe = None
@@ -126,12 +129,19 @@ class EditorFonte(QWidget):
         for k in ('id', 'label', 'wg'):
             self.campo(essenciais, k, itens, ambiguos)
         self.alvo = combo({'': 'Sem associação', **{x: x for x in VINCULOS_WG}}, fonte['alvo_wg'])
-        essenciais.addRow('Atributo no WaterGEMS', self.alvo)
+        self.alvo.setToolTip('Escolha GIS-ID, Label ou DomainElementID. Correspondência opcional; não é o FID interno do QGIS.')
+        essenciais.addRow('Identificador correspondente no WaterGEMS', self.alvo)
+        if CATEGORIAS[fonte['categoria']].grupo == 'Zonas e setores':
+            area.addWidget(aviso('Referência espacial GIS. Não é um elemento hidráulico; correspondência WaterGEMS dispensável.'))
         self.abrir_adicionais, self._extra = expansivel(area, 'Propriedades adicionais')
         self.abrir_adicionais.toggled.connect(lambda aberto: self.preparar_avancados() if aberto else None)
         self.estado_filtro = aviso()
         area.addWidget(self.estado_filtro)
-        self.abrir_simples, simples = expansivel(area, 'Montar filtro simples')
+        self.construtor = None
+        self.abrir_visual, self._visual = expansivel(area, 'Filtrar elementos')
+        self.abrir_visual.toggled.connect(self.preparar_filtros)
+        self.abrir_simples, simples = expansivel(area, 'Filtro simples anterior (compatibilidade)')
+        self.abrir_simples.hide()
         form = formulario(simples)
         self.coluna = combo(itens)
         self.operador = combo(OPERADORES)
@@ -142,7 +152,7 @@ class EditorFonte(QWidget):
         form.addRow('Operador', self.operador)
         form.addRow('Valor', self.valor)
         self.usar_filtro_b = botao(simples, 'Usar este filtro', self.usar_filtro)
-        _, avancado = expansivel(area, 'Expressão avançada')
+        _, avancado = expansivel(area, 'Modo especialista — expressão QGIS')
         self.filtro = QLineEdit(fonte['filtro'])
         formulario(avancado).addRow('Expressão', self.filtro)
         botao(avancado, 'Limpar filtro', self.filtro.clear)
@@ -154,8 +164,125 @@ class EditorFonte(QWidget):
         self.filtro.textChanged.connect(self.atualizar_filtro)
         self._regra_aplicada = self.regra()
         self.atualizar_filtro()
-        botao(area, 'Ver amostra dos valores', self.prever).setEnabled(isinstance(camada, QgsVectorLayer))
+        botao(area, 'Verificar elementos encontrados', lambda: self.prever()).setEnabled(isinstance(camada, QgsVectorLayer))
+        botao(area, 'Ampliar amostra para até 100', lambda: self.prever(100)).setEnabled(isinstance(camada, QgsVectorLayer))
+        botao(area, 'Destacar elemento da amostra', self.destacar_amostra)
+        botao(area, 'Enquadrar elemento destacado', lambda: self.painel.central.mapa.aproximar() if hasattr(self.painel.central, 'mapa') else None)
+        botao(area, 'Limpar destaque', lambda: self.painel.central.mapa.limpar() if hasattr(self.painel.central, 'mapa') else None)
+        if fonte['categoria'] in ('RESERVOIR', 'TANK'):
+            self.abrir_conexoes, self._conexoes_area = expansivel(area, 'Definir conexões com a rede')
+            self.abrir_conexoes.toggled.connect(self.preparar_conexoes)
+            self._conexoes_lista = None
+        if isinstance(camada, QgsVectorLayer):
+            for nome_sinal in ('dataChanged', 'dataSourceChanged', 'updatedFields', 'subsetStringChanged'):
+                getattr(camada, nome_sinal).connect(self.invalidar_amostra)
         area.addStretch()
+
+    def invalidar_amostra(self, *_):
+        self._amostra_geracao += 1
+        self._amostra_fids = []
+        self.amostra.hide()
+        self.mensagem.setText('A fonte mudou. Consulte a amostra novamente antes de destacar elementos.')
+
+    def preparar_conexoes(self, aberto):
+        if not aberto: return
+        if self._conexoes_lista is None:
+            self._conexoes_area.addWidget(aviso('Selecione no QGIS um equipamento desta fonte e as tubulações cadastradas. A relação é declarada manualmente; não depende da distância nem comprova conexão hidráulica. Aplicar à fonte e Salvar Modelo GIS preservam a revisão.'))
+            self._posicao = combo({'DESCONHECIDA': 'Posição desconhecida', 'INICIO': 'Início cadastral da tubulação', 'FIM': 'Fim cadastral da tubulação', 'INTERMEDIARIA': 'Posição intermediária (sem divisão do tubo)'})
+            self._conexoes_area.addWidget(self._posicao)
+            self._conexoes_lista = lista_compacta(); self._conexoes_area.addWidget(self._conexoes_lista)
+            botao(self._conexoes_area, 'Declarar conexão com a seleção QGIS', self.declarar_conexoes)
+            botao(self._conexoes_area, 'Substituir relação selecionada pela seleção QGIS', lambda: self.declarar_conexoes(True))
+            botao(self._conexoes_area, 'Conferir relações nas fontes atuais', self.conferir_conexoes)
+            botao(self._conexoes_area, 'Remover relação selecionada', self.remover_conexao)
+        self.listar_conexoes()
+
+    def listar_conexoes(self):
+        from .associacoes_gis import vigentes, pendencias
+        self._conexoes_lista.clear()
+        for r in vigentes(dict(self.fonte, associacoes_rede=self._associacoes)):
+            texto = str(r['equipamento']['valor']) + ' → ' + ', '.join(str(t['valor']) for t in r['tubulacoes']) + ' · ' + r['posicao']
+            avisos = pendencias(r, self.painel.fontes)
+            item = QListWidgetItem(texto + (' · REVISAR' if avisos else ' · declaração manual'))
+            item.setData(Qt.UserRole, r['uuid']); item.setToolTip('\n'.join(avisos) or r['significado'] + ' Use Conferir relações após atualizar dados externos.')
+            self._conexoes_lista.addItem(item)
+
+    def remover_conexao(self):
+        from .associacoes_gis import remover
+        item = self._conexoes_lista.currentItem()
+        if item:
+            self._associacoes = remover(dict(self.fonte, associacoes_rede=self._associacoes), item.data(Qt.UserRole))['associacoes_rede']
+            self.listar_conexoes()
+
+    def conferir_conexoes(self):
+        if self.painel.central.ocupado(): return
+        from .associacoes_gis import vigentes, verificar_referencia
+        try:
+            fontes = {f['uid']: f for f in self.painel.fontes}
+            tarefas = []
+            for r in vigentes(dict(self.fonte, associacoes_rede=self._associacoes)):
+                for ref in [r['equipamento'], *r['tubulacoes']]:
+                    f = fontes.get(ref['fonte_uid'])
+                    c = identificar(f, self.painel.camadas()) if f else None
+                    if c is None: raise ValueError('Relação pendente: fonte removida ou indisponível.')
+                    if descrever(c)['assinatura'] != ref['assinatura']:
+                        raise ValueError('Relação pendente: fonte alterada. Revise as identidades antes de substituir a declaração.')
+                    tarefas.append((deepcopy(ref), deepcopy(f), QgsVectorLayerFeatureSource(c)))
+            def trabalho(parar, etapa):
+                for ref, f, snap in tarefas: verificar_referencia(ref, f, snap, parar)
+                return len(tarefas)
+            self.painel.central.app.atividades.executar_thread('Conferir relações declaradas', self.fonte['nome'], trabalho,
+                lambda n: self.mensagem.setText(f'{n} referência(s) localizada(s) por ID. A conexão continua sendo uma declaração GIS.'), self.mensagem.setText)
+        except (ValueError, RuntimeError) as e: self.mensagem.setText(str(e))
+
+    def declarar_conexoes(self, substituir=False):
+        if self.painel.central.ocupado(): return
+        from .associacoes_gis import referencia, verificar_referencia, declarar
+        try:
+            equipamento = self.camada()
+            if equipamento.selectedFeatureCount() != 1:
+                raise ValueError('Selecione exatamente um Reservoir ou Tank desta fonte no QGIS.')
+            fontes = [self.fonte, *[f for f in self.painel.fontes if f['categoria'] == 'PIPE']]
+            refs, tarefas = [], []
+            for f in fontes:
+                c = identificar(f, self.painel.camadas())
+                if c is None: continue
+                if c.selectedFeatureCount() > 100:
+                    raise ValueError('Selecione até 100 elementos por fonte nesta declaração.')
+                if not c.selectedFeatureCount(): continue
+                if descrever(c)['assinatura'] != f['assinatura']:
+                    raise ValueError('A fonte mudou. Confira e aplique sua configuração antes de declarar a conexão.')
+                snap = QgsVectorLayerFeatureSource(c)
+                for feat in c.getSelectedFeatures():
+                    ref = referencia(f, feat); refs.append(ref); tarefas.append((ref, deepcopy(f), snap))
+            if len(refs) < 2: raise ValueError('Selecione também uma ou mais tubulações cadastradas com ID mapeado.')
+            pos = self._posicao.currentData()
+            origem = deepcopy(dict(self.fonte, associacoes_rede=self._associacoes))
+            anterior = None
+            if substituir:
+                from .associacoes_gis import vigentes
+                item = self._conexoes_lista.currentItem()
+                if item is None: raise ValueError('Selecione a relação que deseja substituir.')
+                anterior = item.data(Qt.UserRole)
+                antiga = next(r for r in vigentes(origem) if r['uuid'] == anterior)
+                if antiga['equipamento'] != refs[0]:
+                    raise ValueError('A seleção deve conservar a identidade do equipamento da relação anterior.')
+            def trabalho(parar, etapa):
+                for ref, f, snap in tarefas:
+                    etapa(0, 'Conferindo ID em ' + f['nome'])
+                    verificar_referencia(ref, f, snap, parar)
+                return declarar(origem, refs[0], refs[1:], pos, anterior)
+            def receber(nova):
+                self._associacoes = nova['associacoes_rede']; self.listar_conexoes()
+                self.mensagem.setText('Relação declarada no rascunho. Aplique à fonte e salve o Modelo GIS. Nenhum grafo foi alterado.')
+            self.painel.central.app.atividades.executar_thread('Conferir identidades GIS', self.fonte['nome'], trabalho, receber, self.mensagem.setText)
+        except (ValueError, RuntimeError) as e: self.mensagem.setText(str(e))
+
+    def preparar_filtros(self, aberto):
+        if aberto and self.construtor is None:
+            from .filtros_gis_ui import ConstrutorFiltros
+            self.construtor = ConstrutorFiltros(self)
+            self._visual.addWidget(self.construtor)
 
     def preparar_avancados(self):
         if self._avancados:
@@ -185,13 +312,21 @@ class EditorFonte(QWidget):
         atual = self.fonte['campos_mapeados'].get(k)
         opcoes = itens if not atual or atual in itens else {**itens, atual: atual + ' (ausente)'}
         self.mapa[k] = combo(opcoes, atual)
+        self.mapa[k].setToolTip({
+            'id': 'Atributo que identifica o elemento no cadastro GIS; não confundir com o FID interno do provedor.',
+            'label': 'Atributo utilizado para apresentar o elemento no plugin.',
+            'wg': 'Atributo GIS confrontado com um identificador WaterGEMS. Opcional.',
+            'nome': 'Nome cadastrado do equipamento; TAG só deve ser escolhido se corresponder semanticamente ao nome.',
+        }.get(k, rotulo))
         form.addRow(rotulo, self.mapa[k])
         if k in ambiguos and not atual:
             form.addRow(aviso('Opções para ' + rotulo.lower() + ': ' + ', '.join(ambiguos[k])))
 
     def atualizar_filtro(self):
+        self._amostra_geracao += 1
         self.estado_filtro.setText('Filtro: ' + (self.filtro.text().strip() or 'todas as feições'))
         self.amostra.hide()
+        self._amostra_fids = []
 
     def usar_filtro(self):
         try:
@@ -222,14 +357,18 @@ class EditorFonte(QWidget):
         return self.coluna.currentData(), self.operador.currentData(), self.valor.text()
 
     def regra_pendente(self):
-        return bool(self.coluna.currentData()) and self.regra() != self._regra_aplicada
+        return (bool(self.coluna.currentData()) and self.regra() != self._regra_aplicada) or bool(self.construtor and self.construtor.sujo)
 
     def pendente(self):
         f = self.fonte
-        return self.regra_pendente() or self.valores() != (
+        return self._associacoes != f.get('associacoes_rede', []) or self.regra_pendente() or self.valores() != (
             f['campos_mapeados'], f['filtro'], f['alvo_wg'], f['papel'], f['classificacao'])
 
     def configurar(self):
+        if self.construtor and self.construtor.sujo:
+            from .filtros_gis import gerar
+            self.filtro.setText(gerar(self.construtor.dados(), self.meta['campos']))
+            self.construtor.sujo = False
         if self.regra_pendente():
             campo, operador, valor = self.regra()
             self.filtro.setText(filtro_simples(campo, self.meta['campos'][campo], operador, valor))
@@ -239,12 +378,18 @@ class EditorFonte(QWidget):
                           classe, mapa, filtro, alvo, self.fonte)
         if 'relocalizacao' in self.fonte:
             nova['relocalizacao'] = self.fonte['relocalizacao']
+        if self._associacoes or 'associacoes_rede' in self.fonte:
+            nova['associacoes_rede'] = deepcopy(self._associacoes)
         return nova
 
-    def prever(self):
+    def prever(self, tamanho=20):
         if self.painel.central.ocupado():
             return
         try:
+            if self.construtor and self.construtor.sujo:
+                from .filtros_gis import gerar
+                self.filtro.setText(gerar(self.construtor.dados(), self.meta['campos']))
+                self.construtor.sujo = False
             mapa, texto, *_ = self.valores()
             campos = list(dict.fromkeys(mapa.values()))
             fonte = QgsVectorLayerFeatureSource(self.camada())
@@ -252,16 +397,40 @@ class EditorFonte(QWidget):
             if not set(campos) <= set(disponiveis):
                 raise ValueError('Revise os campos ausentes antes de gerar a amostra.')
             expr = expressao(texto, disponiveis)
-            if expr is not None and not campos:
-                campos = sorted(expr.referencedColumns())
-            self.mensagem.setText('Lendo uma amostra de até 250 feições.')
+            if expr is not None:
+                campos = list(dict.fromkeys([*campos, *sorted(expr.referencedColumns())]))
+            token = (self.filtro.text(), self._amostra_geracao)
+            self._amostra_fids = []
+            self.mensagem.setText(f'Consultando até {tamanho} correspondências, em no máximo 5.000 feições. Cancelamento em Janelas / atividades.')
             self.painel.central.app.atividades.executar_thread(
                 'Amostra de atributos', self.fonte['nome'],
-                lambda cancelar, _: amostra(fonte, campos, texto, cancelar),
-                lambda resultado: self.mostrar_amostra(campos, resultado),
+                lambda cancelar, _: amostra_elementos(fonte, campos, texto, cancelar, tamanho=tamanho),
+                lambda resultado: self.receber_amostra(token, campos, resultado),
                 self.mensagem.setText)
         except (ValueError, RuntimeError) as e:
             self.mensagem.setText(str(e))
+
+    def receber_amostra(self, token, campos, resultado):
+        if token != (self.filtro.text(), self._amostra_geracao):
+            self.mensagem.setText('O filtro ou a fonte mudou. Consulte a amostra novamente.'); return
+        self._amostra_fids = [r['fid'] for r in resultado['linhas']]
+        self.amostra.setRowCount(0); self.amostra.setColumnCount(max(1, len(campos)))
+        self.amostra.setHorizontalHeaderLabels(campos or ['Elementos'])
+        for i, r in enumerate(resultado['linhas']):
+            linha(self.amostra, ['Nulo' if v is None else v for v in r['valores']] or [i + 1])
+        total = str(resultado['total']) if resultado['completa'] else 'ainda não calculado; consulta parcial'
+        self.mensagem.setText(f"{len(self._amostra_fids)} exibida(s); total: {total}. {resultado['lidas']} feições examinadas." +
+                              (' Filtro válido sem resultados.' if resultado['completa'] and not self._amostra_fids else ''))
+        self.amostra.show()
+
+    def destacar_amostra(self):
+        i = self.amostra.currentRow()
+        if not hasattr(self.painel.central, 'mapa'):
+            self.mensagem.setText('Abra o Quadro do Modelo para utilizar o mapa.'); return
+        if i < 0 or i >= len(self._amostra_fids):
+            self.mensagem.setText('Selecione uma linha da amostra atual.'); return
+        fonte = dict(self.fonte, filtro=self.filtro.text())
+        self.painel.central.mapa.destacar(fonte, [self._amostra_fids[i]])
 
     def mostrar_amostra(self, campos, resultado):
         linhas, n, completa = resultado
@@ -351,6 +520,9 @@ class PainelModeloGIS(QWidget):
         no_layout.addWidget(aviso('A estratégia será usada na Etapa 2, durante a construção da topologia GIS.'))
         self.adicionar_b = botao(area, 'Adicionar camadas…', self.adicionar)
         self.lista = lista_compacta()
+        from .aparencia import DelegateFontes
+        self.lista.setItemDelegate(DelegateFontes(self.lista))
+        self.lista.setMouseTracking(True)
         area.addWidget(self.lista)
         self.info_fonte = aviso()
         area.addWidget(self.info_fonte)
@@ -616,7 +788,7 @@ class PainelModeloGIS(QWidget):
             return
         mapa = fonte['campos_mapeados']
         itens = [f"{GEOMETRIAS[fonte['geometria']]} · {fonte['crs'] or 'CRS personalizado'}",
-                 f"Identificador: {mapa.get('id', 'por mapear')} · Label: {mapa.get('label', '—')}",
+                 f"ID da feição: {mapa.get('id', 'por mapear')} · Nome exibido: {mapa.get('label', '—')}",
                  'Filtro: ' + (fonte['filtro'] or 'todas as feições')]
         r = self.resultados.get(fonte['uid'], {})
         if r.get('total') is not None and not r.get('erro'):

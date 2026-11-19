@@ -5,6 +5,7 @@ from qgis.PyQt.QtGui import QColor
 from qgis.core import (
     QgsCoordinateTransform, QgsFeatureRequest, QgsGeometry,
     QgsProject, QgsRectangle, QgsVariantUtils, QgsVectorLayer, QgsVectorLayerFeatureSource,
+    QgsExpressionContext,
 )
 from qgis.gui import QgsRubberBand
 
@@ -12,15 +13,27 @@ from .modelo_gis import expressao, identificar
 
 
 def ler_destaque(fonte, filtro, ids, campos, cancelar, limite=500):
-    request = QgsFeatureRequest().setSubsetOfAttributes(campos, fonte.fields()).setLimit(limite + 1)
+    expr = expressao(filtro, fonte.fields().names())
+    atributos = sorted(set(campos) | (expr.referencedColumns() if expr else set()))
+    request = QgsFeatureRequest().setSubsetOfAttributes(atributos, fonte.fields()).setLimit(limite + 1)
     if ids is not None:
         request.setFilterFids(ids)
-    if filtro:
-        request.combineFilterExpression(filtro)
+    elif filtro:
+        request.setFilterExpression(filtro)
+    # FIDs e expressão são tipos de filtro exclusivos de QgsFeatureRequest.
+    # Aplicar ambos no request substituiria a seleção por todas as correspondências.
+    contexto = QgsExpressionContext()
     dados, amostras = [], []
     for i, f in enumerate(fonte.getFeatures(request)):
         if cancelar():
             raise InterruptedError('Destaque cancelado.')
+        if ids is not None and expr is not None:
+            contexto.setFeature(f)
+            valor = expr.evaluate(contexto)
+            if expr.hasEvalError():
+                raise ValueError('Não foi possível avaliar o filtro do destaque: ' + expr.evalErrorString())
+            if QgsVariantUtils.isNull(valor) or not valor:
+                continue
         if i == limite:
             return dados, amostras, True
         if not f.hasGeometry() or f.geometry().isEmpty():
@@ -96,7 +109,8 @@ class MapaFontes(QObject):
             self.mensagem.emit(str(e))
             return False
         campos = list(dict.fromkeys(c for c in (fonte['campos_mapeados'].get('id'),
-                                                  fonte['campos_mapeados'].get('label'))
+                                                  fonte['campos_mapeados'].get('label'),
+                                                  fonte['campos_mapeados'].get('nome'))
                                     if c and c in camada.fields().names()))
         origem = QgsVectorLayerFeatureSource(camada)
         self.camada, self.fonte = camada, fonte

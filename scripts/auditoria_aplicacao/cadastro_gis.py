@@ -14,7 +14,7 @@ SINONIMOS = {
     'ano': ('ano instalacao', 'ano de instalacao', 'ano'),
     'elevacao': ('elevacao', 'elevation', 'cota'),
     'material': ('material',),
-    'nome': ('nome', 'name'),
+    'nome': ('nome', 'name', 'nome vrp'),
     'tipo': ('tipo', 'type'),
     'situacao': ('situacao', 'situacao cadastral'),
 }
@@ -147,3 +147,23 @@ def amostra(fonte, campos, texto, cancelar=lambda: False, limite=250, tamanho=5)
         if len(linhas) < tamanho:
             linhas.append([None if QgsVariantUtils.isNull(feicao[c]) else str(feicao[c]) for c in campos])
     return linhas, encontrados, completa
+
+
+def amostra_elementos(fonte, campos, texto, cancelar=lambda: False, tamanho=20, limite=5000):
+    """FID apenas para navegação nesta sessão. Não é identidade persistente."""
+    expr = expressao(texto, fonte.fields().names())
+    req = QgsFeatureRequest().setFlags(Qgis.FeatureRequestFlag.NoGeometry).setLimit(limite + 1)
+    req.setSubsetOfAttributes(sorted(set(campos) | (expr.referencedColumns() if expr else set())), fonte.fields())
+    ctx = QgsExpressionContext()
+    linhas, lidas = [], 0
+    for f in fonte.getFeatures(req):
+        if cancelar(): raise InterruptedError('Amostragem cancelada; dados preservados.')
+        if lidas == limite or len(linhas) == tamanho:
+            return dict(linhas=linhas, lidas=lidas, total=None, completa=False)
+        lidas += 1
+        if expr is not None:
+            ctx.setFeature(f); valor = expr.evaluate(ctx)
+            if expr.hasEvalError(): raise ValueError('Filtro inválido para os valores da camada. ' + expr.evalErrorString())
+            if QgsVariantUtils.isNull(valor) or not valor: continue
+        linhas.append(dict(fid=f.id(), valores=[None if QgsVariantUtils.isNull(f[c]) else str(f[c]) for c in campos]))
+    return dict(linhas=linhas, lidas=lidas, total=len(linhas), completa=True)

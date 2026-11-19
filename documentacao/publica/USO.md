@@ -120,3 +120,6 @@ Adaptador HMI sobre Banco, com nomes/membros/pastas por identidade; persistênci
 ## Modelo GIS do Projeto
 
 Na Central de Trabalho, selecione um projeto e escolha **Configurar fontes GIS**. Abra uma categoria e marque as camadas em **Adicionar camadas**. Use **Conferir fontes** para revisar identificadores e sobreposições e **Salvar Modelo GIS** para registrar a revisão. Consulte o [guia da interface multifonte](MODELO_GIS_1_13_1.md) para mapear atributos, filtrar e recuperar fontes.
+
+
+[Modelo GIS 1.14.3: filtros visuais, amostras, identificação e conexões declaradas](AJUSTES_GIS_1_14_3.md).
