@@ -196,16 +196,19 @@ class MapaFontes(QObject):
             if geom is None or geom.isNull() or geom.isEmpty():continue
             g=QgsGeometry(geom)
             if g.transform(trans)!=0:raise ValueError('Falha na transformação do destaque.')
-            cor={'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240)}[papel]
+            from .relevancia_gis import SIMBOLOS
+            categoria=papel.removeprefix('evento_') if papel.startswith('evento_') else None
+            cor=QColor(SIMBOLOS[categoria][0]) if categoria in SIMBOLOS else {'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240),'equipamento':QColor(30,185,130,240)}[papel]
             b=QgsRubberBand(self.canvas,g.type());b.setColor(cor);b.setFillColor(QColor(0,0,0,0));b.setWidth(4 if papel=='tubo' else 3)
-            b.setIcon(QgsRubberBand.ICON_BOX if papel=='local' else QgsRubberBand.ICON_CIRCLE);b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
+            icones={'REVISAR':QgsRubberBand.ICON_CROSS,'INCONSISTENCIA_IDENTIFICADA':QgsRubberBand.ICON_DIAMOND,'INDETERMINADA':QgsRubberBand.ICON_BOX}
+            b.setIcon(icones.get(categoria,QgsRubberBand.ICON_BOX if papel in ('local','equipamento') else QgsRubberBand.ICON_CIRCLE));b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
             self.itens.append(b);self.caixas.append(g.boundingBox())
             if papel!='local':caixas.append(geom.boundingBox())
         if aproximar and self.itens:
             caixas=caixas or [g.boundingBox() for _,g in itens if g is not None]
             caixa=QgsRectangle(caixas[0])
             for c in caixas[1:]:caixa.combineExtentWith(c)
-            eventos=[g.boundingBox() for papel,g in itens if papel=='evento' and g is not None and not g.isEmpty()]
+            eventos=[g.boundingBox() for papel,g in itens if papel.startswith('evento') and g is not None and not g.isEmpty()]
             if eventos and not toda_extensao:
                 local=QgsRectangle(eventos[0])
                 for c in eventos[1:]:local.combineExtentWith(c)

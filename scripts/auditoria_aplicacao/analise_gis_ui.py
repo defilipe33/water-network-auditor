@@ -25,6 +25,8 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
         self._executando = False
         self._geracao = 0
         self._observadas = set()
+        self._camadas_eventos = {}
+        QgsProject.instance().layersRemoved.connect(self.fonte_mudou)
         self._pagina = 0
         externo = QVBoxLayout(self); externo.setContentsMargins(0, 0, 0, 0)
         rolagem = self.rolagem = QScrollArea(); rolagem.setWidgetResizable(True)
@@ -141,14 +143,18 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
                 d = executar(preparacao, nome, projeto_nome, parar, etapa)
                 etapa(0, 'Gravando e verificando o trabalho; nenhuma versão parcial será publicada')
                 persistir(temp, d, parar)
-                return d
-            def pronto(d):
+                etapa(0, 'Interpretando relevância e preparando índice de investigação')
+                indice=IndiceInvestigacao(d)
+                if parar():raise InterruptedError('Análise cancelada antes da publicação.')
+                return d,indice
+            def pronto(dados):
+                d,indice=dados
                 p = self.central.projetos.atual() or {}; rs = revisoes(p)
                 conferir_contexto(preparacao, m.fontes, list(m.camadas()), p.get('uuid'), rs[-1]['uuid'] if rs else None)
                 if geracao != self._geracao: raise ValueError('Os dados mudaram durante a análise; execute novamente.')
                 self.app.atividades.atual.critica('Publicando o trabalho verificado')
                 publicar(temp, destino); self._temporario = None
-                self.receber(d, destino)
+                self.receber(d, destino, indice)
                 itens = self.app.catalogo.registrar(destino)
                 registro = next(r for r in itens if r['uuid'] == d['execucao_uid'])
                 self.central.projetos.vincular(registro)
@@ -177,11 +183,13 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
         self.info.setText(texto + ' Trabalhos anteriores e fontes originais preservados.')
         self.finalizar()
 
-    def receber(self, dossie, base):
+    def receber(self, dossie, base, indice=None):
         self.dossie, self.base, self.selecionado = dossie, str(base), None
         self.observacao.clear()
         self._evento_uid = None; self._cache_geometrias = {}; self.limpar_destaque()
-        self.indice = IndiceInvestigacao(dossie, dossie.get('revisoes_ocorrencias', {}))
+        self._equipamentos=None;self._equipamentos_chave=None;self.filtro_equipamento.clear();self.filtro_equipamento.setEnabled(False)
+        self.equipamentos_lista.setRowCount(0);self.equipamentos_info.setText('Equipamentos ainda não consultados. Contexto das fontes atuais disponível sob demanda.')
+        self.indice = indice if indice is not None else IndiceInvestigacao(dossie, dossie.get('revisoes_ocorrencias', {}))
         self.dossie['revisoes_ocorrencias'] = self.indice.revisoes
         self.configuracao_b.setChecked(False)
         self.filtro_tipo.blockSignals(True); self.filtro_tipo.clear(); self.filtro_tipo.addItem('Todos os tipos','')
@@ -203,8 +211,11 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
             from auditoria_fronteiras.revisoes_ocorrencias import atuais
             d['revisoes_ocorrencias'] = atuais(registro['base'], registro['uuid'])
             if parar(): raise InterruptedError('Abertura cancelada.')
-            return d
-        def pronto(d):
+            indice=IndiceInvestigacao(d,d['revisoes_ocorrencias'])
+            if parar():raise InterruptedError('Abertura cancelada.')
+            return d,indice
+        def pronto(dados):
+            d,indice=dados
             if self.central.projetos.dados['ativo'] != projeto:
                 raise ValueError('O projeto mudou durante a abertura. Contexto anterior preservado.')
             contexto = d.get('configuracao', {}).get('modelo_gis', {})
@@ -212,7 +223,7 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
             if objetivo in OBJETIVOS:
                 self.objetivo = objetivo
                 self.titulo.setText(OBJETIVOS[objetivo][0]); self.descricao.setText(OBJETIVOS[objetivo][2])
-            self.receber(d, registro['base']); self.nome.setText(d.get('controle_versao', {}).get('nome', 'Trabalho GIS'))
+            self.receber(d, registro['base'], indice); self.nome.setText(d.get('controle_versao', {}).get('nome', 'Trabalho GIS'))
             self.resumo.setText('Trabalho persistido · fontes e filtros da execução preservados. '
                                'Executar novamente utiliza a configuração atual do Modelo GIS.')
             self.executar_b.setText('Executar nova análise com o cadastro atual')
@@ -224,6 +235,9 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
         from auditoria_fronteiras.organizacao_camadas import publicar as organizar
         import json
         uid = self.dossie['execucao_uid']; nome = self.dossie['controle_versao']['nome']
+        from auditoria_fronteiras.versoes import abrir_ro
+        with abrir_ro(self.base) as con:
+            outras=con.execute('SELECT 1 FROM EXECUCOES WHERE exe_uid<>? LIMIT 1',(uid,)).fetchone() is not None
         for tabela_, titulo, papel in [('EVENTOS_FRONTEIRAS', 'Ocorrências geométricas', 'apresentacao'), ('PONTOS_INVESTIGACAO', 'Locais de investigação', 'locais')]:
             c = QgsVectorLayer(self.base + '|layername=' + tabela_, titulo, 'ogr')
             if not c.isValid(): raise ValueError('Não foi possível abrir a camada persistida: ' + titulo)
@@ -231,7 +245,36 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
             c.setCustomProperty('auditoria_fronteiras/papel', papel)
             c.setCustomProperty('auditoria_fronteiras/execucoes', json.dumps([uid]))
             c.setCustomProperty('auditoria_fronteiras/base', self.base)
-            organizar(c, QgsProject.instance(), 'gis', uid, self.base, nome)
+            candidata_id=c.id()
+            c = organizar(c, QgsProject.instance(), 'gis', uid, self.base, nome)
+            from qgis.core import QgsExpression
+            # OGR/QGIS 3.44 pode emitir erro ao serializar um subset desnecessário
+            # no QGZ. Bases compartilhadas ainda exigem isolamento por execução.
+            filtro='"EXE_UID" = '+QgsExpression.quotedString(uid) if outras else ''
+            if c.subsetString()!=filtro and not c.setSubsetString(filtro):
+                raise ValueError('Não foi possível limitar a camada à execução selecionada.')
+            if tabela_ == 'EVENTOS_FRONTEIRAS':
+                from .mapa_relevancia_gis import configurar
+                configurar(c, self.indice, nova=c.id()==candidata_id)
+                if c.id() not in self._camadas_eventos:
+                    self._camadas_eventos[c.id()] = c
+                    c.selectionChanged.connect(self.selecionar_evento_mapa)
+
+    def selecionar_evento_mapa(self, *_):
+        if not self.indice or self.central.ocupado(): return
+        from qgis.PyQt import sip
+        ativas = []
+        for k, c in list(self._camadas_eventos.items()):
+            if sip.isdeleted(c): self._camadas_eventos.pop(k); continue
+            if c.customProperty('wna/uid') == self.dossie['execucao_uid'] and str(Path(c.customProperty('wna/base')).resolve()) == str(Path(self.base).resolve()):
+                ativas.extend(f['EVT_UID'] for f in c.getSelectedFeatures())
+        if len(ativas) != 1: return
+        evento = ativas[0]; locais = self.indice.ev_locais.get(evento, set())
+        if len(locais) != 1 or not self.resolver(): return
+        # A seleção explícita no mapa pode revelar um caso fora da fila atual.
+        self.limpar_filtros(); self.listar(next(iter(locais)))
+        self.alvo.setCurrentIndex(self.alvo.findData(evento))
+        self.info.setText('Ocorrência selecionada no mapa. Filtros limpos para mostrar este registro; sem alteração de zoom ou de decisões.')
 
     def abrir_legado(self):
         if self.base and self.resolver():

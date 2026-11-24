@@ -20,6 +20,9 @@ def exportar_tabelas(dossie,pasta,base):
         if {l['uid']:l['revisao'].get('uid') for l in atual['locais']}!={l['uid']:l['revisao'].get('uid') for l in dossie['locais']} or {u:r['rev_uid'] for u,r in revs.items()}!={u:r['rev_uid'] for u,r in dossie.get('revisoes_ocorrencias',{}).items()}:
             raise ValueError('As decisões mudaram em outra sessão. Reabra o trabalho antes de exportar; saídas anteriores preservadas.')
         indice=IndiceInvestigacao(atual,revs)
+        escrever('RELEVANCIA_EVENTOS.csv',['EXE_UID','EVT_UID','CLASSIFICACAO_GEOMETRICA','RELEVANCIA','MOTIVO','CRITERIO','REGRA','ASSINATURA_ENTRADA'],
+            ((atual['execucao_uid'],e['uid'],e['tecnico']['classificacao'],r['categoria'],r['motivo'],r['criterio'],r['regra'],r['assinatura_entrada'])
+             for e in atual['eventos'] for r in (indice.relevancias[e['uid']],)))
         escrever('SITUACOES_LOCAIS.csv',['EXE_UID','LOC_UID','LOCAL','SITUACAO_AGRUPAMENTO','SITUACAO_ACOMPANHAMENTO','OBSERVACAO'],
             ((atual['execucao_uid'],l['uid'],l['registro']['LOCAL'],l['revisao']['situacao'],indice.situacao(l['uid']),l['revisao']['observacoes']) for l in atual['locais']))
         cols=['rev_uid','exe_uid','evt_uid','situacao','observacoes','data_utc','anterior_uid']
@@ -39,3 +42,11 @@ def copiar_gpkg(base,temporario,exe,cancelar):
         origem.backup(copia,pages=256,progress=progresso)
         if copia.execute('PRAGMA quick_check').fetchone()[0]!='ok':raise ValueError('Integridade da cópia não confirmada.')
         if not copia.execute('SELECT 1 FROM EXECUCOES WHERE exe_uid=?',(exe,)).fetchone():raise ValueError('Execução ausente na cópia.')
+        from auditoria_fronteiras.persistencia import carregar_execucao
+        from .relevancia_gis import calcular
+        d=carregar_execucao(temporario,exe,conexao=copia)
+        copia.execute('CREATE TABLE IF NOT EXISTS WNA_RELEVANCIA_EVENTOS (exe_uid TEXT,evt_uid TEXT,categoria TEXT,motivo TEXT,criterio TEXT,regra TEXT,assinatura_entrada TEXT,PRIMARY KEY(exe_uid,evt_uid))')
+        copia.executemany('INSERT OR REPLACE INTO WNA_RELEVANCIA_EVENTOS VALUES (?,?,?,?,?,?,?)',
+            ((exe,u,r['categoria'],r['motivo'],r['criterio'],r['regra'],r['assinatura_entrada']) for u,r in calcular(d).items()))
+        if cancelar():raise InterruptedError('Exportação cancelada.')
+        copia.commit()

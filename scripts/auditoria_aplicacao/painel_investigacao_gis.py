@@ -3,10 +3,11 @@ import json
 import sqlite3
 from pathlib import Path
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QHBoxLayout,QLineEdit,QComboBox,QPlainTextEdit,QMessageBox
+from qgis.PyQt.QtWidgets import QHBoxLayout,QLineEdit,QComboBox,QPlainTextEdit,QMessageBox,QDoubleSpinBox
 from qgis.core import QgsProject,QgsCoordinateReferenceSystem,QgsGeometry,QgsPointXY
 from .modelo_gis_ui import aviso,botao,expansivel,formulario,tabela,linha,secao
 from .investigacao_gis import IndiceInvestigacao,SITUACOES,descricao,geometria
+from .relevancia_gis import ROTULOS,VERSAO
 from auditoria_fronteiras import revisoes_ocorrencias as individuais
 from auditoria_fronteiras.persistencia import salvar_revisao,historico
 from auditoria_fronteiras.inspecao import detalhes_local
@@ -24,11 +25,16 @@ class PainelInvestigacaoGIS:
         secao(v,'RESULTADOS')
         self.busca=QLineEdit();self.busca.setPlaceholderText('Pesquisar local ou identificador de tubulação');v.addWidget(self.busca)
         self.busca.editingFinished.connect(self.filtrar)
+        self.filtro_relevancia=combo({'ATENCAO':'Precisam de revisão','':'Todas as ocorrências',**ROTULOS})
+        v.addWidget(self.filtro_relevancia);self.filtro_relevancia.currentIndexChanged.connect(self.filtrar)
+        self.relevancia_info=aviso();v.addWidget(self.relevancia_info)
         _,filtros=expansivel(v,'Filtrar resultados')
         f=formulario(filtros)
         self.filtro_situacao=combo({'':'Todas as situações',**SITUACOES})
         self.filtro_tipo=combo({'':'Todos os tipos'})
         self.filtro_categoria=combo({'':'Todas as análises','PERIMETRO':'Contato com perímetro','TRANSICAO':'Transição entre regiões'})
+        self.filtro_regiao=QLineEdit();self.filtro_regiao.setPlaceholderText('Nome, ID ou camada de setor / zona');f.addRow('Setor / zona',self.filtro_regiao);self.filtro_regiao.editingFinished.connect(self.filtrar)
+        self.filtro_equipamento=QLineEdit();self.filtro_equipamento.setPlaceholderText('Consultar equipamentos para habilitar');self.filtro_equipamento.setEnabled(False);f.addRow('Equipamento',self.filtro_equipamento);self.filtro_equipamento.editingFinished.connect(self.filtrar)
         for label,b in [('Situação',self.filtro_situacao),('Tipo de ocorrência',self.filtro_tipo),('Categoria da análise',self.filtro_categoria)]:
             f.addRow(label,b);b.currentIndexChanged.connect(self.filtrar)
         botao(filtros,'Limpar filtros',self.limpar_filtros)
@@ -42,16 +48,23 @@ class PainelInvestigacaoGIS:
         self.detalhes_b,det=expansivel(v,'DETALHES DO LOCAL')
         self.detalhes_widget=det.parentWidget()
         self.local_info=aviso();det.addWidget(self.local_info)
-        self.eventos_lista=tabela(['Ocorrência','Classificação','Análise','Ambiguidade','Decisão individual']);self.eventos_lista.setMaximumHeight(150);det.addWidget(self.eventos_lista)
+        self.eventos_lista=tabela(['Ocorrência','Relevância','Classificação','Análise','Ambiguidade','Decisão individual']);self.eventos_lista.setMaximumHeight(150);det.addWidget(self.eventos_lista)
         self.eventos_lista.currentCellChanged.connect(self.escolher_evento_tabela)
         self.descricao_evento=QPlainTextEdit();self.descricao_evento.setReadOnly(True);self.descricao_evento.setMaximumHeight(130);det.addWidget(self.descricao_evento)
         self.tubos_lista=tabela(['ID cadastral','Camada de origem']);self.tubos_lista.setMaximumHeight(120);det.addWidget(self.tubos_lista)
         self.poligonos_info=aviso();det.addWidget(self.poligonos_info)
+        _,equip=expansivel(det,'Equipamentos próximos e associações declaradas')
+        equip.addWidget(aviso('Consulta opcional às fontes atuais do Modelo GIS. Proximidade não confirma conexão; associações declaradas podem estar afastadas da tubulação. Não altera relevância ou topologia.'))
+        self.raio_equipamento=QDoubleSpinBox();self.raio_equipamento.setRange(0,1000);self.raio_equipamento.setValue(20);self.raio_equipamento.setSuffix(' m');formulario(equip).addRow('Distância para contexto',self.raio_equipamento)
+        botao(equip,'Consultar / atualizar equipamentos',self.consultar_equipamentos)
+        self.equipamentos_info=aviso('Equipamentos ainda não consultados.');equip.addWidget(self.equipamentos_info)
+        self.equipamentos_lista=tabela(['Tipo','ID / nome','Fonte','Relação','Distância (m)']);self.equipamentos_lista.setMaximumHeight(150);equip.addWidget(self.equipamentos_lista)
+        self._equipamentos=None;self._equipamentos_chave=None
         self.tecnicos_b,tec=expansivel(det,'Informações técnicas das ocorrências')
         self.tecnicos_info=QPlainTextEdit();self.tecnicos_info.setReadOnly(True);self.tecnicos_info.setMaximumHeight(180);tec.addWidget(self.tecnicos_info)
         self.tecnicos_b.toggled.connect(lambda aberto:self.mostrar_tecnicos() if aberto else None)
         _,mapa=expansivel(v,'MAPA')
-        mapa.addWidget(aviso('Azul: tubulações · laranja: ocorrências · quadrado violeta: local. Destaques temporários.'))
+        mapa.addWidget(aviso('Tubulações: azul · local: quadrado violeta. Pontos de ocorrência: círculo azul-cinza informativo, triângulo âmbar a revisar, losango vermelho inconsistência, quadrado roxo indeterminado. O ponto representa o evento, não uma conexão hidráulica.'))
         botao(mapa,'Destacar local e elementos',self.destacar)
         botao(mapa,'Destacar tubulações',lambda:self.destacar(somente_tubos=True))
         botao(mapa,'Aproximar local',self.aproximar)
@@ -75,16 +88,18 @@ class PainelInvestigacaoGIS:
         botao(e,'Exportar Shapefile e tabelas…',self.exportar_shp)
         _,leg=expansivel(e,'Compatibilidade avançada')
         botao(leg,'Abrir visualizador anterior',self.abrir_legado)
-        self._filtros_aplicados=('', '', '', '')
+        self._filtros_aplicados=('', '', '', '', 'ATENCAO', '', '')
         self.detalhes_b.setChecked(True)
 
-    def filtro(self):return (self.busca.text(),self.filtro_situacao.currentData(),self.filtro_tipo.currentData(),self.filtro_categoria.currentData())
+    def filtro(self):return (self.busca.text(),self.filtro_situacao.currentData(),self.filtro_tipo.currentData(),self.filtro_categoria.currentData(),self.filtro_relevancia.currentData(),self.filtro_regiao.text(),self.filtro_equipamento.text())
 
     def filtrar(self,*_):
         if not self.indice:return
+        if self.filtro_equipamento.text().strip() and not self.equipamentos_validos():
+            self.info.setText('Atualize a consulta de equipamentos ou limpe esse filtro; o contexto anterior não será usado.');return
         if not self.resolver():
-            busca,estado,classe,tipo=self._filtros_aplicados
-            for b,valor in [(self.busca,busca),(self.filtro_situacao,estado),(self.filtro_tipo,classe),(self.filtro_categoria,tipo)]:
+            busca,estado,classe,tipo,relevancia,regiao,equipamento=self._filtros_aplicados
+            for b,valor in [(self.busca,busca),(self.filtro_situacao,estado),(self.filtro_tipo,classe),(self.filtro_categoria,tipo),(self.filtro_relevancia,relevancia),(self.filtro_regiao,regiao),(self.filtro_equipamento,equipamento)]:
                 b.blockSignals(True)
                 if isinstance(b,QLineEdit):b.setText(valor)
                 else:b.setCurrentIndex(b.findData(valor))
@@ -94,9 +109,9 @@ class PainelInvestigacaoGIS:
 
     def limpar_filtros(self):
         if not self.resolver():return
-        for b in (self.busca,self.filtro_situacao,self.filtro_tipo,self.filtro_categoria):
+        for b in (self.busca,self.filtro_situacao,self.filtro_tipo,self.filtro_categoria,self.filtro_regiao,self.filtro_relevancia,self.filtro_equipamento):
             b.blockSignals(True)
-            b.clear() if isinstance(b,QLineEdit) else b.setCurrentIndex(0)
+            b.clear() if isinstance(b,QLineEdit) else b.setCurrentIndex(b.findData(''))
             b.blockSignals(False)
         self.filtrar()
 
@@ -104,6 +119,9 @@ class PainelInvestigacaoGIS:
         self.lista.blockSignals(True);self.lista.setRowCount(0)
         self._filtrados=self.indice.filtrar(*self.filtro()) if self.indice else []
         self._filtros_aplicados=self.filtro()
+        if self.indice:
+            contagens=self.indice.contagens_relevancia
+            self.relevancia_info.setText(f'{len(self.indice.eventos)} eventos geométricos · '+ ' · '.join(f'{ROTULOS[k]}: {n}' for k,n in contagens.items())+'\nRegra '+VERSAO+' aplicada aos registros carregados, sem alterar eventos ou decisões históricos.')
         if preferido is None and self.selecionado:preferido=self.selecionado['uid']
         ids=[l['uid'] for l in self._filtrados]
         if preferido in ids:self._pagina=ids.index(preferido)//200
@@ -115,10 +133,13 @@ class PainelInvestigacaoGIS:
         self.lista.blockSignals(False)
         self.selecionado=None;self._evento_uid=None
         ativos=[rotulo+': '+valor for rotulo,valor in [('Pesquisa',self.busca.text()),('Situação',self.filtro_situacao.currentText() if self.filtro_situacao.currentData() else ''),('Tipo',self.filtro_tipo.currentText() if self.filtro_tipo.currentData() else ''),('Categoria',self.filtro_categoria.currentText() if self.filtro_categoria.currentData() else '')] if valor]
+        ativos += [rotulo+': '+valor for rotulo,valor in [('Relevância',self.filtro_relevancia.currentText() if self.filtro_relevancia.currentData() else ''),('Setor / zona',self.filtro_regiao.text()),('Equipamento',self.filtro_equipamento.text())] if valor]
         self.pagina_info.setText(f'{len(ids)} locais encontrados · {len(self.indice.locais) if self.indice else 0} no trabalho · página {self._pagina+1}. '+('Filtros ativos: '+' · '.join(ativos) if ativos else 'Sem filtros.'))
         if self._visiveis:
             uids=[l['uid'] for l in self._visiveis];self.lista.setCurrentCell(uids.index(preferido) if preferido in uids else 0,0)
-        else:self.mostrar_local()
+        else:
+            self.mostrar_local()
+            if self.indice:self.pagina_info.setText(self.pagina_info.text()+' Nenhum local atende aos filtros. Escolha Todas as ocorrências para consultar também as informativas e indeterminadas.')
 
     def paginar(self,delta):
         if not self.resolver():return
@@ -148,8 +169,8 @@ class PainelInvestigacaoGIS:
             for e in d['eventos']:
                 self.alvo.addItem('Ocorrência '+str(e['registro']['ID'])+' · '+e['tecnico']['classificacao'],e['uid'])
                 rev=self.indice.revisoes.get(e['uid'])
-                linha(self.eventos_lista,[e['registro']['ID'],e['tecnico']['classificacao'].replace('_',' ').capitalize(),'Perímetro' if e['tecnico']['modo']=='PERIMETRO' else 'Transição',e['registro']['AMBIGUO'],SITUACOES[rev['situacao']] if rev else 'Sem decisão individual'],e['uid'])
-        else:self.local_info.setText('Selecione um local.');self.descricao_evento.clear();self.tubos_lista.setRowCount(0);self.poligonos_info.clear()
+                linha(self.eventos_lista,[e['registro']['ID'],ROTULOS[self.indice.relevancias[e['uid']]['categoria']],e['tecnico']['classificacao'].replace('_',' ').capitalize(),'Perímetro' if e['tecnico']['modo']=='PERIMETRO' else 'Transição',e['registro']['AMBIGUO'],SITUACOES[rev['situacao']] if rev else 'Sem decisão individual'],e['uid'])
+        else:self.local_info.setText('Selecione um local.');self.descricao_evento.clear();self.tubos_lista.setRowCount(0);self.poligonos_info.clear();self.equipamentos_lista.setRowCount(0)
         self.alvo.blockSignals(False);self.eventos_lista.blockSignals(False);self.carregar_alvo()
         self.eventos_lista.setFixedHeight(min(160,max(75,self.eventos_lista.horizontalHeader().height()+22*self.eventos_lista.rowCount()+4)))
 
@@ -181,11 +202,12 @@ class PainelInvestigacaoGIS:
         self.salvar_b.setEnabled(bool(self.selecionado));self.historico_lista.setRowCount(0);self._historico=[];self.historico_info.clear()
         if not self.selecionado:return
         d=detalhes_local(self.dossie,self.selecionado['uid'],self.indice,self._evento_uid)
-        self.descricao_evento.setPlainText('\n\n'.join('Ocorrência '+str(e['registro']['ID'])+': '+descricao(e)+'\n'+'\n'.join(map(str,e['tecnico'].get('observacoes',[]))) for e in d['eventos']))
+        self.descricao_evento.setPlainText('\n\n'.join('Ocorrência '+str(e['registro']['ID'])+': '+descricao(e)+'\n'+ROTULOS[self.indice.relevancias[e['uid']]['categoria']]+': '+self.indice.relevancias[e['uid']]['motivo']+'\n'+'\n'.join(map(str,e['tecnico'].get('observacoes',[]))) for e in d['eventos']))
         self.tubos_lista.setRowCount(0)
         for t in d['tubulacoes']:linha(self.tubos_lista,[t['id_exibido'],t['camada']],t['uid'])
         self.tubos_lista.setFixedHeight(min(140,max(75,self.tubos_lista.horizontalHeader().height()+22*self.tubos_lista.rowCount()+4)))
         self.poligonos_info.setText('Regiões / polígonos: '+'; '.join(str(p.get('nome') or p.get('id_original') or 'Sem identificação')+' · '+p['camada'] for p in d['poligonos']) if d['poligonos'] else 'Sem região associada neste registro.')
+        self.mostrar_equipamentos()
         if self.tecnicos_b.isChecked():self.mostrar_tecnicos()
         if self.historico_b.isChecked():self.historico()
 
@@ -193,6 +215,59 @@ class PainelInvestigacaoGIS:
         if not self.selecionado:return
         d=self.indice.detalhes(self.selecionado['uid'],self._evento_uid)
         self.tecnicos_info.setPlainText(json.dumps([{k:v for k,v in e['tecnico'].items() if k not in ('geometria_wkb_hex','apresentacao')} for e in d['eventos']],ensure_ascii=False,indent=2,default=str))
+
+    def chave_equipamentos(self):
+        return (self.dossie['execucao_uid'] if self.dossie else None,
+                self.central.projetos.dados.get('ativo'),self._geracao,self.raio_equipamento.value(),
+                json.dumps(self.central.modelo_gis.fontes,sort_keys=True,default=str))
+
+    def equipamentos_validos(self):
+        return self._equipamentos is not None and self._equipamentos_chave==self.chave_equipamentos()
+
+    def consultar_equipamentos(self):
+        if not self.dossie or self.central.ocupado():return
+        from .contexto_equipamentos_gis import preparar,ler
+        try:
+            m=self.central.modelo_gis
+            prep=preparar(m.fontes,list(m.camadas()),self.dossie['contexto']['parametros']['crs'],QgsProject.instance().transformContext())
+            from .modelo_gis import identificar
+            camadas=list(m.camadas())
+            for f in m.fontes:
+                c=identificar(f,camadas)
+                if c is None:continue
+                if not hasattr(c,'dataChanged') or c.id() in self._observadas:continue
+                self._observadas.add(c.id())
+                for s in ('dataChanged','dataSourceChanged','updatedFields','crsChanged','subsetStringChanged'):
+                    getattr(c,s).connect(self.fonte_mudou)
+            chave=self.chave_equipamentos();d=self.dossie;raio=self.raio_equipamento.value()
+            def pronto(dados):
+                if self.chave_equipamentos()!=chave:
+                    self.equipamentos_info.setText('Contexto alterado durante a consulta; atualize os equipamentos.');return
+                self._equipamentos,avisos=dados;self._equipamentos_chave=chave
+                self.indice.equipamentos_textos={e:' '.join(str(r[k]) for r in rs for k in ('id','nome','categoria','camada','relacao')).casefold() for e,rs in self._equipamentos.por_evento.items()}
+                self.filtro_equipamento.setEnabled(True);self.filtro_equipamento.setPlaceholderText('ID, nome, tipo ou fonte dos equipamentos consultados')
+                self.equipamentos_info.setText('Contexto das fontes atuais consultado. '+(' '.join(avisos) if avisos else 'Nenhuma conexão inferida.'))
+                self.mostrar_equipamentos()
+            self.app.atividades.executar_thread('Consultando equipamentos GIS','Contexto espacial e associações declaradas, sem alterar conectividade',lambda parar,_:ler(prep,d,parar,raio),pronto,lambda erro:self.equipamentos_info.setText(erro+' Contexto anterior não alterado.'))
+        except (ValueError,RuntimeError) as e:self.equipamentos_info.setText(str(e))
+
+    def equipamentos_alvo(self):
+        if not self.selecionado or not self.equipamentos_validos():return []
+        ids=[self._evento_uid] if self._evento_uid else self.selecionado['eventos']
+        registros={}
+        for e in ids:
+            for r in self._equipamentos.por_evento.get(e,[]):
+                chave=(r['indice'],r['relacao'])
+                registros.setdefault(chave,r)
+        return list(registros.values())
+
+    def mostrar_equipamentos(self):
+        self.equipamentos_lista.setRowCount(0)
+        if self._equipamentos is not None and not self.equipamentos_validos():
+            self.equipamentos_info.setText('Fontes, projeto ou parâmetros alterados. Atualize a consulta antes de usar este contexto.')
+            self.filtro_equipamento.setEnabled(False);self.indice.equipamentos_textos={}
+        for r in self.equipamentos_alvo():
+            linha(self.equipamentos_lista,[r['categoria'],str(r['id'])+' '+r['nome'],r['camada'],r['relacao'],f"{r['distancia']:.2f}" if r['distancia'] is not None else 'Sem geometria'])
 
     def pendente(self):
         r=self.revisao_alvo()
@@ -208,17 +283,46 @@ class PainelInvestigacaoGIS:
 
     def salvar_observacao(self):return self.salvar_decisao()
 
+    def proteger_gravacao(self):
+        """Evita leitura OGR em renderização durante DDL/gravação SQLite."""
+        from qgis.PyQt import sip
+        base=str(Path(self.base).resolve())
+        canvases=[self.central.mapa.canvas]
+        iface=getattr(self.app,'iface',None)
+        if iface is not None and hasattr(iface,'mapCanvases'):canvases+=list(iface.mapCanvases())
+        estados={c:c.isFrozen() for c in canvases if c is not None and not sip.isdeleted(c)}
+        for c in estados:c.stopRendering();c.freeze(True)
+        restaurado=False
+        def restaurar():
+            nonlocal restaurado
+            if restaurado:return
+            restaurado=True
+            try:
+                for layer in QgsProject.instance().mapLayers().values():
+                    if layer.customProperty('wna/categoria')=='gis' and layer.customProperty('wna/base')==base:
+                        layer.dataProvider().reloadData();layer.triggerRepaint()
+            finally:
+                for c,congelado in estados.items():
+                    if not sip.isdeleted(c):
+                        c.freeze(congelado)
+                        if not congelado:c.refresh()
+        return restaurar
+
     def salvar_decisao(self):
         if not self.selecionado or not self.base or self.central.ocupado():return False
         uid=self.selecionado['uid'];e=self._evento_uid;rev=self.revisao_alvo();estado=self.situacao.currentData();texto=self.observacao.toPlainText().strip()
+        restaurar=None
         try:
+            restaurar=self.proteger_gravacao()
             if e:
                 def pronto(r):
                     self.indice.revisoes[e]=r;self.aplicar_decisao(uid,e,texto)
-                self.app.atividades.executar_thread('Salvando decisão individual','Histórico e backup verificado quando necessário',
+                worker=self.app.atividades.executar_thread('Salvando decisão individual','Histórico e backup verificado quando necessário',
                     lambda parar,etapa:individuais.salvar(self.base,self.dossie['execucao_uid'],e,estado,texto,rev.get('rev_uid')),
                     pronto,lambda erro:self.info.setText(erro+' Rascunho preservado.'))
+                worker.finished.connect(restaurar)
                 self.app.atividades.atual.critica('Gravando decisão e verificando integridade')
+                restaurar=None  # O sinal finished restaura também em falha/cancelamento.
                 return False  # Uma navegação iniciada por resolver() deve aguardar a gravação.
             else:
                 r=salvar_revisao(self.base,self.dossie['execucao_uid'],uid,estado,texto,esperada=rev.get('uid'))
@@ -226,6 +330,8 @@ class PainelInvestigacaoGIS:
             self.aplicar_decisao(uid,e,texto);return True
         except (ValueError,OSError,RuntimeError,sqlite3.Error) as erro:
             self.info.setText(str(erro)+' Alterações preenchidas preservadas.');return False
+        finally:
+            if restaurar is not None:restaurar()
 
     def aplicar_decisao(self,uid,e,texto):
         # Atualizar o formulário antes de reconstruir a seleção evita falso rascunho.
@@ -273,10 +379,11 @@ class PainelInvestigacaoGIS:
             novos,avisos=dados;self._cache_geometrias.update(novos);novos={**gs,**novos}
             itens=[('tubo',geometria(w.hex())) for w in novos.values()]
             if not somente_tubos:
-                itens += [('evento',geometria(x['tecnico'].get('geometria_wkb_hex'))) for x in d['eventos']]
+                itens += [('evento_'+self.indice.relevancias[x['uid']]['categoria'],geometria(x['tecnico'].get('geometria_wkb_hex'))) for x in d['eventos']]
+                itens += [('equipamento',r['geometria']) for r in self.equipamentos_alvo() if r['relacao']=='Associação declarada']
                 r=d['local']['registro'];itens.append(('local',QgsGeometry.fromPointXY(QgsPointXY(r['X'],r['Y']))))
             self.central.mapa.destacar_investigacao(itens,crs,aproximar,toda_extensao);self._destaque_alvo=(uid,e)
-            self.info.setText('Destaque temporário · azul: tubulações; laranja: ocorrências; violeta: local. '+(' '.join(avisos) if avisos else ''))
+            self.info.setText('Destaque temporário · azul: tubulações; ocorrências por relevância; violeta: local. '+(' '.join(avisos) if avisos else ''))
         if faltantes:
             prep=preparar(self.dossie,faltantes,QgsProject.instance())
             # Publicação pela thread principal após o worker finalizar; o gerenciador ainda está ocupado no callback.

@@ -160,6 +160,8 @@ def executar(preparacao, nome, projeto, cancelar=lambda: False, progresso=lambda
         g=por_origem[t['origem']].geometrias.get(t['uid'].rsplit('_',1)[0])
         if g:t['geometria_wkb_hex']=g
     d['configuracao']['modelo_gis'] = deepcopy(preparacao.proveniencia)
+    from .relevancia_gis import VERSAO
+    d['configuracao']['relevancia_gis'] = dict(regra=VERSAO, tratamento='Derivada dos eventos e vínculos; independente das decisões.')
     d['configuracao']['modelo_gis']['avisos'] = list(preparacao.avisos)
     d['configuracao']['modelo_gis']['erros_transformacao'] = [
         dict(fonte=c.chave_origem, **e) for c in preparacao.redes + preparacao.limites for e in c.camada.erros]

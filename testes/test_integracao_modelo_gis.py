@@ -112,7 +112,10 @@ class PaginaGIS(unittest.TestCase):
   for cat in ('ZONA_VRP','ZONA_BOOSTER'):self.f.cadastrar(cat,[a])
   self.assertTrue(self.m.salvar());self.c.abrir_analise_gis('verificar');self.p=self.c.analise_gis
   self.p.pasta.setText(str(self.app.catalogo.raiz/'ensaios_gis'))
- def iniciar(self):self.p.iniciar();self.f.aguardar();self.assertIsNotNone(self.p.dossie,self.p.info.text());return self.p.dossie
+ def iniciar(self):
+  self.p.iniciar();self.f.aguardar();self.assertIsNotNone(self.p.dossie,self.p.info.text())
+  # Esta fixture exercita decisões sobre travessias informativas, fora da fila inicial.
+  self.p.filtro_relevancia.setCurrentIndex(self.p.filtro_relevancia.findData(''));return self.p.dossie
  def test_entrada_contextual_sem_formulario_antigo(self):
   self.assertIs(self.c.paginas.currentWidget(),self.p);self.assertFalse(self.app.geo.isVisible());self.assertIsNone(self.c._central_legada)
   self.assertIn('2 fonte(s) de tubulações',self.p.resumo.text())
