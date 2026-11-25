@@ -45,7 +45,7 @@ class MapaGIS:
             invalidas={r.get('origem') for r in d['diagnosticos'] if r['tipo']=='EQUIPAMENTO_PENDENTE'}
             ativos={r['uuid'] for r in d.get('participantes',[])
                     if r['tipo']=='CONEXAO' and r['uuid'] not in invalidas
-                    and resolucoes.get(r['uuid'])!='REFERENCIA_ALTERADA'}|set(d['origens_validas'])
+                    and resolucoes.get(r['uuid'])!='REFERENCIA_ALTERADA'}|set(d['origens_validas'])|set(d.get('propostas_aplicadas',()))
             nome=d['nome']+' · '+d['uuid'][:8]
         else:
             crs=self.crs.crs()
@@ -64,7 +64,7 @@ class MapaGIS:
             crs=QgsProject.instance().crs()
         preparados=[]
         for r in registros.values():
-            if r['tipo'] not in ('ORIGEM','CONEXAO') or r.get('excluido'):continue
+            if r['tipo'] not in ('ORIGEM','CONEXAO','PIPE') or r.get('excluido'):continue
             if not r.get('pontos_rede') and d:
                 pontos=pontos_portas(r['portas'],self.tubos)
                 r=dict(r,pontos_rede=pontos,crs_rede=d['crs'])
@@ -247,7 +247,7 @@ class MapaGIS:
             pt,tol=self._clique_metricas(p,camada.crs())
             opcoes=self.mapa_gis.consultar(pt,camada.crs(),tol)
             if revisar:
-                opcoes=[o for o in opcoes if o[1].get('tipo') in ('CONEXAO','CONEXAO_T','CRUZAMENTO','EXTREMIDADES_PROXIMAS')]
+                opcoes=[o for o in opcoes if o[1].get('tipo') in ('PIPE','CONEXAO','CONEXAO_T','CRUZAMENTO','EXTREMIDADES_PROXIMAS')]
             escolha=escolher(self,opcoes,lambda r:r[0])
             if not escolha:return
             sair(True)
@@ -257,14 +257,20 @@ class MapaGIS:
                                    else 'Selecione um elemento visível no mapa. Esc cancela.')
 
     def abrir_registro_mapa(self,r,revisar=False):
-        if r.get('tipo') in ('ORIGEM','CONEXAO'):
-            self.orig_b.setChecked(True)
-            for i in range(self.participantes.count()):
-                if self.participantes.item(i).data(Qt.UserRole)==r['uuid']:
-                    self.participantes.setCurrentCell(i,0)
-                    self.ensureWidgetVisible(self.participantes)
+        if r.get('tipo') in ('ORIGEM','CONEXAO','PIPE'):
+            origem=r['tipo']=='ORIGEM'
+            secao=self.orig_b if origem else self.conexoes_b
+            tabela=self.participantes if origem else self.conexoes_lista
+            secao.setChecked(True)
+            if not origem:self.filtro_conexoes.setCurrentIndex(0)
+            for i in range(tabela.count()):
+                if tabela.item(i).data(Qt.UserRole)==r['uuid']:
+                    tabela.setCurrentCell(i,0)
+                    if not origem:self.filtrar_conexoes()
+                    self.ensureWidgetVisible(tabela)
                     break
-            self.detalhar_relacao(r)
+            if origem:self.detalhar_relacao(r)
+            else:self.detalhar_conexao()
             self.destacar_relacao(r=r)
             if revisar:
                 self._editar_relacao(r)
@@ -292,13 +298,14 @@ class MapaGIS:
             itens=[('tubo',QgsGeometry.collectGeometry(gs))] if gs else []
             g=geometria_referencia(r,crs)
             fonte=r['tipo']=='ORIGEM'
-            if g is not None:itens.append(('equipamento' if fonte else 'evento',g))
+            proposta=r['tipo']=='PIPE'
+            if g is not None:itens.append(('vinculo' if proposta else 'equipamento' if fonte else 'evento',g))
             pontos=[_transformar(_ponto(xy),crs_rede,crs)
                     for xy in r.get('pontos_rede',[])] if crs_rede.isValid() else []
             if pontos:itens.append(('evento',QgsGeometry.collectGeometry(pontos)))
             if fonte and g is not None and g.type()==0 and not g.isMultipart():
                 vinculos=[[QgsPointXY(g.asPoint()),QgsPointXY(p.asPoint())] for p in pontos if p.distance(g)>1e-8]
-            elif not fonte and len(pontos)==2 and pontos[0].distance(pontos[1])>1e-8:
+            elif not (fonte or proposta) and len(pontos)==2 and pontos[0].distance(pontos[1])>1e-8:
                 vinculos=[[QgsPointXY(p.asPoint()) for p in pontos]]
             else:vinculos=[]
             if vinculos:itens.append(('vinculo',QgsGeometry.fromMultiPolylineXY(vinculos)))

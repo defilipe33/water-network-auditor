@@ -143,6 +143,13 @@ def descrever(camada):
 def identificar(fonte, camadas):
     """Resolve a fonte pelo provedor e URI; o ID do projeto desambigua visualizações."""
     camadas = list(camadas)
+    if uri:=fonte.get('uri_portatil'):
+        provedor=fonte['provedor']
+        decodificar=QgsProviderRegistry.instance().decodeUri
+        ref=decodificar(provedor,uri)
+        return next((c for c in camadas if c.isValid() and c.providerType()==provedor
+                     and decodificar(provedor,c.source())==ref
+                     and c.subsetString()==fonte.get('filtro_provedor','')),None)
     # O ID só é atalho quando a identidade da fonte também confere.
     for c in camadas:
         if c.id() == fonte['camada_id'] and c.isValid() and c.providerType() == fonte['provedor'] and origem_camada(c) == fonte['origem']:
@@ -159,6 +166,13 @@ def identificar(fonte, camadas):
     if fonte['provedor'] == 'memory':
         return None
     return candidatas[0] if len(candidatas) == 1 else None
+
+
+def assinatura_confere(fonte,atual):
+    if not fonte.get('uri_portatil'):return fonte['assinatura']==atual['assinatura']
+    if any(fonte.get(k)!=atual.get(k) for k in ('geometria','wkb','crs_wkt','campos','filtro_provedor','conjunto')):
+        return False
+    return fonte.get('marca_portatil')=={k:m[2:] for k,m in atual['marca_arquivo'].items()}
 
 
 def _normalizar(texto):
@@ -248,7 +262,7 @@ def estado_fonte(fonte, camada):
         return 'Localizar / carregar no QGIS'
     try:
         atual = descrever(camada)
-        if atual['assinatura'] != fonte['assinatura']:
+        if not assinatura_confere(fonte,atual):
             return 'Fonte alterada — conferir'
         if fonte.get('relocalizacao') == 'COMPATIVEL_IDENTIDADE_PENDENTE':
             return 'Compatível — identidade por conferir'

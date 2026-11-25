@@ -96,7 +96,7 @@ class Projetos:
             self._original=deepcopy(dados)
             return p
 
-    def salvar_manifesto(self,caminho,nome=None):
+    def salvar_manifesto(self,caminho,nome=None,estado_salvo=None):
         from .manifesto_projeto import gravar, ler
         p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={},layout=1) if nome else self.atual()
         if p is None:raise ValueError('Selecione um projeto.')
@@ -110,6 +110,7 @@ class Projetos:
             atual=next((r for r in dados['projetos'] if r['uuid']==p['uuid']),None)
             if not nome and atual!=p:
                 raise ValueError('O projeto mudou em outra sessão. Reabra antes da migração.')
+            if estado_salvo is not None:p=dict(p, layout=1, sessao_wna=estado_salvo)
             gravar(caminho,p,exclusivo=True)
             registrado=ler(caminho)
             dados['projetos']=[r for r in dados['projetos'] if r['uuid']!=p['uuid']]+[registrado]
@@ -117,6 +118,12 @@ class Projetos:
             self._gravar_indice(dados)
             self._original=deepcopy(dados)
             return registrado
+
+    def salvar_sessao(self, sessao):
+        dados=deepcopy(self.dados)
+        p=next(r for r in dados['projetos'] if r['uuid']==dados['ativo'])
+        p['sessao_wna']=sessao
+        self.gravar(dados)
 
     def _gravar_indice(self,dados):
         tmp=self.path.with_name(self.path.name+'.'+uuid4().hex+'.tmp')

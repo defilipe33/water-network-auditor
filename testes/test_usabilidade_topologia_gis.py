@@ -250,7 +250,7 @@ class Conectividade(unittest.TestCase):
         self.assertIsNone(t._editor)
         self.assertTrue(self.c.mapa.itens)
         opcoes={a[0]:a[1] for a in t._menu_resultado(indice) if a}
-        opcoes['Confirmar conexão']()
+        opcoes['Confirmar sem incluir']()
         self.assertIn('fora da hipótese',t.status.text())
         self.assertEqual(t._selecionados(),[])
         uid=next(r['uuid'] for r in t.registros.values() if r['tipo']=='CONEXAO')

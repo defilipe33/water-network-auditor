@@ -296,8 +296,10 @@ class Aplicacao:
                 return False
             direta=getattr(self,'topologia_direta',None)
             if direta is not None and not sip.isdeleted(direta) and not direta.resolver():return False
-            if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
             central=getattr(self,'central',None)
+            if central is not None and not sip.isdeleted(central) and hasattr(central,'resolver_salvamento_projeto'):
+                if not central.resolver_salvamento_projeto():return False
+            if not self.resolver() or not self.geo.resolver_pendencias() or not self.resolver_configuracao_wg():return False
             if central is not None and not sip.isdeleted(central) and not central.modelo_gis.resolver():return False
             if central is not None and not sip.isdeleted(central) and hasattr(central,'salvar_estado_atual'):
                 central.salvar_estado_atual()

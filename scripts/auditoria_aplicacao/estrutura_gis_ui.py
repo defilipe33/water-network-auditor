@@ -12,6 +12,7 @@ from qgis.core import QgsCoordinateReferenceSystem
 
 from . import corredores_gis as motor, persistencia_grafo_gis as pg
 from .corredores_agrupados_ui import CorredoresAgrupadosUI
+from .blocos_gis_ui import BlocosGISUI
 from .mapa_topologia_gis import IndiceSelecao, escolher, fracao_clicada, _ponto, _transformar
 from .modelo_gis import descrever, identificar, revisoes
 from .modelo_gis_ui import aviso, botao, expansivel, formulario
@@ -63,7 +64,7 @@ class ListaDestinos(QAbstractListModel):
         self.endResetModel()
 
 
-class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
+class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI):
     def __init__(self,central):
         super().__init__(central)
         self.central=central;self.app=central.app
@@ -108,6 +109,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         botao(alvos,'Limpar destinos · analisar toda a rede',self.limpar_destinos)
         cfg.addWidget(aviso('Sem destinos, os cortes consideram a rede inteira. Cada cálculo salva um trabalho nesta execução.'))
         self.montar_configuracao_macro(v)
+        self.montar_blocos(v)
         self.executar_b=botao(v,'Calcular análise por Pipe',self.calcular)
         ferramentas=QHBoxLayout();v.addLayout(ferramentas)
         self.camadas_b=botao(ferramentas,'Mostrar camadas',self.mostrar_camadas)
@@ -120,7 +122,8 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
                     ('INDETERMINADA','Função indeterminada'),('DESTINOS','Destinos'),('PONTES','Pipes com segmentos-ponte'),
                     ('ARTICULACOES','Nós de articulação'),('COMPONENTES','Componentes após interrupção'),
                     ('INTERROMPIDOS','Destinos após interrupção'),('REMANESCENTES','Rotas após interrupção'),
-                    ('COMPARAR','Diferenças entre trabalhos'),('AGRUPADOS','Corredores agrupados')]:
+                    ('COMPARAR','Diferenças entre trabalhos'),('AGRUPADOS','Corredores agrupados'),
+                    ('BLOCOS','Blocos de abastecimento'),('LIGACOES_BLOCOS','Ligações entre blocos')]:
             self.categoria.addItem(n,k)
         self.categoria.currentIndexChanged.connect(self.mudar_categoria)
         v.addWidget(self.categoria)
@@ -168,6 +171,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
             self._destinos.clear();self._indice.clear()
             self._retiradas.clear();self._associacoes.clear();self.diferencas=[]
             self.carregar_macro(None)
+            self.carregar_blocos(None)
             self.identidade.clear();self.resumo.clear();self.origens.clear();self.areas.clear()
             self.mostrar_destinos();self.atualizar_tabela()
         self.listar_execucoes()
@@ -423,7 +427,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         if d:self._com_erro(lambda:self.central.mapa.destacar_investigacao(
             [('evento',self._destino_destaque(d))],self.crs_foto,aproximar,toda_extensao=True))
 
-    def calcular(self,agrupado=False):
+    def calcular(self,agrupado=False,*,blocos=False):
         if self.foto is None:
             self.status.setText('Abra uma execução de conectividade GIS.');return
         self.cancelar_captura(reabrir=False)
@@ -433,11 +437,19 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         assocs=list(self._associacoes.values());nome=self.nome.text().strip() or 'Redes estruturantes'
         pasta=self._pasta_resultados()
         opcoes=self.configuracao_macro() if agrupado else None
+        detalhe=self.detalhe_blocos.currentData()
+        if blocos:
+            from .agrupamento_corredores_gis import parametros as macro
+            if not ds:opcoes=macro('AUTOMATICO',self.max_macro.value(),self.dist_macro.value())
+            if nome=='Redes estruturantes':nome='Blocos de abastecimento'
         def trabalho(parar,etapa):
             d=motor.analisar(foto,fontes,ds,nome=nome,associacoes=assocs,cancelar=parar,etapa=etapa,
                              agrupamento=opcoes)
+            if blocos:
+                from .blocos_gis import analisar
+                d['blocos']=analisar(d,detalhe,parar,etapa)
             return self._gravar(pasta,d,parar,etapa)
-        self.tarefa('Analisando redes estruturantes',trabalho,self._registrar)
+        self.tarefa('Analisando blocos de abastecimento' if blocos else 'Analisando redes estruturantes',trabalho,self._registrar)
 
     def _pasta_resultados(self):
         p=self._projeto()
@@ -492,6 +504,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
             item=self.origens.item(i);item.setCheckState(Qt.Checked if item.data(Qt.UserRole) in d['fontes'] else Qt.Unchecked)
         self.nome.setText(d['nome'])
         self.carregar_macro(d)
+        self.carregar_blocos(d)
         crit=sum('CRITICA' in t['funcoes'] for t in d['tubulacoes'])
         incid=sum(t['estado']=='INDETERMINADA_LIMITE' for t in d['tubulacoes'])
         self.resumo.setText(f"{len(d['tubulacoes'])} Pipes · {crit} ligações críticas · {len(d['rotas'])} trajetos · "
@@ -513,6 +526,9 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
                 self.categoria.setCurrentIndex(self.categoria.findData('AGRUPADOS'))
             elif not crit or self.categoria.currentData()=='AGRUPADOS':
                 self.categoria.setCurrentIndex(self.categoria.findData('TUBOS'))
+        if 'blocos' in d:
+            self.blocos_b.setChecked(True)
+            self.categoria.setCurrentIndex(self.categoria.findData('BLOCOS'))
         self.atualizar_tabela()
 
     def limpar_retiradas(self):
@@ -567,7 +583,11 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         r=referencia;d=self.dados
         def trabalho(parar,etapa):
             anterior=pg.carregar_estrutura(r['base'],r['uuid'],self.projeto_uid)
-            return anterior,motor.comparar_estruturas(anterior,d)
+            comparacao=motor.comparar_estruturas(anterior,d)
+            if 'blocos' in anterior and 'blocos' in d:
+                from .blocos_gis import comparar
+                comparacao.extend(comparar(anterior['blocos'],d['blocos']))
+            return anterior,comparacao
         def pronto(resultado):
             anterior,self.diferencas=resultado
             self.anterior_geo=GeometriasEstrutura(anterior)
@@ -576,7 +596,9 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         self.tarefa('Comparando investigações estruturais',trabalho,pronto)
 
     def mostrar_camadas(self):
-        if self.macro and self.categoria.currentData()=='AGRUPADOS':
+        if self.categoria.currentData()=='BLOCOS':
+            self.mostrar_blocos_mapa()
+        elif self.macro and self.categoria.currentData()=='AGRUPADOS':
             self.mostrar_macro()
         elif self.dados:
             self._com_erro(lambda:carregar_camadas(self.dados,self.geo))
@@ -598,6 +620,14 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         c=self.categoria.currentData()
         if c=='AGRUPADOS':
             return self.tabela_corredores()
+        if c=='BLOCOS':
+            return self.tabela_blocos()
+        if c=='LIGACOES_BLOCOS':
+            b=d.get('blocos',{})
+            nomes={r['uid']:r['nome'] for r in b.get('blocos',())}
+            return c,('Nó','Blocos relacionados','Quantidade'),(
+                dict(r,uid=r['no']) for r in b.get('ligacoes',())),lambda r:(
+                    r['no'][:12],', '.join(nomes[u] for u in r['blocos']),len(r['blocos']))
         if c in motor.CATEGORIAS or c in ('TUBOS','PONTES'):
             cab=('Pipe','Camada GIS','Função','Comprimento (m)','Diâmetro (mm)','Origens na rota','Destinos na rota',
                  'Perda de acesso (m)','Pipes afetados','Destinos afetados','Origens perdidas','Fontes remanescentes','Situação')
@@ -640,6 +670,9 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         base='' if self.dados else 'Execute ou abra uma investigação estrutural.'
         acao_disponivel(self.executar_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         acao_disponivel(self.executar_macro_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
+        acao_disponivel(self.calcular_blocos_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
+        for b in (self.mostrar_blocos_b,self.exportar_blocos_b):
+            acao_disponivel(b,'' if (self.dados or {}).get('blocos') else 'Calcule ou abra um trabalho com blocos.')
         acao_disponivel(self.conferir_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         for b in (self.camadas_b,self.exportar_gpkg_b,self.exportar_shp_b):acao_disponivel(b,base)
         acao_disponivel(self.comparar_b,base or ('' if self._comparaveis() else 'Salve outra investigação estrutural no projeto.'))
@@ -669,7 +702,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
                 return tipo=='AGRUPADOS' and any(termo in self.geo.destinos[u]['nome'].casefold()
                                                  for u in r['destinos'])
             linhas=[(r,v) for r,v in linhas if contem(r,v)]
-        if self._ordem:
+        if self._ordem and self._ordem[0]<len(cab):
             coluna,desc=self._ordem
             def chave(x):
                 v=x[1][coluna]
@@ -711,6 +744,8 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
                                 'Nenhum resultado nesta categoria e filtro.');return
         if self._tipo_linha=='AGRUPADOS':
             texto=self.detalhe_corredor(r)
+        elif self._tipo_linha=='BLOCOS':
+            texto=self.detalhes_bloco(r)
         elif self._tipo_linha=='TUBOS':
             texto=f"Pipe {r.get('id') or r['uid'][:8]} · {len(r['partes'])} parte(s) · "
             texto+=('segmento-ponte encontrado. ' if r['ponte'] else 'Sem segmento-ponte identificado. ')
@@ -741,6 +776,15 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         if not r:return []
         if self._tipo_linha=='AGRUPADOS':
             return self.menu_corredor(r)
+        if self._tipo_linha=='BLOCOS':
+            acoes=[('Exportar este bloco…',lambda:self.exportar_blocos(r)),
+                    ('Destacar percurso de referência',lambda:self.localizar_linha(indice,True,'referencia'),
+                     '' if (r.get('referencia') or {}).get('segmentos') else 'Percurso sem trechos detalhados.')]
+            for u in r.get('alternativas',[])[:10]:
+                rota=self.geo.rotas[u]
+                d=self.geo.destinos[rota['destino']]
+                acoes.append(('Alternativa até '+d['nome'],lambda x=u:self.localizar_linha(indice,True,x)))
+            return acoes
         if self._tipo_linha=='TUBOS':
             return [('Incluir Pipe no teste de interrupção',lambda:self.incluir_corte(r['uid'])),
                     ('Ver componentes ao retirar este Pipe',lambda:self.testar_pipe(r['uid']))]
@@ -787,6 +831,10 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         def mostrar():
             tipo=self._tipo_linha
             if tipo=='COMPARAR':itens=self._geometrias_diferenca(r)
+            elif tipo=='BLOCOS':
+                itens=(self.geo.itens('ROTAS',self.geo.rotas[opcao],'alternativa') if opcao in self.geo.rotas
+                       else self.itens_bloco(r,rota=opcao=='referencia'))
+            elif tipo=='LIGACOES_BLOCOS':itens=[('evento',self.geo.no(r['no']))]
             elif tipo=='INTERROMPIDOS':
                 itens=self.geo.itens('DESTINOS',self.geo.destinos[r['uid']])
             else:itens=self.geo.itens(tipo,r,opcao)

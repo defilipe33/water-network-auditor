@@ -1,17 +1,220 @@
 """Edição, participação e histórico do cadastro complementar GIS."""
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import QInputDialog, QMessageBox
+from collections import Counter
+
+from qgis.PyQt.QtWidgets import QComboBox, QDialog, QHBoxLayout, QInputDialog, QLineEdit, QMessageBox, QVBoxLayout
 
 from . import persistencia_grafo_gis as pg
 from .mapa_topologia_gis import pontos_portas
-from .tabelas_topologia_gis import ACOMPANHAMENTO
+from .tabelas_topologia_gis import ACOMPANHAMENTO, TabelaRelacoes
+from .modelo_gis_ui import aviso, botao, expansivel
+from .navegacao_cartografica import navegar_registros
 
 
 CANDIDATAS = ('CONEXAO_T', 'CRUZAMENTO', 'EXTREMIDADES_PROXIMAS')
+TIPOS_CONEXAO = {
+    'CONEXAO_T':'Conexões em T', 'EXTREMIDADES_PROXIMAS':'Extremidades próximas',
+    'CRUZAMENTO':'Cruzamentos ambíguos', 'DECLARADA':'Conexões declaradas',
+    'PROPOSTA':'Conexões propostas', 'PIPE':'Tubulações propostas',
+    'INCONSISTENTE':'Referências ou geometrias inconsistentes',
+}
 
 
 class RelacoesGIS:
+    def iniciar_tabela_conexoes(self, layout):
+        self.conexoes_b, secao = expansivel(layout,'Conexões e continuidade da rede')
+        self.filtro_conexoes = QComboBox()
+        secao.addWidget(self.filtro_conexoes)
+        self.conexoes_lista = TabelaRelacoes()
+        self.conexoes_lista.colunas(('Considerar / nome','Categoria','Interpretação','Acompanhamento','Pontos','Revisão'))
+        self.conexoes_lista.setMaximumHeight(200)
+        self.conexoes_lista.itemChanged.connect(self.alterou_participacao)
+        self.conexoes_lista.currentCellChanged.connect(lambda *_:self.detalhar_conexao())
+        self.conexoes_lista.horizontalHeader().sortIndicatorChanged.connect(lambda *_:self.filtrar_conexoes())
+        secao.addWidget(self.conexoes_lista)
+        navegar_registros(self.conexoes_lista,self._navegar_conexao,self._menu_conexao,self.central.mapa.limpar)
+        faixa = QHBoxLayout()
+        secao.addLayout(faixa)
+        self._pagina_conexoes = 0
+        self._candidatas_tabela = {}
+        self.pagina_conexoes_info = aviso()
+        self.conexoes_ant = botao(faixa,'‹ Anterior',lambda:self.filtrar_conexoes(-1))
+        faixa.addWidget(self.pagina_conexoes_info,1)
+        self.conexoes_seg = botao(faixa,'Próxima ›',lambda:self.filtrar_conexoes(1))
+        self.filtro_conexoes.currentIndexChanged.connect(lambda *_:self.filtrar_conexoes(0))
+        self.conexao_info = aviso()
+        secao.addWidget(self.conexao_info)
+        botao(secao,'Revisar conexão selecionada…',self.revisar_conexao_tabela)
+        self.adicionar_conexao_b = botao(secao,'Adicionar conexão entre tubulações…',lambda:self.editar('CONEXAO'))
+        botao(secao,'Criar tubulação de interligação…',self.abrir_editor_proposta)
+
+    def _categoria_conexao(self, r):
+        if r['tipo']=='PIPE':
+            return 'PIPE'
+        if r['tipo']=='EQUIPAMENTO_PENDENTE':
+            return 'INCONSISTENTE'
+        return (r.get('categoria_candidata') or (r['tipo'] if r['tipo'] in CANDIDATAS else
+                'PROPOSTA' if r.get('situacao') in ('PROPOSTA','HIPOTETICA') else 'DECLARADA'))
+
+    def preencher_conexoes(self, relacoes, marcados):
+        tabela = self.conexoes_lista
+        atual = tabela.currentItem()
+        selecionada = atual.data(Qt.UserRole) if atual else None
+        filtro = self.filtro_conexoes.currentData()
+        self._candidatas_tabela = {r['uid']:r for r in (self.dados or {}).get('diagnosticos',())
+                                   if r['tipo'] in CANDIDATAS}
+        linhas = []
+        for uid,r in relacoes.items():
+            if r['tipo'] not in ('CONEXAO','PIPE'):
+                continue
+            if r.get('excluido') and uid not in marcados and not self.mostrar_excluidos.isChecked():
+                continue
+            linhas.append((uid,r))
+        linhas.extend((f'candidata:{uid}',r) for uid,r in self._candidatas_tabela.items()
+                      if uid not in self._por_candidata)
+        falhas = {u for u,estado in (self.dados or {}).get('resolucoes_conexoes',{}).items()
+                  if estado=='REFERENCIA_ALTERADA'}
+        falhas.update(r['uid'] for r in (self.dados or {}).get('diagnosticos',())
+                      if r['tipo']=='EQUIPAMENTO_PENDENTE' and r['uid'] in relacoes)
+        contagens = Counter()
+        tabela.blockSignals(True)
+        tabela.setSortingEnabled(False)
+        tabela.clear()
+        for uid,r in linhas:
+            categoria = 'INCONSISTENTE' if uid in falhas else self._categoria_conexao(r)
+            if categoria not in TIPOS_CONEXAO:categoria='INCONSISTENTE'
+            contagens[categoria] += 1
+            relacao = 'uuid' in r
+            titulo = r.get('nome') or uid.split(':')[-1][:10]
+            if r.get('excluido'):titulo += ' · excluída'
+            interpretacao = pg.DECISOES.get(r.get('decisao'),'Candidata' if not relacao else '—')
+            item = tabela.inserir((titulo,TIPOS_CONEXAO[categoria],interpretacao,
+                    ACOMPANHAMENTO.get(r.get('acompanhamento'),'Pendente'),len(r.get('portas',())),
+                    r.get('rev','')[:8]),uid)
+            item.setData(Qt.UserRole+1,categoria)
+            if relacao:
+                item.setCheckState(Qt.Checked if uid in marcados else Qt.Unchecked)
+                if r.get('excluido') or not r.get('habilitado',True):
+                    item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+            else:
+                item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
+            if selecionada==uid:tabela.setCurrentItem(item)
+        tabela.setSortingEnabled(True)
+        tabela.blockSignals(False)
+        self.filtro_conexoes.blockSignals(True)
+        self.filtro_conexoes.clear()
+        self.filtro_conexoes.addItem(f'Todas as conexões ({len(linhas)})',None)
+        for chave,nome in TIPOS_CONEXAO.items():
+            self.filtro_conexoes.addItem(f'{nome} ({contagens[chave]})',chave)
+        self.filtro_conexoes.setCurrentIndex(max(0,self.filtro_conexoes.findData(filtro)))
+        self.filtro_conexoes.blockSignals(False)
+        self.filtrar_conexoes()
+        self.detalhar_conexao()
+
+    def filtrar_conexoes(self, delta=None):
+        tabela = self.conexoes_lista
+        filtro = self.filtro_conexoes.currentData()
+        linhas = [i for i in range(tabela.count()) if not filtro or tabela.item(i).data(Qt.UserRole+1)==filtro]
+        if delta==0:self._pagina_conexoes=0
+        elif delta in (-1,1):self._pagina_conexoes+=delta
+        atual = tabela.currentRow()
+        if delta is None and atual in linhas:self._pagina_conexoes=linhas.index(atual)//100
+        ultima = max(0,(len(linhas)-1)//100)
+        self._pagina_conexoes = min(ultima,max(0,self._pagina_conexoes))
+        inicio = self._pagina_conexoes*100
+        visiveis = set(linhas[inicio:inicio+100])
+        for i in range(tabela.count()):tabela.setRowHidden(i,i not in visiveis)
+        self.pagina_conexoes_info.setText(f'{self._pagina_conexoes+1}/{ultima+1} · {len(linhas)} conexões')
+        self.conexoes_ant.setEnabled(self._pagina_conexoes>0)
+        self.conexoes_seg.setEnabled(self._pagina_conexoes<ultima)
+        if atual not in visiveis:
+            tabela.setCurrentCell(min(visiveis) if visiveis else -1,0)
+
+    def _conexao_da_linha(self, linha):
+        item = self.conexoes_lista.item(linha)
+        if item:
+            uid = item.data(Qt.UserRole)
+            return (self._candidatas_tabela.get(uid.split(':',1)[1]) if uid.startswith('candidata:')
+                    else self._relacao_por_id(uid))
+
+    def _navegar_conexao(self,indice,aproximar):
+        if r := self._conexao_da_linha(indice.row()):
+            if 'uuid' in r:self.destacar_relacao(aproximar,r,extensao=True)
+            else:self.destacar(aproximar=aproximar,registros=[r])
+
+    def detalhar_conexao(self):
+        r = self._conexao_da_linha(self.conexoes_lista.currentRow())
+        self.conexao_info.setText(self._texto_conexao(r) if r else '')
+
+    def _texto_conexao(self,r):
+        textos = []
+        for uid,pos in r.get('portas',()):
+            t = getattr(self,'tubos',{}).get(uid,{})
+            textos.append(f"{t.get('id') or uid[:8]} · {t.get('camada') or 'Camada indisponível'} · {pos:.1%}")
+        dist = r.get('distancia_m')
+        if dist is not None:textos.append(f'Distância geométrica {dist:.3f} m')
+        if r.get('motivo'):textos.append(r['motivo'])
+        h = self._hip_ativa
+        textos.append(f"Hipótese em edição · {h['nome']} · {h['rev'][:8]}" if h else 'Hipótese temporária em edição')
+        return '\n'.join(textos)
+
+    def _menu_conexao(self,indice):
+        r = self._conexao_da_linha(indice.row())
+        if not r:return []
+        if 'uuid' in r:
+            acoes = self._menu_relacao(indice,tabela=self.conexoes_lista)
+            if not r.get('excluido') and r['tipo']=='CONEXAO':
+                acoes.insert(0,('Rever interpretação…',lambda:self.conferir_conexao(r)))
+            return acoes
+        motivo = self._motivo_edicao(None) or ('' if r.get('portas') else 'Pontos de ligação indisponíveis.')
+        return [
+            ('Conferir conexão…',lambda:self.conferir_conexao(r),motivo),
+            ('Confirmar e incluir',lambda:self.interpretar_candidata(r,'CONFIRMADA',incluir=True),motivo),
+            ('Confirmar sem incluir',lambda:self.interpretar_candidata(r,'CONFIRMADA',incluir=False),motivo),
+            ('Manter separadas',lambda:self.interpretar_candidata(r,'SEPARADA',incluir=True),motivo),
+            ('Marcar como indeterminada',lambda:self.interpretar_candidata(r,'INDETERMINADA',incluir=False),motivo),
+            ('Editar pontos de ligação…',lambda:self.revisar_conexao(r=r),motivo),
+            ('Aproximar e destacar',lambda:self._navegar_conexao(indice,True)),
+        ]
+
+    def revisar_conexao_tabela(self):
+        if r := self._conexao_da_linha(self.conexoes_lista.currentRow()):
+            if r['tipo']=='PIPE':self._editar_relacao(r)
+            else:self.conferir_conexao(r)
+
+    def conferir_conexao(self,r):
+        anterior = r if 'uuid' in r else self._com_erro(lambda:self._registro_da_candidata(r))
+        if motivo := self._motivo_edicao(anterior):
+            self.status.setText(motivo)
+            return
+        if len(r.get('portas',()))<2:
+            self.status.setText('Escolha pontos de ligação válidos pelo editor.')
+            return
+        d = QDialog(self)
+        d.setWindowTitle('Conferir conexão')
+        v = QVBoxLayout(d)
+        v.addWidget(aviso(self._texto_conexao(r)))
+        nota = QLineEdit((anterior or {}).get('nota',''))
+        nota.setPlaceholderText('Observação opcional')
+        v.addWidget(nota)
+        acompanhamento = QComboBox()
+        acompanhamento.addItem('Acompanhamento padrão da ação',None)
+        for valor,rotulo in ACOMPANHAMENTO.items():acompanhamento.addItem(rotulo,valor)
+        v.addWidget(acompanhamento)
+        def gravar(decisao,incluir):
+            if self.interpretar_candidata(r,decisao,incluir=incluir,nota=nota.text().strip(),
+                                         acompanhamento=acompanhamento.currentData()):
+                d.accept()
+        for rotulo,decisao,incluir in (
+                ('Confirmar e incluir na hipótese','CONFIRMADA',True),
+                ('Confirmar sem incluir','CONFIRMADA',False),
+                ('Manter separadas','SEPARADA',True),
+                ('Necessita investigação','INDETERMINADA',False)):
+            botao(v,rotulo,lambda _,decisao=decisao,incluir=incluir:gravar(decisao,incluir))
+        botao(v,'Voltar',d.reject)
+        d.exec_()
+
     def _motivo_edicao(self,r):
         if self.central.ocupado():
             return 'Aguarde a conclusão da atividade atual.'
@@ -23,8 +226,8 @@ class RelacoesGIS:
             return 'Use a revisão mais recente no rascunho antes de editar este registro histórico.'
         return ''
 
-    def _relacao_na_linha(self,indice):
-        i=self.participantes.item(indice.row(),0)
+    def _relacao_na_linha(self,indice,tabela=None):
+        i=(self.participantes if tabela is None else tabela).item(indice.row(),0)
         return self._relacao_por_id(i.data(Qt.UserRole)) if i else None
 
     def _relacao_por_id(self,uid):
@@ -34,11 +237,32 @@ class RelacoesGIS:
         motivo=self._motivo_edicao(r)
         if motivo:
             self.status.setText(motivo)
+        elif r['tipo']=='PIPE':
+            self.abrir_editor_proposta(anterior=r)
         else:
             self.editar(r['tipo'],r,candidato=self._candidato_da_relacao(r))
 
-    def _menu_relacao(self,indice):
-        r=self._relacao_na_linha(indice)
+    def abrir_editor_proposta(self,_checked=False,*,anterior=None):
+        if motivo := self._motivo_edicao(anterior):
+            self.status.setText(motivo)
+            return
+        from .editor_propostas_ui import EditorProposta
+        def pronto(inventario):
+            tubos,_,crs,indices = inventario
+            dlg = EditorProposta(self,tubos,crs,indices[0],anterior)
+            self._editor=dlg
+            def terminou(_):
+                self._editor=None
+                self.cancelar_captura(reabrir=False)
+                self.central.mapa.limpar()
+                self._atualizar_acoes()
+                dlg.deleteLater()
+            dlg.finished.connect(terminou)
+            dlg.show()
+        self._inventario_para_editar(pronto)
+
+    def _menu_relacao(self,indice,tabela=None):
+        r=self._relacao_na_linha(indice,tabela)
         if not r:return ()
         uid=r['uuid']
         fonte=r['tipo']=='ORIGEM'
@@ -47,7 +271,8 @@ class RelacoesGIS:
         opcoes=[
             ('Enquadrar fonte e tubulações' if fonte else 'Enquadrar toda a extensão',
              lambda:self.destacar_relacao(True,r,extensao=True)),
-            ('Editar fonte e ligações…' if fonte else 'Editar conexão…',lambda:self._editar_relacao(r),edicao),
+            ('Editar fonte e ligações…' if fonte else 'Editar traçado…' if r['tipo']=='PIPE' else 'Editar conexão…',
+             lambda:self._editar_relacao(r),edicao),
         ]
         if r.get('excluido'):
             indisponivel='Aguarde a atividade atual.' if self.central.ocupado() else ''
@@ -56,6 +281,7 @@ class RelacoesGIS:
             opcoes.append(('Retirar da hipótese em edição' if ativo else 'Incluir na hipótese em edição',
                            lambda:self._marcar_relacao(uid,not ativo),
                            '' if ativo else self._motivo_participacao(r)))
+            if not fonte:opcoes.append(('Alterar disponibilidade no cadastro',lambda:self.alternar_elemento(r),edicao))
             if pg.complemento_editavel(r):
                 opcoes.append(('Excluir elemento complementar…',lambda:self.excluir_relacao(r),edicao))
         opcoes.extend([None,('Alterar acompanhamento…',lambda:self.acompanhar_relacao(r),edicao),
@@ -78,11 +304,12 @@ class RelacoesGIS:
         if motivo:
             self.status.setText(motivo)
             return
-        for i in range(self.participantes.count()):
-            item=self.participantes.item(i)
-            if item.data(Qt.UserRole)==uid:
-                item.setCheckState(Qt.Checked if incluir else Qt.Unchecked)
-                return
+        for tabela in (self.participantes,self.conexoes_lista):
+            for i in range(tabela.count()):
+                item=tabela.item(i)
+                if item.data(Qt.UserRole)==uid:
+                    item.setCheckState(Qt.Checked if incluir else Qt.Unchecked)
+                    return
 
     def excluir_relacao(self,r,excluir=True):
         atual=self.registros.get(r['uuid'])
@@ -133,24 +360,28 @@ class RelacoesGIS:
         estado=r['situacao']
         return pg.DECISOES.get(estado,estado.replace('_',' ').capitalize())
 
-    def interpretar_candidata(self,r,decisao):
+    def interpretar_candidata(self,r,decisao,*,incluir=None,nota=None,acompanhamento=None):
         def salvar():
-            if r.get('tipo') not in CANDIDATAS or not r.get('portas'):
+            if r.get('tipo') not in (*CANDIDATAS,'CONEXAO') or len(r.get('portas',()))<2:
                 raise ValueError('Selecione uma candidata com pontos de ligação definidos.')
-            anterior=self._registro_da_candidata(r)
+            anterior=r if r['tipo']=='CONEXAO' else self._registro_da_candidata(r)
             motivo=self._motivo_edicao(anterior)
             if motivo:raise ValueError(motivo)
-            crs=self.dados['crs']
-            dados=dict(anterior or {}, nome=(anterior or {}).get('nome',''),
-                       portas=r['portas'], pontos_rede=pontos_portas(r['portas'],self.tubos),
-                       candidato=r['uid'], categoria_candidata=r['tipo'], wkb=r.get('wkb'),
-                       crs=crs, crs_rede=crs, situacao=(anterior or {}).get('situacao','INFORMADA'),
-                       decisao=decisao)
+            dados=dict(anterior or {})
+            if r['tipo'] in CANDIDATAS:
+                crs=self.dados['crs']
+                dados.update(portas=r['portas'],pontos_rede=pontos_portas(r['portas'],self.tubos),
+                    candidato=r['uid'],categoria_candidata=r['tipo'],wkb=r.get('wkb'),crs=crs,crs_rede=crs)
+            dados.update(decisao=decisao,situacao=dados.get('situacao','INFORMADA'),
+                         acompanhamento=acompanhamento or ('VERIFICADO' if decisao in ('CONFIRMADA','SEPARADA')
+                                                          else 'NECESSITA_CONFIRMACAO'))
+            if nota is not None:dados['nota']=nota
             novo=self._salvar('CONEXAO',dados,anterior)
-            self._atualizar_rascunho_relacao(novo)
+            self._atualizar_rascunho_relacao(novo,incluir=incluir)
             incluido=novo['uuid'] in self._selecionados()
             self.status.setText(pg.DECISOES[decisao]+(' · incluída no rascunho. Reexecute para aplicar.' if incluido else
-                ' · fora da hipótese em edição. Inclua a relação na tabela de fontes e conexões para reexecutar.'))
+                ' · fora da hipótese em edição.'))
+            return True
         return self._com_erro(salvar)
 
     def acompanhar_relacao(self,r):
@@ -168,8 +399,12 @@ class RelacoesGIS:
                 self._atualizar_rascunho_relacao(novo)
             self._com_erro(salvar)
 
-    def _atualizar_rascunho_relacao(self,novo):
-        marcados=self._selecionados()
+    def _atualizar_rascunho_relacao(self,novo,*,incluir=None):
+        marcados=set(self._selecionados())
+        if incluir is True and not self._motivo_participacao(novo):marcados.add(novo['uuid'])
+        elif incluir is False:
+            marcados.discard(novo['uuid'])
+            self._pinos.pop(novo['uuid'],None)
         if novo['uuid'] in marcados:self._pinos[novo['uuid']]=novo
         self._resultado_historico=False
         self.atualizar_complementos(escolhidos=marcados)

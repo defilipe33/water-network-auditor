@@ -88,6 +88,10 @@ def executar(prep, contexto, parametros, participantes, cancelar=None, etapa=lam
     declarados=_declaracoes_existentes(fontes,tubos,equipamentos)
     origens=[r for r in participantes if r['tipo']=='ORIGEM']
     conexoes=[r for r in participantes if r['tipo']=='CONEXAO']
+    propostas=[r for r in participantes if r['tipo']=='PIPE']
+    from .tubulacoes_propostas import preparar_propostas
+    derivados, ligacoes, rejeitadas = preparar_propostas(propostas,tubos,prep[1],prep[2],cancelar)
+    tubos=[*tubos,*derivados]
     por_equipamento={e['uid']:e for e in equipamentos}
     # Um cadastro movido/alterado precisa ser explicitamente reconciliado.
     candidatas=[]
@@ -97,7 +101,7 @@ def executar(prep, contexto, parametros, participantes, cancelar=None, etapa=lam
             candidatas.append(dict(r,wkb=e['wkb'],crs=prep[1].toWkt()) if e else dict(r,portas=[]))
         else:
             candidatas.append(r)
-    resultado=construir(tubos,junctions,origens=candidatas,conexoes=conexoes,cancelar=cancelar,
+    resultado=construir(tubos,junctions,origens=candidatas,conexoes=[*conexoes,*ligacoes],cancelar=cancelar,
                          etapa=etapa,**parametros)
     _distancias_origens(resultado,tubos,candidatas,prep[1],prep[2],cancelar)
     equipamentos_ligados={r['equipamento'] for r in candidatas if r.get('equipamento')
@@ -110,9 +114,13 @@ def executar(prep, contexto, parametros, participantes, cancelar=None, etapa=lam
         resultado['diagnosticos'].append(dict(uid=e['uid'],tipo='EQUIPAMENTO_PENDENTE',
             equipamento=e['uid'],tubos=[],situacao='A_REVISAR',wkb=e['wkb'],
             motivo='Equipamento cadastrado com associação topológica ausente ou não determinada.'))
+    for r,motivo in rejeitadas:
+        resultado['diagnosticos'].append(dict(uid=r['uuid'],tipo='EQUIPAMENTO_PENDENTE',tubos=[],
+            situacao='A_REVISAR',motivo='Tubulação proposta · '+motivo))
+    resultado['propostas_aplicadas']=[t['proposta_uid'] for t in derivados]
     resultado.update(contexto,uuid=uuid4().hex,data_utc=datetime.now(timezone.utc).isoformat(),
                      algoritmo=VERSAO,crs=prep[1].toWkt(),parametros=parametros,
                      fontes=[{k:f[k] for k in ('uid','nome','categoria','assinatura','filtro','campos_mapeados','classificacao')}
-                             for f in fontes],unidades=prep[3],participantes=[*candidatas,*conexoes],
+                             for f in fontes],unidades=prep[3],participantes=[*candidatas,*conexoes,*propostas],
                      equipamentos=equipamentos,areas=areas,avisos=avisos)
     return resultado

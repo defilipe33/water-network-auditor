@@ -39,7 +39,7 @@ def resolver_vinculos(hipotese, por_revisao):
     saida={}
     for uid,rev in hipotese['vinculos'].items():
         r=por_revisao.get(rev)
-        if not r or r['uuid']!=uid or r['tipo'] not in ('ORIGEM','CONEXAO') or not r.get('habilitado',True):
+        if not r or r['uuid']!=uid or r['tipo'] not in ('ORIGEM','CONEXAO','PIPE') or not r.get('habilitado',True):
             raise ValueError('A revisão participante está indisponível ou diverge da hipótese.')
         saida[uid]=r
     return saida

@@ -97,7 +97,7 @@ class RedeGIS:
 class PontesGIS:
     """DFS iterativa e intervalos de subárvore em multigrafo não dirigido."""
 
-    def __init__(self,rede,cancelar=None):
+    def __init__(self,rede,cancelar=None,*,coletar_blocos=False):
         tamanho=len(rede.nos)
         self.ordem=[]
         self.inicio=[-1]*tamanho
@@ -106,6 +106,8 @@ class PontesGIS:
         self.pontes={}
         self.articulacoes=set()
         self.componentes=[]
+        self.blocos=[]
+        arestas_pendentes=[]
         minimo=[0]*tamanho
         raiz=[0]*tamanho
         for s in range(tamanho):
@@ -122,11 +124,16 @@ class PontesGIS:
                     v,e=vizinho
                     if e==aresta_pai:continue
                     if self.inicio[v]<0:
+                        if coletar_blocos:arestas_pendentes.append(e)
                         self._visitar(v)
                         minimo[v]=self.inicio[v]
                         raiz[u]+=1
                         pilha.append((v,e,iter(rede.adj[v])))
-                    else:minimo[u]=min(minimo[u],self.inicio[v])
+                    else:
+                        minimo[u]=min(minimo[u],self.inicio[v])
+                        if coletar_blocos:
+                            if v==u:self.blocos.append([e])
+                            elif self.inicio[v]<self.inicio[u]:arestas_pendentes.append(e)
                     continue
                 self.fim[u]=len(self.ordem)
                 pilha.pop()
@@ -135,6 +142,13 @@ class PontesGIS:
                     minimo[pai]=min(minimo[pai],minimo[u])
                     if minimo[u]>self.inicio[pai]:self.pontes[aresta_pai]=u
                     if e_pai!=-1 and minimo[u]>=self.inicio[pai]:self.articulacoes.add(pai)
+                    if coletar_blocos and minimo[u]>=self.inicio[pai]:
+                        bloco=[]
+                        while arestas_pendentes:
+                            i=arestas_pendentes.pop()
+                            bloco.append(i)
+                            if i==aresta_pai:break
+                        self.blocos.append(bloco)
                 elif raiz[u]>1:self.articulacoes.add(u)
             self.componentes.append((ini,len(self.ordem)))
 

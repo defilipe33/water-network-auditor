@@ -39,7 +39,7 @@ class VisualProjetoUI:
         return {c.customProperty('wna/tecnico'):c for c in projeto.mapLayers().values()
                 if gl and c.customProperty('wna/categoria')==gl and c.customProperty('wna/uid')==uid}
 
-    def salvar_estado_atual(self):
+    def salvar_estado_atual(self, *, estrito=False):
         p=self.projetos.atual()
         if not p or not self.paginas.isVisible() or self.ocupado():return
         pagina=self.paginas.currentWidget()
@@ -64,6 +64,11 @@ class VisualProjetoUI:
                 visual.update(nivel=pagina.nivel_macro.currentData(),fonte=pagina.fonte_macro.currentData(),
                               funcao=pagina.visao_macro.currentData(),ramais=pagina.ramais_macro.isChecked(),
                               arvore=pagina.macro_b.isChecked(),alvo_macro=pagina._alvo_macro)
+            if d.get('blocos'):
+                visual['blocos']=dict(fonte=pagina.fonte_blocos.currentData(),
+                    corredor=pagina.corredor_blocos.currentData(),indisponivel=pagina.fonte_indisponivel.currentData(),
+                    areas=[i.data(Qt.UserRole) for j in range(pagina.areas_blocos.count())
+                           if (i:=pagina.areas_blocos.item(j)).checkState()==Qt.Checked])
         elif pagina is geo.get('analise_gis') and pagina.dossie and pagina.base:
             tipo='AUDITORIA_GIS';d={};uid=pagina.dossie['execucao_uid']
             visual=dict(filtros={k:self._valor_visual(getattr(pagina,k)) for k in CONTROLES_GIS},
@@ -82,15 +87,16 @@ class VisualProjetoUI:
             visual['extensao']=[e.xMinimum(),e.yMinimum(),e.xMaximum(),e.yMaximum()]
             visual['crs_mapa']=canvas.mapSettings().destinationCrs().toWkt()
         visual['destaque']=bool(self.mapa.itens)
-        self._guardar_visual(p,tipo,uid,visual=visual)
+        self._guardar_visual(p,tipo,uid,estrito=estrito,visual=visual)
 
     @staticmethod
     def _valor_visual(w):
         return w.currentData() if hasattr(w,'currentData') else w.text()
 
-    def _guardar_visual(self,p,tipo,uid,**dados):
+    def _guardar_visual(self,p,tipo,uid,*,estrito=False,**dados):
         try:return estado.guardar_trabalho(self.app.catalogo.raiz,p,tipo,uid,**dados)
         except (OSError,ValueError,TypeError) as e:
+            if estrito:raise
             self.pendencias.setText('Preferências de consulta indisponíveis. '+str(e))
             return {}
 
@@ -148,6 +154,14 @@ class VisualProjetoUI:
                         if k in v:self._restaurar_widget(w,v[k])
                     pagina.ramais_macro.setChecked(bool(v.get('ramais',True)))
                     pagina.macro_b.setChecked(bool(v.get('arvore')))
+                if estado_blocos:=v.get('blocos'):
+                    for chave,w in [('fonte',pagina.fonte_blocos),('corredor',pagina.corredor_blocos),
+                                    ('indisponivel',pagina.fonte_indisponivel)]:
+                        self._restaurar_widget(w,estado_blocos.get(chave))
+                    areas=set(estado_blocos.get('areas',()))
+                    for j in range(pagina.areas_blocos.count()):
+                        i=pagina.areas_blocos.item(j)
+                        i.setCheckState(Qt.Checked if i.data(Qt.UserRole) in areas else Qt.Unchecked)
                 categoria=v.get('categoria')
                 if categoria!='COMPARAR':
                     self._restaurar_widget(pagina.categoria,categoria)
@@ -167,7 +181,8 @@ class VisualProjetoUI:
         if cartografar or v.get('destaque'):
             if tipo=='ESTRUTURA_GIS':
                 alvo=v.get('alvo_macro')
-                if (pagina.macro and isinstance(alvo,list) and len(alvo)==2 and
+                if (pagina.categoria.currentData() not in ('BLOCOS','LIGACOES_BLOCOS') and
+                        pagina.macro and isinstance(alvo,list) and len(alvo)==2 and
                         (alvo[0]=='CORREDOR' and alvo[1] in pagina.macro.corredores or
                          alvo[0]=='PERCURSO' and alvo[1] in pagina.macro.percursos)):
                     pagina.localizar_macro(alvo[0],alvo[1],aproximar)
@@ -188,12 +203,22 @@ class VisualProjetoUI:
                     camada.triggerRepaint()
         if camadas and tipo=='ESTRUTURA_GIS':
             from .representacao_corredores_gis import CAMADA
-            if any(k!=CAMADA for k in camadas):
+            from .representacao_blocos_gis import CAMADA as CAMADA_BLOCOS
+            if any(k not in (CAMADA,CAMADA_BLOCOS) for k in camadas):
                 from .representacao_estrutura_gis import carregar_camadas
                 pagina._com_erro(lambda:carregar_camadas(pagina.dados,pagina.geo))
+            restaurar=[]
             if CAMADA in camadas and pagina.macro:
-                pagina.mostrar_macro(ao_mostrar=visibilidade)
-            else:visibilidade()
+                restaurar.append(pagina.mostrar_macro)
+            if CAMADA_BLOCOS in camadas and pagina.dados.get('blocos'):
+                restaurar.append(pagina.mostrar_blocos_mapa)
+            def proxima():
+                if restaurar:
+                    metodo=restaurar.pop(0)
+                    QTimer.singleShot(0,lambda:metodo(ao_mostrar=proxima)
+                                      if self.paginas.currentWidget() is pagina else None)
+                else:visibilidade()
+            proxima()
         elif camadas:
             QTimer.singleShot(80,visibilidade)
         comp=next((x for x in p['bases'] if x['tipo']==tipo and x['uuid']==v.get('comparacao')),None)

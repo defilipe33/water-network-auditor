@@ -32,7 +32,7 @@ def pasta_projeto(projeto,tipo,alternativa):
     return Path(alternativa)
 
 
-def organizar(projeto, destino, copiar=False, cancelar=None, etapa=lambda *_:None, extras=()):
+def organizar(projeto, destino, copiar=False, cancelar=None, etapa=lambda *_:None, extras=(), *, preparar_copia=None):
     """Prepara um manifesto independente. Só copia bancos vinculados e verificados."""
     from contextlib import closing, nullcontext
     from tempfile import TemporaryDirectory
@@ -53,6 +53,8 @@ def organizar(projeto, destino, copiar=False, cancelar=None, etapa=lambda *_:Non
     if copiar and raiz.exists():
         raise FileExistsError(f'Escolha uma pasta nova para a cópia portátil: {raiz}')
     mesmo=not copiar and bool(projeto.get('manifesto_wna')) and Path(projeto['manifesto_wna']).resolve()==destino
+    if preparar_copia and not copiar:
+        raise ValueError('As alterações de uma cópia exigem uma pasta de preparação.')
     if destino.exists() and not mesmo:
         raise FileExistsError(f'O manifesto já existe: {destino}')
     contexto=TemporaryDirectory(prefix='.wna_',dir=raiz.parent) if copiar else nullcontext(str(raiz))
@@ -111,11 +113,13 @@ def organizar(projeto, destino, copiar=False, cancelar=None, etapa=lambda *_:Non
         backup=pasta/'backups'/('referencias_'+uuid4().hex[:8]+'.wna')
         backup.parent.mkdir(parents=True,exist_ok=True)
         gravar(backup,projeto,exclusivo=True)
+        if preparar_copia:
+            preparar_copia(novo,pasta)
         if mesmo:
             return destino,avisos,novo
         arq=pasta/destino.name
         gravar(arq,novo,exclusivo=True)
-        if ler(arq)['uuid']!=projeto['uuid']:
+        if ler(arq)['uuid']!=novo['uuid']:
             raise ValueError('A identidade do manifesto preparado diverge do projeto.')
         if copiar:
             verificar_cancelamento(cancelar)
@@ -154,6 +158,13 @@ def ler(caminho):
         raise ValueError('Arquivo .wna inválido ou versão incompatível.')
     _caminhos(p,caminho.parent,True)
     p['manifesto_wna'] = str(caminho)
+    for rev in p.get('modelo_gis',{}).get('revisoes',()):
+        for fonte in rev.get('fontes',()):
+            if rel:=fonte.get('arquivo_portatil'):
+                alvo=(caminho.parent/rel).resolve()
+                if not alvo.is_relative_to(caminho.parent/'fontes_gis'):
+                    raise ValueError('Fonte portátil fora da pasta de fontes do projeto.')
+                fonte['uri_portatil']=str(alvo)+fonte.get('opcoes_portateis','')
     return p
 
 
@@ -181,6 +192,8 @@ def gravar(caminho, projeto, exclusivo=False):
     caminho = Path(caminho).resolve()
     dados = deepcopy(projeto)
     dados.pop('manifesto_wna',None)
+    for rev in dados.get('modelo_gis',{}).get('revisoes',()):
+        for fonte in rev.get('fontes',()):fonte.pop('uri_portatil',None)
     _caminhos(dados,caminho.parent,False)
     gravar_json(caminho, dict(formato=FORMATO,versao=VERSAO,projeto=dados),exclusivo)
 
@@ -188,7 +201,7 @@ def gravar(caminho, projeto, exclusivo=False):
 def recuperar_camadas_locais(projeto):
     """Abre somente arquivos locais reconhecidos quando o usuário abre o projeto."""
     from qgis.core import QgsProject, QgsProviderRegistry, QgsVectorLayer, QgsRasterLayer
-    from .modelo_gis import revisoes, origem_camada
+    from .modelo_gis import revisoes, origem_camada, identificar
 
     r=next(reversed(revisoes(projeto)),{})
     q=QgsProject.instance()
@@ -198,10 +211,16 @@ def recuperar_camadas_locais(projeto):
     camadas=list(q.mapLayers().values())
     por_origem={origem_camada(c) for c in camadas if c.isValid()}
     for f in r.get('fontes',[]):
-        if f['origem'] in por_origem or f['provedor'] not in tipos:
+        if f['provedor'] not in tipos:
+            continue
+        if f.get('uri_portatil'):
+            ja_carregada=identificar(f,camadas) is not None
+        else:
+            ja_carregada=f['origem'] in por_origem
+        if ja_carregada:
             continue
         classe, extensoes=tipos[f['provedor']]
-        uri=f['uri']
+        uri=f.get('uri_portatil') or f['uri']
         dados=QgsProviderRegistry.instance().decodeUri(f['provedor'],uri)
         arq=dados.get('path')
         if not arq or any(c in uri for c in ('://','/vsi')) or arq.startswith(('\\\\','//')):
@@ -218,9 +237,10 @@ def recuperar_camadas_locais(projeto):
             camada.setReadOnly(True)
             if f.get('filtro_provedor'):
                 camada.setSubsetString(f['filtro_provedor'])
-        if origem_camada(camada)!=f['origem']:
+        if not identificar(f,[camada]):
             avisos.append(f["nome"]+': identidade da fonte diverge. Relocalize e confira o cadastro.')
             continue
         q.addMapLayer(camada)
+        camadas.append(camada)
         por_origem.add(f['origem'])
     return avisos

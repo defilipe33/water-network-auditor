@@ -209,6 +209,15 @@ def _montar_segmentos(tubos, linhas, uniao):
     for uid, pos in uniao.pais:
         if uid != 'J':
             portas[uid].append(pos)
+    for t in tubos:
+        u=t['uid']
+        acumuladas=[]
+        for p in sorted(portas[u]):
+            if acumuladas and (p-acumuladas[-1])*t['comprimento_m']<=EPS and (p,acumuladas[-1])!=(1.,0.):
+                uniao.unir((u,acumuladas[-1]),(u,p))
+                if p==1.:acumuladas[-1]=p
+            else:acumuladas.append(p)
+        portas[u]=acumuladas
     membros = defaultdict(list)
     for porta in uniao.pais:
         membros[uniao.raiz(porta)].append(porta)
@@ -249,16 +258,17 @@ def construir(tubos, junctions=(), *, tolerancia=.20, estrategia='COMBINAR',
     linhas = [t['geom'] for t in tubos]
     tubos = [dict({k:v for k,v in t.items() if k!='geom'}, comprimento_m=g.length(),
                   wkb=g.asWkb().data().hex()) for t,g in zip(tubos,linhas)]
-    extremos = [((t['uid'],pos), g.interpolate(pos*t['comprimento_m'])) for t,g in zip(tubos,linhas)
+    cadastrados = [(t,g) for t,g in zip(tubos,linhas) if not t.get('proposta_uid')]
+    extremos = [((t['uid'],pos), g.interpolate(pos*t['comprimento_m'])) for t,g in cadastrados
                 for pos in (0.,1.)]
     topologia = Uniao()
-    for p,_ in extremos:
-        topologia.raiz(p)
+    for t in tubos:
+        for pos in (0.,1.):topologia.raiz((t['uid'],pos))
     etapa(0, 'Conferindo extremidades e Junctions')
     candidatos, indice_ancora, indice_extremos = _agrupar_portas(
         extremos, junctions, estrategia, tolerancia, inferir_proximas, topologia, conexoes, cancelar)
     etapa(0, 'Identificando conexões em T, cruzamentos e sobreposições')
-    candidatos.extend(_conexoes_geometricas(tubos, linhas, extremos, indice_extremos, junctions,
+    candidatos.extend(_conexoes_geometricas([t for t,_ in cadastrados], [g for _,g in cadastrados], extremos, indice_extremos, junctions,
                                            indice_ancora, tolerancia, cancelar))
     etapa(0, 'Aplicando as relações selecionadas e verificando componentes')
     from .diagnosticos_grafo_gis import concluir

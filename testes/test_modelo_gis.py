@@ -213,10 +213,12 @@ class CentralModeloGIS(unittest.TestCase):
 
     def test_encerramento_cancelado_sem_perda(self):
         self.cadastrar()
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.Cancel):
+        with patch.object(QMessageBox, 'exec_', return_value=QMessageBox.Cancel):
             self.assertFalse(self.app.preparar_saida())
         self.assertTrue(self.painel.pendente())
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.Discard):
+        def descartar(dialogo):
+            next(b for b in dialogo.buttons() if b.text()=='Descartar alterações').click()
+        with patch.object(QMessageBox, 'exec_', descartar):
             self.assertTrue(self.app.preparar_saida())
         self.assertEqual(self.painel.fontes, [])
 

@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+A pré-release **1.18.0** acrescenta [salvamento explícito, revisão de conexões, traçados propostos e blocos GIS](documentacao/publica/EDICAO_TOPOLOGICA_1_18_0.md). O projeto preserva hipóteses e rascunhos, e a análise de blocos usa a fotografia de uma execução de conectividade.
+
 A pré-release **1.17.2** melhora a [continuidade dos projetos `.wna`](documentacao/publica/CONTINUIDADE_PROJETOS.md). Organize projetos antigos, consulte execuções por hipótese e retome trabalhos salvos com seus filtros, seleção e mapa.
 
 A pré-release **1.17.1** acrescenta [corredores GIS agrupados e uma visão dos trajetos até destinos distantes](documentacao/publica/CORREDORES_AGRUPADOS_GIS.md). A tabela e a árvore destacam sequências contínuas, ramificações e alternativas. Corredores e percursos podem ser exportados individualmente.

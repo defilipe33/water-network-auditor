@@ -22,7 +22,7 @@ DECISOES = {'CONFIRMADA':'Conexão confirmada', 'SEPARADA':'Sem conexão',
 
 
 def complemento_editavel(r):
-    return r['tipo'] == 'CONEXAO' or (
+    return r['tipo'] in ('CONEXAO','PIPE') or (
         r['tipo'] == 'ORIGEM' and r.get('situacao') != 'CADASTRADA' and not r.get('equipamento'))
 
 
@@ -126,11 +126,15 @@ def vigentes(caminho, projeto_uid):
 
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
-    if tipo not in ('ORIGEM','CONEXAO','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME'):
+    if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
-    if tipo in ('ORIGEM','CONEXAO') and dados.get('situacao') not in SITUACOES:
+    if tipo in ('ORIGEM','CONEXAO','PIPE') and dados.get('situacao') not in SITUACOES:
         raise ValueError('Informe a natureza do complemento.')
+    if tipo=='PIPE':
+        from .tubulacoes_propostas import validar
+        linha=validar(dados)
+        dados.update(wkb=bytes(linha.asWkb()).hex(),comprimento_m=linha.length())
     if tipo=='CONEXAO' and dados.get('decisao') not in DECISOES:
         raise ValueError('Defina a interpretação da conexão.')
     if tipo=='HIPOTESE' and not str(dados.get('nome','')).strip():
@@ -160,7 +164,7 @@ def selecionar(registros, ids):
     ativos=[]
     for uid in ids:
         r=registros.get(uid)
-        if not r or r['tipo'] not in ('ORIGEM','CONEXAO') or not r.get('habilitado',True) or r.get('excluido'):
+        if not r or r['tipo'] not in ('ORIGEM','CONEXAO','PIPE') or not r.get('habilitado',True) or r.get('excluido'):
             raise ValueError('Uma relação selecionada foi removida ou desabilitada. Revise a hipótese.')
         ativos.append(r)
     return ativos

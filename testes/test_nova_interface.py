@@ -127,7 +127,7 @@ class AmbienteTest(unittest.TestCase):
     def test_cancelar_troca_projeto_preserva_rascunho(self):
         self.cadastrar()
         antes = self.c.projetos.dados['ativo']
-        with patch.object(QMessageBox, 'question', return_value=QMessageBox.Cancel):
+        with patch.object(QMessageBox, 'exec_', return_value=QMessageBox.Cancel):
             # O projeto candidato já existe em outro índice carregado.
             from auditoria_aplicacao.contexto_trabalho import Projetos
             outro = Projetos(self.f.raiz)

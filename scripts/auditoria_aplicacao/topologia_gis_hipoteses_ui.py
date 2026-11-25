@@ -23,13 +23,19 @@ class HipotesesGIS:
                 self.tolerancia.value(),self.limite.value(),self.aproximadas.isChecked(),
                 tuple(sorted(self.unidades.items())))
 
+    def edicao_pendente(self):
+        if self._edicao_limpa is None:
+            return False
+        medicao = self._assinatura_edicao()
+        return medicao not in (self._edicao_limpa, getattr(self, '_edicao_preservada', None))
+
     def resolver_edicao(self):
         if self._editor is not None:
             escolha=QMessageBox.question(self,'Edição de relação','Concluir a edição antes de trocar de contexto?',
                              QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
             if escolha!=QMessageBox.Discard:return False
             self._editor.reject()
-        if self._edicao_limpa is None or self._assinatura_edicao()==self._edicao_limpa:return True
+        if not self.edicao_pendente():return True
         msg=QMessageBox(self)
         msg.setWindowTitle('Hipótese em edição')
         msg.setText('A configuração tem alterações ainda não salvas.')
@@ -45,6 +51,13 @@ class HipotesesGIS:
             return False
         if escolha==rascunho and not self._com_erro(self.guardar_rascunho):return False
         if escolha not in (rascunho,descartar):return False
+        self.descartar_edicao()
+        return True
+
+    def descartar_edicao(self):
+        if self._editor is not None:self._editor.reject()
+        if self._edicao_limpa is None:return
+        self._edicao_preservada=None
         if self._hip_ativa and self._hip_ativa.get('formato')==hg.FORMATO:
             self._aplicar(self._hip_ativa)
         else:
@@ -58,10 +71,10 @@ class HipotesesGIS:
             self._pinos={}
             self._marcar_escopo(self.redes,redes)
             self._marcar_escopo(self.participantes,self._edicao_limpa[0])
+            self._marcar_escopo(self.conexoes_lista,self._edicao_limpa[0])
             self.mostrar_unidade(self.redes.currentItem())
             self._edicao_limpa=self._assinatura_edicao()
             self.agendar_mapa()
-        return True
 
     def abrir_execucoes_hipotese(self):
         hip=self._por_revisao.get(self.hipoteses.currentData()) or self._hip_ativa
@@ -81,7 +94,8 @@ class HipotesesGIS:
                       redes=list(redes),crs=wkt,tolerancia=tolerancia,
                       limite_mm=limite,inferir_proximas=proximas,unidades=dict(unidades))
         estado.atualizar(self.app.catalogo.raiz,self._projeto(),estado.RASCUNHO,lambda _:rascunho)
-        self._rascunho_restaurado=None
+        self._edicao_preservada=self._assinatura_edicao()
+        self._rascunho_restaurado=rascunho['data']
         return True
 
     def recuperar_rascunho(self):
@@ -128,6 +142,7 @@ class HipotesesGIS:
         self.mostrar_unidade(self.redes.currentItem())
         self._resultado_historico=False
         self._rascunho_restaurado=d['data']
+        self._edicao_preservada=self._assinatura_edicao()
         self._indicar_rascunho()
         self.status.setText('Rascunho recuperado. Salve uma revisão para tornar a configuração definitiva.')
 
@@ -156,6 +171,7 @@ class HipotesesGIS:
         self._marcar_escopo(self.redes,{f['uid'] for f in config['fontes'] if f['categoria']=='PIPE'})
         self.atualizar_complementos(escolhidos=pinos)
         self._edicao_limpa=self._assinatura_edicao()
+        self._edicao_preservada=None
         self._indicar_rascunho()
         self._resultado_historico=False
         self.status.setText('Hipótese '+hip['nome']+' · revisão '+hip['rev'][:8]+' carregada.')

@@ -166,8 +166,8 @@ class MapaTopologiaGIS:
             no=p.layerTreeRoot().findLayer(anterior.id())
             vis=no.itemVisibilityChecked() if no else True
             p.removeMapLayer(anterior.id())
-        tipo='LineString' if papel=='vinculos' else 'Point'
-        c=QgsVectorLayer(tipo,self.NOMES[papel],'memory')
+        tipo='LineString' if papel in ('vinculos','propostas') else 'Point'
+        c=QgsVectorLayer(tipo,self.NOMES.get(papel,'Tubulações propostas'),'memory')
         c.setCrs(crs)
         c.setCustomProperty(CONTEXTO,self.projeto)
         c.setCustomProperty(PAPEL,papel)
@@ -182,6 +182,13 @@ class MapaTopologiaGIS:
     def _estilo(self,c,papel):
         if papel=='vinculos':
             c.renderer().setSymbol(QgsLineSymbol.createSimple(dict(line_color='#508caa',line_style='dash',line_width='0.45')))
+            return
+        if papel=='propostas':
+            categorias=[]
+            for estado,cor,rotulo in [('INCLUIDA','#b6631d','Proposta incluída'),('FORA','#838b96','Proposta fora da hipótese')]:
+                simbolo=QgsLineSymbol.createSimple(dict(line_color=cor,line_style='dash',line_width='0.65'))
+                categorias.append(QgsRendererCategory(estado,simbolo,rotulo))
+            c.setRenderer(QgsCategorizedSymbolRenderer('Estado',categorias))
             return
         categorias=[]
         chaves={
@@ -248,6 +255,9 @@ class MapaTopologiaGIS:
                 if ativo and len(pontos)==2 and pontos[0].distance(pontos[1])>1e-8:
                     adicionar('vinculos',u,nome,'VINCULO',QgsGeometry.fromPolylineXY(
                         [QgsPointXY(p.asPoint()) for p in pontos]),r)
+            elif r['tipo']=='PIPE':
+                campos.setdefault('propostas',[])
+                adicionar('propostas',u,nome,'INCLUIDA' if ativo else 'FORA',g,r)
         for u,c in candidatas.items():
             if u not in representadas:
                 adicionar('conexoes',u,ROTULOS[c['tipo']],'CANDIDATA',geometria(c['wkb']),c)
@@ -260,6 +270,7 @@ class MapaTopologiaGIS:
                 caixa=c['extensao']
                 adicionar('componentes',c['uid'],'Componente '+c['uid'][:8],'DIAGNOSTICO',
                           _ponto([(caixa[0]+caixa[2])/2,(caixa[1]+caixa[3])/2]),c)
+        if 'propostas' in self.camadas:campos.setdefault('propostas',[])
         for papel,feicoes in campos.items():
             c,nova=self._camada(papel,crs)
             if nova:self._estilo(c,papel)

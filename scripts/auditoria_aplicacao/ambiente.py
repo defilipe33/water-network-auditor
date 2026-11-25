@@ -13,6 +13,7 @@ from .navegacao_cartografica import acao_disponivel,navegar_registros
 from .quadro_modelo import QuadroModelo
 from .projeto_ui import GestaoProjetosUI, TabelaTrabalhos
 from .projeto_visual_ui import VisualProjetoUI
+from .salvamento_projeto_ui import SalvamentoProjetoUI
 from . import trabalhos_projeto as tp
 
 
@@ -24,7 +25,7 @@ def acao(layout, texto, executar, primaria=False):
     return b
 
 
-class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
+class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, SalvamentoProjetoUI):
     def __init__(self, app):
         self._pronto = False
         self._fonte_mapa = None
@@ -34,6 +35,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
         self._filtro_hipotese_uid=None
         self._preservar_filtro_hipotese=False
         self._ordem_trabalhos=None
+        self._falha_salvar=None
         super().__init__(app, leve=True)
         self.setWindowTitle('Water Network Auditor — Quadro do Modelo')
         self.legado = self.widget()
@@ -61,9 +63,13 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
         self.barra_topo.addWidget(self.projeto, 1)
         menu_b = QPushButton('⋯')
         menu_b.setMaximumWidth(36)
+        menu_b.setToolTip('Arquivo e opções do projeto')
+        menu_b.setAccessibleName('Arquivo')
         menu = QMenu(menu_b)
         menu.addAction('Novo projeto (.wna)…', self.novo_manifesto)
         menu.addAction('Abrir projeto (.wna)…', self.abrir_projeto)
+        menu.addAction('Salvar projeto',self.salvar_projeto)
+        menu.addAction('Salvar projeto como…',self.salvar_projeto_como)
         menu.addAction('Organizar projeto existente…', self.organizar_existente)
         menu.addAction('Mostrar localização do projeto',self.mostrar_localizacao)
         menu.addAction('Abrir pasta do projeto',self.abrir_pasta_projeto)
@@ -78,6 +84,14 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
         menu.addAction('Ferramentas avançadas', self.abrir_avancados)
         menu_b.setMenu(menu)
         self.barra_topo.addWidget(menu_b)
+        faixa_salvar = QHBoxLayout()
+        v.addLayout(faixa_salvar)
+        self.estado_salvar = aviso()
+        self.estado_salvar.setSizePolicy(QSizePolicy.Ignored,QSizePolicy.Preferred)
+        faixa_salvar.addWidget(self.estado_salvar,1)
+        self.salvar_projeto_b = acao(faixa_salvar,'Salvar projeto',self.salvar_projeto)
+        self.abrir_rascunho_b = acao(v,'Retomar edição salva',self.abrir_rascunho_salvo)
+        self.abrir_rascunho_b.hide()
         self.contexto_curto = aviso()
         self.contexto_curto.setProperty("papel", "secundario")
         v.addWidget(self.contexto_curto)
@@ -292,6 +306,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
     def atualizar(self):
         if not self._pronto:
             return
+        self._atualizar_salvamento()
         if self.ocupado():
             self.pendencias.setText('Atividade em andamento. Acompanhe etapas e cancelamento em Janelas / painéis.')
             return
@@ -425,7 +440,8 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
             menu.addAction(p['nome'], lambda checked=False,uid=p['uuid']:self.escolher_projeto(self.projeto.findData(uid)))
 
     def _resolver_troca_projeto(self):
-        if (not self.ocupado() and self.app.resolver() and self.app.geo.resolver_pendencias()
+        if (not self.ocupado() and self.resolver_salvamento_projeto()
+                and self.app.resolver() and self.app.geo.resolver_pendencias()
                 and self.app.resolver_configuracao_wg() and self.modelo_gis.resolver()):
             self.salvar_estado_atual()
             return True
@@ -522,6 +538,10 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI):
 
     def escolher_projeto(self, i):
         antes = self.projetos.dados['ativo']
+        uid = self.projeto.itemData(i)
+        if self._pronto and uid and uid != antes and not self._resolver_troca_projeto():
+            self._carregar_projetos()
+            return
         if self._pronto:self.salvar_estado_atual()
         super().escolher_projeto(i)
         if self._pronto and antes != self.projetos.dados['ativo']:

@@ -11,7 +11,7 @@ from auditoria_fronteiras import Parametros
 from auditoria_fronteiras.entradas import crs_processamento, digest, valor_python
 from auditoria_fronteiras.modelos import verificar_cancelamento
 
-from .modelo_gis import identificar, descrever, expressao
+from .modelo_gis import identificar, descrever, expressao, assinatura_confere
 from .grafo_gis import _indexar
 
 
@@ -39,7 +39,7 @@ def preparar(fontes, camadas, crs, contexto, redes=None, unidades=None):
             omitir.append(f"{f['nome']}: contexto indisponível ou sem CRS.")
             continue
         atual = descrever(camada)
-        if f['assinatura'] != atual['assinatura']:
+        if not assinatura_confere(f,atual):
             if categoria == 'PIPE':
                 raise ValueError(f"Rede alterada: {f['nome']}. Atualize a fonte no Modelo GIS.")
             omitir.append(f"{f['nome']}: fonte alterada. Atualize o Modelo GIS.")
@@ -111,6 +111,7 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None):
                             origem=fonte['origem_estavel'], camada=fonte['nome'], id=id_bruto,
                             label=nome, categoria=categoria, diametro_mm=diametro, unidade_diametro=unidade,
                             classificacao=fonte['classificacao'], origem_id=mapeamento.get('id'),
+                            material=atributos.get(mapeamento.get('material')),
                             setor_operacional=atributos.get(mapeamento.get('setor_operacional')),
                             extensao=[caixa.xMinimum(),caixa.yMinimum(),caixa.xMaximum(),caixa.yMaximum()])
                 existentes[uid] = item
