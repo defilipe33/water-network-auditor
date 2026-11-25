@@ -98,14 +98,19 @@ def _identidade(con, projeto_uid):
         raise ValueError('Identidade ou versão do cadastro complementar incompatível.')
 
 
-def revisoes(caminho, projeto_uid, uid=None):
+def revisoes(caminho, projeto_uid, uid=None, *, tipo=None):
     if caminho is None:
         return []
     with abrir_ro(caminho) as con:
         _identidade(con,projeto_uid)
-        cond=' WHERE uuid=?' if uid else ''
+        termos, valores = [], []
+        for campo, valor in (('uuid',uid),('tipo',tipo)):
+            if valor is not None:
+                termos.append(campo+'=?')
+                valores.append(valor)
+        cond=' WHERE '+' AND '.join(termos) if termos else ''
         linhas=con.execute('SELECT rev,uuid,tipo,anterior,data_utc,dados FROM TG_REVISOES'+cond+
-                           ' ORDER BY rowid',(uid,) if uid else ())
+                           ' ORDER BY rowid',valores)
         return [dict(json.loads(dados),rev=rev,uuid=u,tipo=tipo,anterior=ant,data_utc=data)
                 for rev,u,tipo,ant,data,dados in linhas]
 
@@ -115,7 +120,7 @@ def vigentes(caminho, projeto_uid):
 
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
-    if tipo not in ('ORIGEM','CONEXAO','HIPOTESE','DECISAO','DESTINO_ZONA'):
+    if tipo not in ('ORIGEM','CONEXAO','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO') and dados.get('situacao') not in SITUACOES:
@@ -127,6 +132,8 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
     if tipo=='DESTINO_ZONA' and (not dados.get('topologia_uid') or not dados.get('zona')
                                or not isinstance(dados.get('destinos'),list)):
         raise ValueError('Informe a execução, a zona e os destinos declarados.')
+    if tipo=='CORREDOR_NOME' and (not uid or not dados.get('analise_uid') or not str(dados.get('nome','')).strip()):
+        raise ValueError('Informe a investigação, a identidade e o nome do corredor.')
     if dados.get('excluido') and not complemento_editavel(dict(dados,tipo=tipo)):
         raise ValueError('Somente elementos complementares podem ser excluídos.')
     uid, rev=uid or uuid4().hex,uuid4().hex

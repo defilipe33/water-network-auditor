@@ -200,13 +200,22 @@ class MapaFontes(QObject):
             if g.transform(trans)!=0:raise ValueError('Falha na transformação do destaque.')
             from .relevancia_gis import SIMBOLOS
             categoria=papel.removeprefix('evento_') if papel.startswith('evento_') else None
-            cor=QColor(SIMBOLOS[categoria][0]) if categoria in SIMBOLOS else {'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240),'equipamento':QColor(30,185,130,240),'vinculo':QColor(80,140,170,230)}[papel]
+            cor=QColor(SIMBOLOS[categoria][0]) if categoria in SIMBOLOS else {
+                'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240),
+                'equipamento':QColor(30,185,130,240),'vinculo':QColor(80,140,170,230),
+                'inicio_corredor':QColor(15,137,98,245),'fim_corredor':QColor(208,87,15,245),
+                'ramificacao':QColor(134,65,192,250),
+            }[papel]
             b=QgsRubberBand(self.canvas,g.type());b.setColor(cor);b.setFillColor(QColor(0,0,0,0));b.setWidth(4 if papel=='tubo' else 3)
             if papel=='vinculo':
                 from qgis.PyQt.QtCore import Qt
                 b.setLineStyle(Qt.DashLine)
             icones={'REVISAR':QgsRubberBand.ICON_CROSS,'INCONSISTENCIA_IDENTIFICADA':QgsRubberBand.ICON_DIAMOND,'INDETERMINADA':QgsRubberBand.ICON_BOX}
-            b.setIcon(icones.get(categoria,QgsRubberBand.ICON_BOX if papel in ('local','equipamento') else QgsRubberBand.ICON_CIRCLE));b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
+            por_papel={'local':QgsRubberBand.ICON_BOX,'equipamento':QgsRubberBand.ICON_BOX,
+                       'inicio_corredor':QgsRubberBand.ICON_BOX,'fim_corredor':QgsRubberBand.ICON_DIAMOND,
+                       'ramificacao':QgsRubberBand.ICON_CROSS}
+            b.setIcon(icones.get(categoria,por_papel.get(papel,QgsRubberBand.ICON_CIRCLE)))
+            b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
             self.itens.append(b);self.caixas.append(g.boundingBox())
             if papel!='local':caixas.append(geom.boundingBox())
         if aproximar and self.itens:

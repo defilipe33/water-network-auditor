@@ -22,7 +22,7 @@ CATEGORIAS={
 
 
 def novo_destino(tipo,ref,*,no=None,zona=None,modo='DECLARADO',nome=None):
-    if tipo not in ('NO','PIPE') or not ref or modo not in ('DECLARADO','ESPACIAL'):
+    if tipo not in ('NO','PIPE') or not ref or modo not in ('DECLARADO','ESPACIAL','AUTOMATICO'):
         raise ValueError('Defina um nó ou uma tubulação como destino.')
     return dict(uid=digest(['destino-gis',tipo,ref,no,zona,modo]),tipo=tipo,ref=ref,
                 no=no,zona=zona,modo=modo,nome=nome or ref[:10])
@@ -113,7 +113,7 @@ def _travessias(rede,cancelar):
     return por_parte
 
 
-def _mapa_rotas(rede,destinos,cortes,dfs,base,cancelar,etapa,limite):
+def _mapa_rotas(rede,destinos,cortes,dfs,base,cancelar,etapa,limite,busca=None):
     etapa(0,'Rastreando fontes, trajetos e alternativas')
     grupos,componentes=base
     conexoes=_conexoes_no(rede)
@@ -122,7 +122,8 @@ def _mapa_rotas(rede,destinos,cortes,dfs,base,cancelar,etapa,limite):
     usados=0;segmentos_emitidos=0
     limite_segmentos=max(2048,limite//4)
     custo=len(rede.nos)+len(rede.arestas)
-    busca=_buscar(rede,rede.origens,cancelar) if destinos and rede.origens else None
+    if busca is None and destinos and rede.origens:
+        busca=_buscar(rede,rede.origens,cancelar)
     # As árvores por fonte são calculadas de uma vez para todo o conjunto de destinos.
     por_fonte={}
     for uid in sorted(rede.origens) if destinos and len(rede.origens)>1 else ():
@@ -255,15 +256,27 @@ def _classificar(rede,cortes,destinos,rotas,travessias,cancelar):
 
 
 def analisar(foto,origens=None,destinos=(),*,nome='Redes estruturantes',associacoes=(),
-             limite_cortes=LIMITE_CORTES,limite_rotas=LIMITE_ROTAS,cancelar=None,etapa=lambda *_:None):
+             limite_cortes=LIMITE_CORTES,limite_rotas=LIMITE_ROTAS,cancelar=None,etapa=lambda *_:None,
+             agrupamento=None):
     if limite_cortes<0 or limite_rotas<0:raise ValueError('Os limites de cálculo devem ser não negativos.')
     rede=RedeGIS(foto,origens,cancelar)
+    busca=amostra=None
+    if agrupamento is not None:
+        from . import agrupamento_corredores_gis as macro
+        agrupamento=macro.parametros(**agrupamento)
+        if agrupamento['modo']=='AUTOMATICO':
+            etapa(0,'Selecionando destinos periféricos pelo grafo')
+            busca=_buscar(rede,rede.origens,cancelar)
+            selecao,amostra=macro.perifericos(rede,busca,agrupamento,cancelar)
+            destinos=[dict(novo_destino('NO',no,modo='AUTOMATICO',nome='Nó periférico '+no[:8]),
+                           distancia_origem_m=distancia) for no,distancia in selecao]
+            associacoes=()
     destinos=rede.destinos(destinos)
     zonas={a['uid']:a for a in foto.get('areas',[])}
     if any(d.get('zona') and d['zona'] not in zonas for d,_ in destinos.values()):
         raise ValueError('Uma associação de zona não pertence à execução escolhida.')
     cortes,dfs,base=avaliar_cortes(rede,destinos,cancelar,etapa,limite_cortes)
-    relacionados,rotas,usados=_mapa_rotas(rede,destinos,cortes,dfs,base,cancelar,etapa,limite_rotas)
+    relacionados,rotas,usados=_mapa_rotas(rede,destinos,cortes,dfs,base,cancelar,etapa,limite_rotas,busca)
     travessias=_travessias(rede,cancelar)
     linhas=_classificar(rede,cortes,relacionados,rotas,travessias,cancelar)
     area_por_destino=defaultdict(list)
@@ -289,13 +302,17 @@ def analisar(foto,origens=None,destinos=(),*,nome='Redes estruturantes',associac
             estado='SEM_DESTINO' if not ds else 'SEM_ORIGENS' if not rede.origens else
             'ALCANCAVEL' if all(d['origens'] for d in ds) else 'PARCIAL' if fontes else 'SEM_CAMINHO',
             evidencia='DECLARADA' if ds and all(d['modo']=='DECLARADO' for d in ds) else 'ESPACIAL_OU_MISTA'))
-    return dict(uuid=uuid4().hex,nome=nome,projeto_uid=foto['projeto_uid'],topologia_uid=foto['uuid'],
+    resultado=dict(uuid=uuid4().hex,nome=nome,projeto_uid=foto['projeto_uid'],topologia_uid=foto['uuid'],
                 foto=foto,hipotese=foto.get('hipotese'),data_utc=datetime.now(timezone.utc).isoformat(),
                 algoritmo=VERSAO,fontes=rede.ids_origens,destinos=list(relacionados.values()),
                 zonas=dependencia,rotas=list(rotas.values()),tubulacoes=linhas,
                 articulacoes=sorted(rede.uids[i] for i in dfs.articulacoes),pontes_segmentos=len(dfs.pontes),
                 parametros=dict(limite_cortes=limite_cortes,limite_rotas=limite_rotas,extra_rotas_usado=usados),
                 associacoes=list(associacoes))
+    if agrupamento is not None:
+        etapa(0,'Agrupando segmentos contínuos e percursos')
+        resultado['agrupamento']=macro.agrupar(resultado,agrupamento,amostra,cancelar)
+    return resultado
 
 
 def testar_interrupcao(trabalho,retiradas,cancelar=None,etapa=lambda *_:None):

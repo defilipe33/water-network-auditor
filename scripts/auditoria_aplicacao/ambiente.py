@@ -523,6 +523,8 @@ class AmbienteTrabalho(CentralTrabalho):
             self.mapa_info.setText(mensagem)
 
     def limpar_mapa(self):
+        estrutura=self.__dict__.get('estrutura_gis')
+        if estrutura is not None:estrutura.restaurar_opacidade_macro()
         self._fonte_mapa = None
         self.mapa.limpar()
         self.mapa_info.clear()

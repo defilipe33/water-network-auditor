@@ -37,28 +37,30 @@ def foto_municipal(largura, *, ramificada=False):
                 arestas=arestas,tubos=tubos,origens_validas=['A','B'],participantes=origens)
 
 
-def medir(largura):
+def medir(largura, agrupado=False):
     registros = []
     for ramificada in (False,True):
         foto = foto_municipal(largura,ramificada=ramificada)
         destinos = [novo_destino('NO',str(n)) for n in range(largura*largura-1,0,-largura*7)][:25]
+        opcoes = dict(modo='AUTOMATICO',maximo=24,minimo_m=0) if agrupado else None
         tempos = []
         cortes = []
         ids = [foto['arestas'][0]['tubo'],foto['arestas'][-1]['tubo']]
         for _ in range(5):
             inicio = perf_counter()
-            r = analisar(foto,destinos=destinos)
+            r = analisar(foto,destinos=destinos,agrupamento=opcoes)
             agora = perf_counter()
             testar_interrupcao(r,ids)
             tempos.append(agora-inicio)
             cortes.append(perf_counter()-agora)
         del r
         tracemalloc.start()
-        r = analisar(foto,destinos=destinos)
+        r = analisar(foto,destinos=destinos,agrupamento=opcoes)
         _, pico = tracemalloc.get_traced_memory()
         tracemalloc.stop()
         registros.append(dict(rede='ramificada' if ramificada else 'malhada',nos=len(foto['nos']),
-            tubulacoes=len(r['tubulacoes']),destinos=len(destinos),origens=len(r['fontes']),
+            tubulacoes=len(r['tubulacoes']),destinos=len(r['destinos']),origens=len(r['fontes']),
+            corredores=len(r.get('agrupamento',{}).get('corredores',())),
             analises_s=tempos,interrupcoes_s=cortes,pico_python_mib=pico/1048576,
             pontes=r['pontes_segmentos'],ligacoes_criticas=sum('CRITICA' in t['funcoes'] for t in r['tubulacoes'])))
     return dict(python=sys.version.split()[0],sistema=platform.platform(),medicoes=registros)
@@ -68,5 +70,6 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('saida',type=Path)
     p.add_argument('--largura',type=int,default=180)
+    p.add_argument('--agrupado',action='store_true')
     args=p.parse_args()
-    args.saida.write_text(json.dumps(medir(args.largura),ensure_ascii=False,indent=2),encoding='utf-8')
+    args.saida.write_text(json.dumps(medir(args.largura,args.agrupado),ensure_ascii=False,indent=2),encoding='utf-8')

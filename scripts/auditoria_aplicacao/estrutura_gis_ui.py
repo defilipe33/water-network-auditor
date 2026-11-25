@@ -11,6 +11,7 @@ from qgis.PyQt.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QHBo
 from qgis.core import QgsCoordinateReferenceSystem
 
 from . import corredores_gis as motor, persistencia_grafo_gis as pg
+from .corredores_agrupados_ui import CorredoresAgrupadosUI
 from .mapa_topologia_gis import IndiceSelecao, escolher, fracao_clicada, _ponto, _transformar
 from .modelo_gis import descrever, identificar, revisoes
 from .modelo_gis_ui import aviso, botao, expansivel, formulario
@@ -62,7 +63,7 @@ class ListaDestinos(QAbstractListModel):
         self.endResetModel()
 
 
-class EstruturaGIS(QScrollArea,MapaGIS):
+class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
     def __init__(self,central):
         super().__init__(central)
         self.central=central;self.app=central.app
@@ -91,6 +92,7 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         self.areas=QComboBox()
         f=formulario(alvos);f.addRow('Escolher no mapa',self.selecao_tipo);f.addRow('Área cadastrada',self.areas)
         botao(alvos,'Adicionar destinos pelo mapa',lambda:self.selecionar_mapa())
+        botao(alvos,'Escolher uma área no mapa',self.selecionar_area_mapa)
         botao(alvos,'Adicionar tubulações que intersectam a área',self.adicionar_area)
         self.lista_destinos=QListView()
         self.modelo_destinos=ListaDestinos(self)
@@ -105,8 +107,8 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         botao(alvos,'Recuperar revisão dos destinos da área…',self.recuperar_associacao)
         botao(alvos,'Limpar destinos · analisar toda a rede',self.limpar_destinos)
         cfg.addWidget(aviso('Sem destinos, os cortes consideram a rede inteira. Cada cálculo salva um trabalho nesta execução.'))
-        self.executar_b=botao(v,'Calcular e salvar análise estrutural',self.calcular)
-        self.executar_b.setObjectName('Principal')
+        self.montar_configuracao_macro(v)
+        self.executar_b=botao(v,'Calcular análise por Pipe',self.calcular)
         ferramentas=QHBoxLayout();v.addLayout(ferramentas)
         self.camadas_b=botao(ferramentas,'Mostrar camadas',self.mostrar_camadas)
         self.comparar_b=botao(ferramentas,'Comparar trabalhos…',self.comparar)
@@ -118,16 +120,17 @@ class EstruturaGIS(QScrollArea,MapaGIS):
                     ('INDETERMINADA','Função indeterminada'),('DESTINOS','Destinos'),('PONTES','Pipes com segmentos-ponte'),
                     ('ARTICULACOES','Nós de articulação'),('COMPONENTES','Componentes após interrupção'),
                     ('INTERROMPIDOS','Destinos após interrupção'),('REMANESCENTES','Rotas após interrupção'),
-                    ('COMPARAR','Diferenças entre trabalhos')]:
+                    ('COMPARAR','Diferenças entre trabalhos'),('AGRUPADOS','Corredores agrupados')]:
             self.categoria.addItem(n,k)
         self.categoria.currentIndexChanged.connect(self.mudar_categoria)
         v.addWidget(self.categoria)
+        self.montar_resultados_macro(v)
         self.filtro=QLineEdit();self.filtro.setPlaceholderText('Filtrar por ID, zona, origem ou situação')
         self.filtro.editingFinished.connect(self.atualizar_tabela);v.addWidget(self.filtro)
         self.tabela=TabelaGIS();self.tabela.setMinimumHeight(145);self.tabela.setMaximumHeight(280);v.addWidget(self.tabela)
         self.tabela.currentCellChanged.connect(self.detalhar)
         self.tabela.horizontalHeader().sectionClicked.connect(self.ordenar)
-        navegar_registros(self.tabela,self.localizar_linha,self.menu_linha,central.mapa.limpar)
+        navegar_registros(self.tabela,self.localizar_linha,self.menu_linha,self.limpar_macro_mapa)
         nav=QHBoxLayout();v.addLayout(nav)
         self.ant=botao(nav,'‹ Anterior',lambda:self.paginar(-1))
         self.pagina_info=aviso();nav.addWidget(self.pagina_info,1)
@@ -164,6 +167,7 @@ class EstruturaGIS(QScrollArea,MapaGIS):
             self.projeto_uid=p['uuid'];self.foto=None;self.dados=None;self.interrupcao=None
             self._destinos.clear();self._indice.clear()
             self._retiradas.clear();self._associacoes.clear();self.diferencas=[]
+            self.carregar_macro(None)
             self.identidade.clear();self.resumo.clear();self.origens.clear();self.areas.clear()
             self.mostrar_destinos();self.atualizar_tabela()
         self.listar_execucoes()
@@ -197,6 +201,7 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         self._destinos={};self._associacoes={};self._retiradas=set()
         if not manter_resultado:
             self.dados=None;self.diferencas=[];self.interrupcao=None
+            self.carregar_macro(None)
             self.resumo.clear();self.resumo_teste.clear()
         self.crs_foto=QgsCoordinateReferenceSystem(foto['crs'])
         self.originais={t['uid']:t for t in foto['tubos']}
@@ -396,21 +401,41 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         from .investigacao_gis import geometria
         return geometria(self.originais.get(d['ref'],{}).get('wkb'))
 
+    def selecionar_area_mapa(self):
+        if not self.foto or not self.areas_foto or self.central.ocupado():
+            self.status.setText('Abra uma execução com áreas cadastradas.')
+            return
+        if 'AREAS' not in self._indice:
+            self._indice['AREAS']=IndiceSelecao(self.areas_foto.values())
+        indice=self._indice['AREAS']
+        def clique(p,sair):
+            g,tol=self._clique_metricas(p,self.crs_foto)
+            hit=escolher(self,indice.consultar(g,tol),lambda r:self._nome_area(r[1]))
+            if hit:
+                self.areas.setCurrentIndex(self.areas.findData(hit[1]))
+                sair(True)
+                self.status.setText('Área escolhida. Adicione destinos por interseção ou vincule os destinos selecionados.')
+        if self.iniciar_ferramenta(clique):
+            self._mensagem_captura('Clique em uma área cadastrada. Esc cancela.')
+
     def localizar_destino(self,indice,aproximar):
         d=self._destinos.get(indice.data(Qt.UserRole))
         if d:self._com_erro(lambda:self.central.mapa.destacar_investigacao(
             [('evento',self._destino_destaque(d))],self.crs_foto,aproximar,toda_extensao=True))
 
-    def calcular(self):
+    def calcular(self,agrupado=False):
         if self.foto is None:
             self.status.setText('Abra uma execução de conectividade GIS.');return
         self.cancelar_captura(reabrir=False)
         foto=self.foto
-        fontes=self.fontes_marcadas();ds=list(self._destinos.values())
+        fontes=self.fontes_marcadas()
+        ds=[d for d in self._destinos.values() if d['modo']!='AUTOMATICO']
         assocs=list(self._associacoes.values());nome=self.nome.text().strip() or 'Redes estruturantes'
         pasta=self._pasta_resultados()
+        opcoes=self.configuracao_macro() if agrupado else None
         def trabalho(parar,etapa):
-            d=motor.analisar(foto,fontes,ds,nome=nome,associacoes=assocs,cancelar=parar,etapa=etapa)
+            d=motor.analisar(foto,fontes,ds,nome=nome,associacoes=assocs,cancelar=parar,etapa=etapa,
+                             agrupamento=opcoes)
             return self._gravar(pasta,d,parar,etapa)
         self.tarefa('Analisando redes estruturantes',trabalho,self._registrar)
 
@@ -463,6 +488,7 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         for i in range(self.origens.count()):
             item=self.origens.item(i);item.setCheckState(Qt.Checked if item.data(Qt.UserRole) in d['fontes'] else Qt.Unchecked)
         self.nome.setText(d['nome'])
+        self.carregar_macro(d)
         crit=sum('CRITICA' in t['funcoes'] for t in d['tubulacoes'])
         incid=sum(t['estado']=='INDETERMINADA_LIMITE' for t in d['tubulacoes'])
         self.resumo.setText(f"{len(d['tubulacoes'])} Pipes · {crit} ligações críticas · {len(d['rotas'])} trajetos · "
@@ -477,7 +503,13 @@ class EstruturaGIS(QScrollArea,MapaGIS):
             self.mostrar_interrupcao(self.interrupcao)
         else:
             self.resumo_teste.clear()
-            if not crit:self.categoria.setCurrentIndex(self.categoria.findData('TUBOS'))
+            if self.macro:
+                opcoes=self.macro.dados['parametros']
+                self.modo_macro.setCurrentIndex(self.modo_macro.findData(opcoes['modo']))
+                self.max_macro.setValue(opcoes['maximo']);self.dist_macro.setValue(opcoes['minimo_m'])
+                self.categoria.setCurrentIndex(self.categoria.findData('AGRUPADOS'))
+            elif not crit or self.categoria.currentData()=='AGRUPADOS':
+                self.categoria.setCurrentIndex(self.categoria.findData('TUBOS'))
         self.atualizar_tabela()
 
     def limpar_retiradas(self):
@@ -540,7 +572,10 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         self.tarefa('Comparando investigações estruturais',trabalho,pronto)
 
     def mostrar_camadas(self):
-        if self.dados:self._com_erro(lambda:carregar_camadas(self.dados,self.geo))
+        if self.macro and self.categoria.currentData()=='AGRUPADOS':
+            self.mostrar_macro()
+        elif self.dados:
+            self._com_erro(lambda:carregar_camadas(self.dados,self.geo))
 
     def exportar(self,formato):
         if not self.dados or self.central.ocupado():return
@@ -557,6 +592,8 @@ class EstruturaGIS(QScrollArea,MapaGIS):
     def dados_tabela(self):
         d=self.dados or {}
         c=self.categoria.currentData()
+        if c=='AGRUPADOS':
+            return self.tabela_corredores()
         if c in motor.CATEGORIAS or c in ('TUBOS','PONTES'):
             cab=('Pipe','Camada GIS','Função','Comprimento (m)','Diâmetro (mm)','Origens na rota','Destinos na rota',
                  'Perda de acesso (m)','Pipes afetados','Destinos afetados','Origens perdidas','Fontes remanescentes','Situação')
@@ -575,9 +612,9 @@ class EstruturaGIS(QScrollArea,MapaGIS):
                 r['nome'],r['evidencia'],self._nomes(r['origens']),len(r['destinos']),len(r['rotas']),len(r['criticas']),
                 r['alternativas'],r['maior_perda_m'],ESTADOS[r['estado']])
         if c=='DESTINOS':
-            return c,('Destino','Área','Evidência','Origens','Pipes críticos','Situação'),d.get('destinos',[]),lambda r:(
+            return c,('Destino','Área','Evidência','Origens','Distância pela rede (m)','Pipes críticos','Situação'),d.get('destinos',[]),lambda r:(
                 r['nome'],self._nome_area(r['zona']) if r.get('zona') else '—',r['modo'],
-                self._nomes(r['origens']),len(r['criticas']),ESTADOS[r['estado']])
+                self._nomes(r['origens']),r.get('distancia_origem_m'),len(r['criticas']),ESTADOS[r['estado']])
         if c=='ARTICULACOES':
             return c,('Nó de articulação',),[dict(uid=u) for u in d.get('articulacoes',[])],lambda r:(r['uid'],)
         if c=='COMPONENTES':
@@ -598,6 +635,7 @@ class EstruturaGIS(QScrollArea,MapaGIS):
     def _acoes(self):
         base='' if self.dados else 'Execute ou abra uma investigação estrutural.'
         acao_disponivel(self.executar_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
+        acao_disponivel(self.executar_macro_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         acao_disponivel(self.conferir_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         for b in (self.camadas_b,self.exportar_gpkg_b,self.exportar_shp_b):acao_disponivel(b,base)
         acao_disponivel(self.comparar_b,base or ('' if self._comparaveis() else 'Salve outra investigação estrutural no projeto.'))
@@ -621,7 +659,12 @@ class EstruturaGIS(QScrollArea,MapaGIS):
         termo=self.filtro.text().strip().casefold()
         self._tipo_linha=tipo
         linhas=[(r,valores(r)) for r in rs]
-        if termo:linhas=[(r,v) for r,v in linhas if termo in (' '.join(str(x) for x in v)+' '+r['uid']).casefold()]
+        if termo:
+            def contem(r,v):
+                if termo in (' '.join(str(x) for x in v)+' '+r['uid']).casefold():return True
+                return tipo=='AGRUPADOS' and any(termo in self.geo.destinos[u]['nome'].casefold()
+                                                 for u in r['destinos'])
+            linhas=[(r,v) for r,v in linhas if contem(r,v)]
         if self._ordem:
             coluna,desc=self._ordem
             def chave(x):
@@ -659,8 +702,12 @@ class EstruturaGIS(QScrollArea,MapaGIS):
     def detalhar(self,*_):
         r=self.registro()
         if not r:
-            self.detalhe.setText('Nenhum resultado nesta categoria e filtro.');return
-        if self._tipo_linha=='TUBOS':
+            vazio='Calcule um novo trabalho para gerar corredores agrupados nesta execução.'
+            self.detalhe.setText(vazio if self._tipo_linha=='AGRUPADOS' and not self.macro else
+                                'Nenhum resultado nesta categoria e filtro.');return
+        if self._tipo_linha=='AGRUPADOS':
+            texto=self.detalhe_corredor(r)
+        elif self._tipo_linha=='TUBOS':
             texto=f"Pipe {r.get('id') or r['uid'][:8]} · {len(r['partes'])} parte(s) · "
             texto+=('segmento-ponte encontrado. ' if r['ponte'] else 'Sem segmento-ponte identificado. ')
             if r.get('travessias'):texto+='Travessias geométricas: '+', '.join(self._nome_area(u) for u in r['travessias'])+'. '
@@ -679,6 +726,8 @@ class EstruturaGIS(QScrollArea,MapaGIS):
             texto+=f"{len(r.get('destinos_so_complementares',[]))} destinos acessíveis somente por essas origens. "
             texto+='Fontes exclusivas de algum destino: '+self._nomes(r.get('origens_exclusivas',[]))+'. '
             if r['conexoes_no']:texto+='Há conexões declaradas nos nós das rotas consideradas.'
+        elif self._tipo_linha=='DESTINOS' and r.get('fontes_sem_rota_detalhada'):
+            texto='Origens alcançáveis sem rota detalhada neste cálculo · '+self._nomes(r['fontes_sem_rota_detalhada'])+'.'
         else:
             texto='Duplo clique para aproximar os elementos com geometria disponível.'
         self.detalhe.setText(texto)
@@ -686,13 +735,22 @@ class EstruturaGIS(QScrollArea,MapaGIS):
     def menu_linha(self,indice):
         r=self.registro(indice)
         if not r:return []
+        if self._tipo_linha=='AGRUPADOS':
+            return self.menu_corredor(r)
         if self._tipo_linha=='TUBOS':
             return [('Incluir Pipe no teste de interrupção',lambda:self.incluir_corte(r['uid'])),
                     ('Ver componentes ao retirar este Pipe',lambda:self.testar_pipe(r['uid']))]
         if self._tipo_linha=='ROTAS':
-            return [('Aproximar origem',lambda:self.localizar_linha(indice,True,'origem')),
+            acoes=[('Aproximar origem',lambda:self.localizar_linha(indice,True,'origem')),
                     ('Destacar alternativa',lambda:self.localizar_linha(indice,True,'alternativa'),
                      '' if r.get('alternativa') else 'Nenhuma alternativa foi registrada para esta rota.')]
+            if self.macro:
+                for papel in ('REFERENCIA','ALTERNATIVA'):
+                    u=r['uid']+':'+papel
+                    if u in self.macro.percursos:
+                        titulo='Exportar percurso completo…' if papel=='REFERENCIA' else 'Exportar percurso alternativo…'
+                        acoes.append((titulo,lambda u=u:self.exportar_macro('PERCURSO',u)))
+            return acoes
         return []
 
     def testar_pipe(self,uid):
@@ -719,6 +777,9 @@ class EstruturaGIS(QScrollArea,MapaGIS):
     def localizar_linha(self,indice,aproximar,opcao=None):
         r=self.registro(indice)
         if not r or not self.dados or self.central.ocupado():return
+        if self._tipo_linha=='AGRUPADOS':
+            return self.localizar_macro('CORREDOR',r['uid'],aproximar)
+        self.restaurar_opacidade_macro()
         def mostrar():
             tipo=self._tipo_linha
             if tipo=='COMPARAR':itens=self._geometrias_diferenca(r)
