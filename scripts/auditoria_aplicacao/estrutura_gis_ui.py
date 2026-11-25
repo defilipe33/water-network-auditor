@@ -441,8 +441,10 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
 
     def _pasta_resultados(self):
         p=self._projeto()
-        return (Path(p['manifesto_wna']).parent if p.get('manifesto_wna') else
+        from .manifesto_projeto import pasta_projeto
+        pasta=(Path(p['manifesto_wna']).parent if p.get('manifesto_wna') else
                self.app.catalogo.raiz/'estrutura_gis'/p['uuid'])/'resultados'
+        return pasta_projeto(p,'ESTRUTURA_GIS',pasta)
 
     @staticmethod
     def _gravar(pasta,d,parar,etapa):
@@ -458,6 +460,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         r=self.app.catalogo.registrar(caminho)[0]
         self.central.projetos.vincular(r);self.central._catalogo_lido=None
         self.receber(d)
+        self.central.atualizar_continuacao()
 
     def reabrir(self,r,cartografar=False,aproximar=False):
         from .contexto_trabalho import validar_registro
@@ -553,14 +556,15 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI):
         return [r for r in (self._projeto() or {}).get('bases',[]) if r['tipo']=='ESTRUTURA_GIS'
                 and (self.dados or {}).get('uuid')!=r['uuid']]
 
-    def comparar(self):
+    def comparar(self,checked=False,*,referencia=None):
         rs=self._comparaveis()
         if not self.dados or not rs:return
-        registros={r['uuid']:r for r in self.central._registros if r['tipo']=='ESTRUTURA_GIS'}
-        nomes=[registros.get(r['uuid'],{}).get('nome',r.get('nome',Path(r['base']).stem))+' · '+r['uuid'][:8] for r in rs]
-        escolha,ok=QInputDialog.getItem(self,'Comparar trabalhos estruturais','Trabalho anterior',nomes,editable=False)
-        if not ok:return
-        r=rs[nomes.index(escolha)];d=self.dados
+        if referencia is None:
+            nomes=[r.get('nome',Path(r['base']).stem)+' · '+r['uuid'][:8] for r in rs]
+            escolha,ok=QInputDialog.getItem(self,'Comparar trabalhos estruturais','Trabalho anterior',nomes,editable=False)
+            if not ok:return
+            referencia=rs[nomes.index(escolha)]
+        r=referencia;d=self.dados
         def trabalho(parar,etapa):
             anterior=pg.carregar_estrutura(r['base'],r['uuid'],self.projeto_uid)
             return anterior,motor.comparar_estruturas(anterior,d)

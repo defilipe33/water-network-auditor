@@ -157,11 +157,15 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.hipotese_info=aviso()
         hip.addWidget(self.hipotese_info)
         self.hipoteses.activated.connect(self.aplicar_hipotese)
+        hip.addWidget(aviso('Uma hipótese guarda a configuração. Cada execução salva uma fotografia calculada dessa revisão.'))
         self.salvar_hip_b=botao(hip,'Salvar revisão da hipótese…',lambda:self.salvar_hipotese())
         self.nova_hip_b=botao(hip,'Salvar como nova hipótese…',lambda:self.salvar_hipotese(nova=True))
         self.reexecutar_b=botao(hip,'Reexecutar análise com estas alterações…',self.reexecutar)
         self.comparar_b=botao(hip,'Comparar duas execuções…',self.comparar)
-        self.executar_b=botao(v,'Executar análise de conectividade',lambda:self.iniciar())
+        botao(hip,'Execuções desta hipótese…',self.abrir_execucoes_hipotese)
+        self.recuperar_rascunho_b=botao(hip,'Recuperar rascunho de hipótese…',self.recuperar_rascunho)
+        botao(v,'Abrir análise de conectividade salva…',lambda:self.central.listar_execucoes_salvas())
+        self.executar_b=botao(v,'Executar e salvar análise de conectividade',lambda:self.iniciar())
         self.executar_b.setObjectName('Principal')
         self.resumo=aviso()
         v.addWidget(self.resumo)
@@ -322,7 +326,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             return Path(p['arquivo_complementos'])
         if not criar:
             return None
-        pasta=self._pasta()
+        from .manifesto_projeto import pasta_projeto
+        pasta=pasta_projeto(p,'MODELO',self._pasta())
         pasta.mkdir(parents=True,exist_ok=True)
         arq=pasta/('complementos_'+p['uuid'][:12]+'.gpkg')
         if not arq.exists():
@@ -340,6 +345,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             self._hip_ativa=None
             self._pinos={}
             self._edicao_limpa=None
+            self._rascunho_restaurado=None
             self._resultado_historico=False
             self.comparacao.limpar()
             self.comparacao.hide()
@@ -630,7 +636,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             contexto=dict(projeto_uid=projeto_uid,projeto=p['nome'],modelo_rev=rev.get('uuid'),
                           nome=self.nome.text().strip() or 'Conectividade GIS',
                           hipotese=hip,configuracao=config)
-            pasta=self._pasta()/'resultados'
+            from .manifesto_projeto import pasta_projeto
+            pasta=pasta_projeto(p,'TOPOLOGIA_GIS',self._pasta()/'resultados')
             pasta.mkdir(parents=True,exist_ok=True)
             destino=pasta/('topologia_gis_'+uuid4().hex[:16]+'.gpkg')
             self.status.setText('Análise de conectividade em andamento. Acompanhe em Janelas.')
@@ -651,23 +658,32 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                 self.central.projetos.vincular(r)
                 self.central._catalogo_lido=None
                 self.receber(d)
+                self.central.atualizar_continuacao()
             self.app.atividades.executar_thread('Analisar conectividade',p['nome'],trabalho,pronto,self.status.setText)
         self._com_erro(iniciar)
 
     def reabrir(self,r,cartografar=False,aproximar=False):
         uid=self.uid_projeto
+        def carregar(parar,etapa):
+            from .contexto_trabalho import validar_registro
+            validacao=validar_registro(r)
+            if not validacao['valido']:raise ValueError(r['base']+' · '+validacao['erro'])
+            return pg.carregar(r['base'],r['uuid'],uid)
         worker=self.app.atividades.executar_thread('Reabrir topologia GIS',r.get('nome','Conectividade GIS'),
-            lambda parar,etapa:pg.carregar(r['base'],r['uuid'],uid),
+            carregar,
             lambda d:self.receber(d,restaurar_configuracao=True),self.status.setText)
         if cartografar:
             operacao=self.app.atividades.atual
             worker.finished.connect(lambda:self.destacar(aproximar=aproximar)
                                     if operacao.estado=='CONCLUIDO' and self.dados['uuid']==r['uuid'] else None)
+        return worker
 
     def receber(self,d,restaurar_configuracao=False):
         if d['projeto_uid']!=self.uid_projeto or d['projeto_uid']!=self._projeto()['uuid']:
             raise ValueError('O projeto ativo mudou durante a abertura.')
         self.dados=d
+        self._comparadas=None
+        self.comparacao.hide()
         self._resultado_historico=True
         self.tubos={t['uid']:t for t in d['tubos']}
         self.nos={n['uid']:n for n in d['nos']}
@@ -719,14 +735,17 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         alterou |= any(self.registros.get(r['uuid'],{}).get('rev')!=r['rev'] for r in d['participantes'])
         g=d['componentes']
         c=[v for v in g if v['situacao']=='SEM_ORIGEM_ALCANCAVEL']
-        s=f"{len(g)} componente(s) · {len(d['tubos'])} parte(s) de tubulação · {len(d['ramos'])} ramificação(ões)"
+        s=f"Execução aberta · {d['nome']} · {d['uuid'][:8]}\n"
+        s+=f"{len(g)} componente(s) · {len(d['tubos'])} parte(s) de tubulação · {len(d['ramos'])} ramificação(ões)"
         s+=f"\nOrigens com portas válidas: {len(d['origens_validas'])}/{len(self.comps_origens)}."
         s+=(f" Sem ligação a essas origens: {len(c)} componente(s) · {sum(v['comprimento_m'] for v in c):.2f} m."
             if d['origens_validas'] else ' Acesso a origens ainda indeterminado.')
         if alterou:s+='\nAs fontes ou relações mudaram ou estão indisponíveis. A execução preserva a configuração anterior.'
         if d['avisos']:s+='\n'+'\n'.join(d['avisos'])
-        if d.get('hipotese'):
-            s+='\nHipótese: '+d['hipotese']['nome']
+        if hip:=d.get('hipotese'):
+            s+='\nHipótese da execução · '+hip['nome']+' · revisão '+(hip.get('rev') or '—')[:8]
+        else:
+            s+='\nConfiguração temporária da execução.'
         self.resumo.setText(s)
 
     def listar_categorias(self):
@@ -1042,17 +1061,19 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         return [r for r in (self._projeto() or {}).get('bases',[])
                 if r['tipo']=='TOPOLOGIA_GIS' and r['uuid']!=(self.dados or {}).get('uuid')]
 
-    def comparar(self):
+    def comparar(self,checked=False,*,referencia=None):
         d=self.dados
         if not d or self.central.ocupado():return
         rs=self._outras_execucoes()
         if not rs:
             self.status.setText('Salve outra execução deste projeto para comparar hipóteses.')
             return
-        nomes=[Path(r['base']).name+' · '+r['uuid'][:8] for r in rs]
-        nome,ok=QInputDialog.getItem(self,'Comparar hipóteses','Execução de referência',nomes,editable=False)
-        if not ok:return
-        r=rs[nomes.index(nome)]
+        if referencia is None:
+            nomes=[r.get('nome',Path(r['base']).name)+' · '+r['uuid'][:8] for r in rs]
+            nome,ok=QInputDialog.getItem(self,'Comparar hipóteses','Execução de referência',nomes,editable=False)
+            if not ok:return
+            referencia=rs[nomes.index(nome)]
+        r=referencia
         def trabalho(parar,etapa):
             antiga=pg.carregar(r['base'],r['uuid'],d['projeto_uid'])
             return antiga,hg.comparar_execucoes(antiga,d)

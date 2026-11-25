@@ -79,6 +79,11 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
     def abrir(self, objetivo):
         if not self.resolver(): return False
         projeto = self.central.projetos.atual() or {}
+        if getattr(self,'_pasta_projeto_uid',None)!=projeto.get('uuid'):
+            from .manifesto_projeto import pasta_projeto
+            auto=pasta_projeto(projeto,'AUDITORIA_GIS',self.app.catalogo.raiz/'analises_gis')
+            self.pasta.setText(str(auto))
+            self._pasta_projeto_uid=projeto.get('uuid')
         contexto = (self.dossie or {}).get('configuracao', {}).get('modelo_gis', {})
         origem = contexto.get('projeto_uid')
         if self.dossie and ((origem and origem != projeto.get('uuid')) or
@@ -158,6 +163,7 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
                 itens = self.app.catalogo.registrar(destino)
                 registro = next(r for r in itens if r['uuid'] == d['execucao_uid'])
                 self.central.projetos.vincular(registro)
+                self.central.atualizar_continuacao()
                 self.carregar_camadas()
                 self.info.setText(f'Trabalho salvo · {len(d["eventos"])} ocorrências · {len(d["locais"])} locais. '
                     'Cruzamentos e continuidades são indícios geométricos, não conexões comprovadas.\n' + '\n'.join(preparacao.avisos))
@@ -201,13 +207,19 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
 
     def abrir_persistida(self, registro, cartografar=False, aproximar=False):
         if self.central.ocupado() or not self.resolver(): return False
+        registro = {'tipo': 'AUDITORIA_GIS', **registro}
         from auditoria_fronteiras.persistencia import carregar_execucao
         from auditoria_fronteiras.versoes import abrir_ro
         projeto = self.central.projetos.dados['ativo']
         def trabalho(parar, etapa):
             if parar(): raise InterruptedError('Abertura cancelada.')
+            from .contexto_trabalho import validar_registro
+            validacao=validar_registro(registro)
+            if not validacao['valido']:raise ValueError(registro['base']+' · '+validacao['erro'])
             with abrir_ro(registro['base']) as con:
                 d = carregar_execucao(registro['base'], registro['uuid'], conexao=con)
+            dono=d.get('configuracao',{}).get('modelo_gis',{}).get('projeto_uid')
+            if dono and projeto and dono!=projeto:raise ValueError('O trabalho pertence a outro projeto.')
             from auditoria_fronteiras.revisoes_ocorrencias import atuais
             d['revisoes_ocorrencias'] = atuais(registro['base'], registro['uuid'])
             if parar(): raise InterruptedError('Abertura cancelada.')
@@ -229,13 +241,7 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
             self.executar_b.setText('Executar nova análise com o cadastro atual')
             self.carregar_camadas(); self.info.setText('Trabalho recuperado, com observações e histórico. Fontes não reprocessadas.')
         worker=self.app.atividades.executar_thread('Abrindo trabalho GIS', registro.get('nome', 'Auditoria GIS'), trabalho, pronto, self.info.setText)
-        if cartografar:
-            operacao=self.app.atividades.atual
-            def localizar():
-                if operacao.estado!='CONCLUIDO' or self.dossie['execucao_uid']!=registro['uuid']:return
-                if self.selecionado:self.destacar(aproximar=aproximar)
-                else:self.info.setText('O trabalho foi recuperado. Ajuste os filtros para localizar um resultado.')
-            worker.finished.connect(localizar)
+        self.central.ao_abrir_trabalho(worker,self,registro,cartografar,aproximar)
         return True
 
     def carregar_camadas(self):

@@ -98,7 +98,7 @@ class Projetos:
 
     def salvar_manifesto(self,caminho,nome=None):
         from .manifesto_projeto import gravar, ler
-        p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={}) if nome else self.atual()
+        p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={},layout=1) if nome else self.atual()
         if p is None:raise ValueError('Selecione um projeto.')
         caminho=Path(caminho).resolve()
         if caminho.suffix.lower()!='.wna':
@@ -147,16 +147,57 @@ class Projetos:
     def contem(self,tipo,uid):
         p=self.atual()
         return not p or any(r['tipo']==tipo and r['uuid']==uid for r in p['bases']) or p.get('em_memoria',{}).get(tipo)==uid
-    def vincular(self,registro):
-        p=self.atual()
+    def vincular(self,registro,*,atualizar_ultimo=True):
+        from .trabalhos_projeto import chave, referencia
+        if not registro.get('base'):
+            if p:=self.atual():p.setdefault('em_memoria',{})[registro['tipo']]=registro['uuid']
+            return
+        dados=deepcopy(self.dados)
+        p=next((r for r in dados['projetos'] if r['uuid']==dados['ativo']),None)
         if not p:return
-        identidade={k:registro[k] for k in ('uuid','tipo','base')}
-        if identidade['tipo'] in ('TOPOLOGIA_GIS','ESTRUTURA_GIS'):
-            identidade.update({k:registro[k] for k in ('nome','versao') if k in registro})
+        if registro.get('projeto_uid') and registro['projeto_uid']!=p['uuid']:
+            raise ValueError('O trabalho pertence a outro projeto.')
+        identidade=referencia(registro)
         p.setdefault('em_memoria',{})[identidade['tipo']]=identidade['uuid']
-        p['bases']=[r for r in p['bases'] if (r['uuid'],r['tipo'])!=(identidade['uuid'],identidade['tipo'])]+[identidade]
-        p['ultima']=identidade
-        self.salvar()
+        for i, anterior in enumerate(p['bases']):
+            if chave(anterior)!=chave(identidade):continue
+            vinculo=dict(anterior,**identidade)
+            if anterior['base']!=vinculo['base']:
+                from .trabalhos_projeto import agora
+                vinculo['localizacoes']=[*anterior.get('localizacoes',[]),
+                                       dict(caminho=anterior['base'],data=agora())]
+            p['bases'][i]=vinculo
+            p['bases']=[x for j,x in enumerate(p['bases']) if j==i or chave(x)!=chave(vinculo)]
+            if p.get('ultima') and chave(p['ultima'])==chave(vinculo):p['ultima']=vinculo
+            break
+        else:
+            p['bases'].append(identidade)
+            if atualizar_ultimo:p['ultima']=identidade
+        if dados!=self.dados:
+            self.gravar(dados)
+
+    def adotar_organizado(self, caminho, anterior):
+        """Muda a referência do índice somente após publicar o novo manifesto."""
+        from .manifesto_projeto import ler
+        with self.trava(self.path):
+            dados=self.ler()
+            antigo=next((r for r in dados['projetos'] if r['uuid']==anterior['uuid']),None)
+            if antigo!=anterior:
+                raise ValueError('O projeto mudou em outra sessão. O manifesto preparado está disponível para conferência.')
+            p=ler(caminho)
+            if p['uuid']!=anterior['uuid']:
+                raise ValueError('O manifesto organizado possui outra identidade.')
+            dados['projetos']=[p if r['uuid']==p['uuid'] else r for r in dados['projetos']]
+            dados['ativo']=p['uuid']
+            self._gravar_indice(dados)
+            self._original=deepcopy(dados)
+
+    def atualizar_organizado(self,anterior,novo):
+        if self.atual()!=anterior or novo['uuid']!=anterior['uuid']:
+            raise ValueError('O projeto mudou durante a organização. Confira o backup das referências.')
+        dados=deepcopy(self.dados)
+        dados['projetos']=[novo if r['uuid']==novo['uuid'] else r for r in dados['projetos']]
+        self.gravar(dados)
 
 
 _CACHE={}

@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+A pré-release **1.17.2** melhora a [continuidade dos projetos `.wna`](documentacao/publica/CONTINUIDADE_PROJETOS.md). Organize projetos antigos, consulte execuções por hipótese e retome trabalhos salvos com seus filtros, seleção e mapa.
+
 A pré-release **1.17.1** acrescenta [corredores GIS agrupados e uma visão dos trajetos até destinos distantes](documentacao/publica/CORREDORES_AGRUPADOS_GIS.md). A tabela e a árvore destacam sequências contínuas, ramificações e alternativas. Corredores e percursos podem ser exportados individualmente.
 
 A pré-release **1.17.0** acrescenta a [análise de redes estruturantes sobre a topologia GIS](documentacao/publica/REDES_ESTRUTURANTES_GIS.md). O complemento identifica corredores, alternativas e dependências de origens, permite testar interrupções e recupera os trabalhos pelo projeto `.wna`.

@@ -23,20 +23,22 @@ def sugestao(pasta,projeto,tipo,versao=None):
     return raiz/f'{slug}_{tipo}_v{n:03}.gpkg'
 
 
-def identificar(base):
+def identificar(base, *, detalhes_legados=False):
     p=Path(base).resolve(strict=True);saida=[]
     with abrir_ro(p) as con:
         nomes={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-        if 'TG_EXECUCAO' in nomes:
-            for uid,projeto,nome,data,versao in con.execute('SELECT uuid,projeto_uid,nome,data_utc,schema FROM TG_EXECUCAO'):
-                saida.append(dict(uuid=uid,tipo='TOPOLOGIA_GIS',nome=nome,
-                                  projeto_uid=projeto,versao=versao,data=data,
-                                  situacao='CONCLUIDA',base=str(p)))
-        if 'TG_ESTRUTURA' in nomes:
-            for uid,projeto,nome,data,versao in con.execute('SELECT uuid,projeto_uid,nome,data_utc,schema FROM TG_ESTRUTURA'):
-                saida.append(dict(uuid=uid,tipo='ESTRUTURA_GIS',nome=nome,
-                                  projeto_uid=projeto,versao=versao,data=data,
-                                  situacao='CONCLUIDA',base=str(p)))
+        for tabela,tipo in (('TG_EXECUCAO','TOPOLOGIA_GIS'),('TG_ESTRUTURA','ESTRUTURA_GIS')):
+            if tabela not in nomes:continue
+            for uid,projeto,nome,data,versao in con.execute(f'SELECT uuid,projeto_uid,nome,data_utc,schema FROM {tabela}'):
+                extra={}
+                if 'TG_RESUMO' in nomes:
+                    linha=con.execute('SELECT dados FROM TG_RESUMO WHERE uuid=?',(uid,)).fetchone()
+                    if linha:extra=json.loads(linha[0])
+                elif detalhes_legados:
+                    from auditoria_aplicacao.trabalhos_projeto import resumo_legado
+                    extra=resumo_legado(con,tabela,uid)
+                saida.append(dict(extra,uuid=uid,tipo=tipo,nome=nome,projeto_uid=projeto,versao=versao,
+                                  data=data,situacao='CONCLUIDA',base=str(p)))
         if 'WB_BASE' in nomes:
             m=bases.metadados(p);saida.append(dict(m,base=str(p)))
         if 'IG_EXECUCOES' in nomes:
@@ -44,10 +46,11 @@ def identificar(base):
                 m=json.loads(meta);saida.append(dict(uuid=uid,tipo='INTEGRADA',nome=m.get('nome','Investigação integrada'),projeto=m.get('projeto',''),modelo_uid=m['topologia']['projeto'],
                     versao=m.get('versao',1),anterior=m.get('anterior'),data=data,cenario=m['topologia']['cenario'],hipotese=m.get('hipotese','ESTRUTURAL + POTENCIAL'),base=str(p),situacao='CONCLUIDA'))
         if 'EXECUCOES' in nomes:
-            for uid,data,s in con.execute("SELECT exe_uid,data_utc,json_extract(snapshot,'$.controle_versao') FROM EXECUCOES"):
+            for uid,data,s,projeto_uid in con.execute("""SELECT exe_uid,data_utc,json_extract(snapshot,'$.controle_versao'),
+                    json_extract(snapshot,'$.configuracao.modelo_gis.projeto_uid') FROM EXECUCOES"""):
                 c=json.loads(s) if s else {}
                 eventos=con.execute('SELECT count(*) FROM EVENTOS_FRONTEIRAS WHERE EXE_UID=?',(uid,)).fetchone()[0];locais=con.execute('SELECT count(*) FROM PONTOS_INVESTIGACAO WHERE EXE_UID=?',(uid,)).fetchone()[0]
-                saida.append(dict(uuid=uid,tipo='AUDITORIA_GIS',nome=c.get('nome','Auditoria '+uid[:8]),projeto=c.get('projeto',''),modelo_uid='',versao=c.get('versao',1),data=data,cenario=None,hipotese='',base=str(p),situacao='CONCLUIDA',eventos=eventos,locais=locais))
+                saida.append(dict(uuid=uid,tipo='AUDITORIA_GIS',nome=c.get('nome','Auditoria '+uid[:8]),projeto=c.get('projeto',''),projeto_uid=projeto_uid,modelo_uid='',versao=c.get('versao',1),data=data,cenario=None,hipotese='',base=str(p),situacao='CONCLUIDA',eventos=eventos,locais=locais))
         if not saida and 'WG_TUBULACOES' in nomes:
             saida.append(dict(uuid='legado:'+hash_arquivo(p),tipo='TOPOLOGIA_WG',nome='Topologia legada — importação necessária',projeto='',modelo_uid='',versao=0,data='',cenario=None,hipotese='',base=str(p),situacao='LEGADO_PARCIAL'))
     if not saida:raise ValueError('Arquivo sem metadados de auditoria reconhecidos')

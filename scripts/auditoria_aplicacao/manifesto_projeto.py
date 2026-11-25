@@ -4,11 +4,125 @@ from copy import deepcopy
 import json
 import os
 from pathlib import Path
+import re
 from uuid import uuid4
 
 
 FORMATO = 'water-network-auditor/projeto'
 VERSAO = 1
+PASTAS = {
+    'TOPOLOGIA_GIS':'analises/conectividade', 'ESTRUTURA_GIS':'analises/estruturantes',
+    'AUDITORIA_GIS':'analises/auditorias', 'INTEGRADA':'analises/integradas',
+    'TOPOLOGIA_WG':'analises/watergems', 'MODELO':'modelo', 'EXPORTACOES':'exportacoes',
+}
+
+
+def nome_arquivo(nome):
+    n=re.sub(r'[^\w-]+','_',nome,flags=re.UNICODE).strip('_')[:64]
+    if not n:return 'Projeto'
+    if n.upper() in {'CON','PRN','AUX','NUL',*(f'{p}{i}' for p in ('COM','LPT') for i in range(1,10))}:
+        return 'Projeto_'+n
+    return n
+
+
+def pasta_projeto(projeto,tipo,alternativa):
+    raiz=projeto.get('manifesto_wna')
+    if raiz and projeto.get('layout')==1:
+        return Path(raiz).parent/PASTAS[tipo]
+    return Path(alternativa)
+
+
+def organizar(projeto, destino, copiar=False, cancelar=None, etapa=lambda *_:None, extras=()):
+    """Prepara um manifesto independente. Só copia bancos vinculados e verificados."""
+    from contextlib import closing, nullcontext
+    from tempfile import TemporaryDirectory
+    from auditoria_fronteiras.modelos import verificar_cancelamento
+    from auditoria_fronteiras.versoes import abrir_ro
+    from .trabalhos_projeto import conferir, chave, referencia
+    import shutil
+    import sqlite3
+
+    def backup_sqlite(origem, alvo):
+        with abrir_ro(origem) as fonte, closing(sqlite3.connect(alvo)) as salvo:
+            fonte.backup(salvo,pages=256,progress=lambda *_:verificar_cancelamento(cancelar))
+            if salvo.execute('PRAGMA quick_check').fetchone()[0]!='ok':
+                raise ValueError(f'Falha ao verificar a cópia de {origem}.')
+
+    destino=Path(destino).resolve().with_suffix('.wna')
+    raiz=destino.parent
+    if copiar and raiz.exists():
+        raise FileExistsError(f'Escolha uma pasta nova para a cópia portátil: {raiz}')
+    mesmo=not copiar and bool(projeto.get('manifesto_wna')) and Path(projeto['manifesto_wna']).resolve()==destino
+    if destino.exists() and not mesmo:
+        raise FileExistsError(f'O manifesto já existe: {destino}')
+    contexto=TemporaryDirectory(prefix='.wna_',dir=raiz.parent) if copiar else nullcontext(str(raiz))
+    with contexto as temp:
+        pasta=Path(temp)/'projeto' if copiar else Path(temp)
+        pasta.mkdir(parents=True,exist_ok=True)
+        novo=deepcopy(projeto)
+        novo['layout']=1
+        avisos=[]
+        copias={}
+        for r in novo.get('bases',()):
+            verificar_cancelamento(cancelar)
+            etapa(0,'Conferindo '+Path(r['base']).name)
+            try:
+                confirmado=conferir(projeto['uuid'],r)
+            except (ValueError,OSError,sqlite3.Error) as e:
+                if copiar and Path(r['base']).exists():
+                    raise ValueError(f'A cópia portátil foi interrompida. {e}') from e
+                avisos.append(f'{r["base"]} · {e}')
+                continue
+            r.update(referencia(confirmado))
+            if copiar:
+                fonte=Path(r['base'])
+                if fonte not in copias:
+                    alvo=pasta/PASTAS.get(r['tipo'],'analises')/f'{uuid4().hex[:10]}_{fonte.name}'
+                    alvo.parent.mkdir(parents=True,exist_ok=True)
+                    backup_sqlite(fonte,alvo)
+                    copias[fonte]=alvo
+                alvo=copias[fonte]
+                conferir(projeto['uuid'],r,alvo)
+                r['base']=str(alvo)
+        complemento=novo.get('arquivo_complementos')
+        if complemento:
+            try:
+                from .persistencia_grafo_gis import identidade
+                identidade(complemento,projeto['uuid'])
+                if copiar:
+                    alvo=pasta/PASTAS['MODELO']/'complementos.gpkg'
+                    alvo.parent.mkdir(parents=True,exist_ok=True)
+                    backup_sqlite(complemento,alvo)
+                    identidade(alvo,projeto['uuid'])
+                    novo['arquivo_complementos']=str(alvo)
+            except (ValueError,OSError,sqlite3.Error) as e:
+                if copiar and Path(complemento).exists():raise
+                avisos.append(f'{complemento} · {e}')
+        if novo.get('ultima'):
+            novo['ultima']=next((r for r in novo['bases'] if chave(r)==chave(novo['ultima'])),novo['ultima'])
+        for origem, relativo in extras:
+            if Path(origem).is_file() and (pasta/relativo).resolve()!=Path(origem).resolve():
+                alvo=pasta/relativo
+                alvo.parent.mkdir(parents=True,exist_ok=True)
+                if not alvo.exists():
+                    # Estados de visualização e rascunhos usam o mesmo escritor atômico.
+                    gravar_json(alvo,json.loads(Path(origem).read_text(encoding='utf-8')),exclusivo=True)
+        verificar_cancelamento(cancelar)
+        backup=pasta/'backups'/('referencias_'+uuid4().hex[:8]+'.wna')
+        backup.parent.mkdir(parents=True,exist_ok=True)
+        gravar(backup,projeto,exclusivo=True)
+        if mesmo:
+            return destino,avisos,novo
+        arq=pasta/destino.name
+        gravar(arq,novo,exclusivo=True)
+        if ler(arq)['uuid']!=projeto['uuid']:
+            raise ValueError('A identidade do manifesto preparado diverge do projeto.')
+        if copiar:
+            verificar_cancelamento(cancelar)
+            if raiz.exists():
+                raise FileExistsError(f'A pasta foi criada por outra sessão: {raiz}')
+            pasta.rename(raiz)
+    return destino, avisos, None
 
 
 def _caminhos(objeto, pasta, resolver):

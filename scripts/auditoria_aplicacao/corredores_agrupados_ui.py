@@ -100,6 +100,7 @@ class CorredoresAgrupadosUI:
         self.restaurar_opacidade_macro()
         self.camada_macro = None
         self._chave_arvore = None
+        self._alvo_macro=None
         self.nomes_macro = {}
         self.macro = None
         self.agrupar_salvo_b.setVisible(bool(resultado and 'agrupamento' not in resultado and
@@ -239,7 +240,7 @@ class CorredoresAgrupadosUI:
             return self.menu_corredor(self.macro.corredores[u])
         return [('Exportar percurso completo…',lambda:self.exportar_macro(tipo,u))]
 
-    def mostrar_macro(self):
+    def mostrar_macro(self,checked=False,*,ao_mostrar=None):
         if not self.macro or not self.macro.corredores:
             self.status.setText('Calcule corredores agrupados antes de mostrar a camada.')
             return
@@ -254,11 +255,15 @@ class CorredoresAgrupadosUI:
                 for u in self.nomes_macro:
                     self.atualizar_nome_na_camada(u)
                 self.ativar_camada_macro()
+                self.central.agendar_estado_visual()
+                if ao_mostrar:ao_mostrar()
                 return
         macro = self.macro
         def publicar(registros):
             self.camada_macro = macro.publicar(registros)
             self.ativar_camada_macro()
+            self.central.agendar_estado_visual()
+            if ao_mostrar:ao_mostrar()
         self.tarefa('Preparando geometrias dos corredores',lambda parar,_:macro.preparar_camada(parar),publicar)
 
     def ativar_camada_macro(self):
@@ -322,6 +327,7 @@ class CorredoresAgrupadosUI:
             itens = (self.macro.destaque(self.macro.corredores[u],ramais) if tipo=='CORREDOR' else
                      self.macro.destaque_percurso(self.macro.percursos[u]))
             if self.central.mapa.destacar_investigacao(itens,self.geo.crs,aproximar,toda_extensao=True):
+                self._alvo_macro=(tipo,u)
                 camada = self.camada_macro_ativa()
                 if camada is not None:
                     camada.setOpacity(.24)

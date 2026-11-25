@@ -7,6 +7,8 @@ from qgis.core import QgsCoordinateReferenceSystem
 from . import hipoteses_gis as hg
 from . import persistencia_grafo_gis as pg
 from .entradas_grafo_gis import ler
+from . import estado_projeto as estado
+from .trabalhos_projeto import agora
 
 
 class HipotesesGIS:
@@ -28,12 +30,21 @@ class HipotesesGIS:
             if escolha!=QMessageBox.Discard:return False
             self._editor.reject()
         if self._edicao_limpa is None or self._assinatura_edicao()==self._edicao_limpa:return True
-        escolha=QMessageBox.question(self,'Hipótese em edição','Salvar a configuração desta hipótese?',
-            QMessageBox.Save|QMessageBox.Discard|QMessageBox.Cancel,QMessageBox.Cancel)
-        if escolha==QMessageBox.Cancel:return False
-        if escolha==QMessageBox.Save:
+        msg=QMessageBox(self)
+        msg.setWindowTitle('Hipótese em edição')
+        msg.setText('A configuração tem alterações ainda não salvas.')
+        salvar=msg.addButton('Salvar revisão…',QMessageBox.AcceptRole)
+        rascunho=msg.addButton('Preservar rascunho',QMessageBox.ActionRole)
+        descartar=msg.addButton('Descartar alterações',QMessageBox.DestructiveRole)
+        cancelar=msg.addButton(QMessageBox.Cancel)
+        msg.setDefaultButton(cancelar)
+        msg.exec_()
+        escolha=msg.clickedButton()
+        if escolha==salvar:
             self.salvar_hipotese()
             return False
+        if escolha==rascunho and not self._com_erro(self.guardar_rascunho):return False
+        if escolha not in (rascunho,descartar):return False
         if self._hip_ativa and self._hip_ativa.get('formato')==hg.FORMATO:
             self._aplicar(self._hip_ativa)
         else:
@@ -51,6 +62,74 @@ class HipotesesGIS:
             self._edicao_limpa=self._assinatura_edicao()
             self.agendar_mapa()
         return True
+
+    def abrir_execucoes_hipotese(self):
+        hip=self._por_revisao.get(self.hipoteses.currentData()) or self._hip_ativa
+        if not hip:
+            self.status.setText('Escolha uma hipótese salva para consultar suas execuções.')
+            return
+        self.central.listar_execucoes_salvas(hip['uuid'])
+
+    def guardar_rascunho(self):
+        ativos,pinos,redes,wkt,tolerancia,limite,proximas,unidades=self._assinatura_edicao()
+        refs={u:self.registros[u]['rev'] for u in ativos if u in self.registros}
+        refs.update(pinos)
+        if refs.keys()!=set(ativos):
+            raise ValueError('Há relações em edição sem revisão identificável.')
+        rascunho=dict(data=agora(),hipotese_rev=(self._hip_ativa or {}).get('rev'),
+                      modelo_rev=self._revisao_operacional().get('uuid'),vinculos=refs,
+                      redes=list(redes),crs=wkt,tolerancia=tolerancia,
+                      limite_mm=limite,inferir_proximas=proximas,unidades=dict(unidades))
+        estado.atualizar(self.app.catalogo.raiz,self._projeto(),estado.RASCUNHO,lambda _:rascunho)
+        self._rascunho_restaurado=None
+        return True
+
+    def recuperar_rascunho(self):
+        if not self.resolver_edicao():return
+        def recuperar():
+            self._restaurar_rascunho(estado.ler(self.app.catalogo.raiz,self._projeto(),estado.RASCUNHO))
+        self._com_erro(recuperar)
+
+    def _restaurar_rascunho(self,d):
+        if not d:
+            self.status.setText('O projeto ainda não possui um rascunho preservado.')
+            return
+        rev=d.get('hipotese_rev')
+        hip=self._por_revisao.get(rev)
+        if rev and not hip:
+            raise ValueError('A revisão de hipótese do rascunho está indisponível.')
+        modelo=self._revisao_operacional(hip) if hip else self._revisao()
+        if modelo.get('uuid')!=d.get('modelo_rev'):
+            raise ValueError('O rascunho pertence a outra revisão do Modelo GIS.')
+        pinos={}
+        for uid,id_rev in d['vinculos'].items():
+            r=self._por_revisao.get(id_rev)
+            if not r or r['uuid']!=uid or self.registros.get(uid,{}).get('excluido'):
+                raise ValueError('Uma relação do rascunho está indisponível ou foi excluída.')
+            pinos[uid]=r
+        crs=QgsCoordinateReferenceSystem(d['crs'])
+        if not crs.isValid() or not set(d['redes'])<={r['uid'] for r in modelo.get('fontes',())}:
+            raise ValueError('O CRS ou as fontes do rascunho estão indisponíveis.')
+        anterior=self._assinatura_edicao()
+        if hip and hip.get('formato')==hg.FORMATO:
+            self._aplicar(hip)
+        else:
+            self._hip_ativa=hip
+            self._listar_redes(modelo)
+            self._edicao_limpa=anterior
+        self._pinos=pinos
+        self.crs.setCrs(crs)
+        self.tolerancia.setValue(d['tolerancia'])
+        self.limite.setValue(d['limite_mm'])
+        self.aproximadas.setChecked(d['inferir_proximas'])
+        self.unidades=dict(d['unidades'])
+        self._marcar_escopo(self.redes,set(d['redes']))
+        self.atualizar_complementos(escolhidos=pinos)
+        self.mostrar_unidade(self.redes.currentItem())
+        self._resultado_historico=False
+        self._rascunho_restaurado=d['data']
+        self._indicar_rascunho()
+        self.status.setText('Rascunho recuperado. Salve uma revisão para tornar a configuração definitiva.')
 
     @staticmethod
     def _marcar_escopo(tabela, ids):
@@ -140,6 +219,14 @@ class HipotesesGIS:
             dados=hg.dados_hipotese(nome,self.uid_projeto,config,participantes,assinatura)
             r=self._salvar('HIPOTESE',dados,anterior)
             self._aplicar(r)
+            restaurado=getattr(self,'_rascunho_restaurado',None)
+            if restaurado:
+                try:
+                    estado.atualizar(self.app.catalogo.raiz,self._projeto(),estado.RASCUNHO,
+                                     lambda d:{} if d.get('data')==restaurado else d)
+                    self._rascunho_restaurado=None
+                except (ValueError,OSError) as e:
+                    self.status.setText('Revisão salva. Não foi possível retirar o rascunho anterior. '+str(e))
         worker=self.app.atividades.executar_thread('Fixar revisão da hipótese',nome,trabalho,pronto,self.status.setText)
         operacao=self.app.atividades.atual
         if reexecutar:

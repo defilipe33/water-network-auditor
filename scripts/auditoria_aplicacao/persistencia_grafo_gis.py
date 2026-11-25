@@ -98,6 +98,12 @@ def _identidade(con, projeto_uid):
         raise ValueError('Identidade ou versão do cadastro complementar incompatível.')
 
 
+def identidade(caminho, projeto_uid):
+    with abrir_ro(caminho) as con:
+        _identidade(con,projeto_uid)
+        _verificar(con)
+
+
 def revisoes(caminho, projeto_uid, uid=None, *, tipo=None):
     if caminho is None:
         return []
@@ -179,6 +185,10 @@ def _salvar_snapshot(caminho, resultado, tabela, cancelar):
                 nome TEXT NOT NULL,data_utc TEXT NOT NULL,schema INTEGER NOT NULL,snapshot TEXT NOT NULL)''')
             meta=resultado['uuid'],resultado['projeto_uid'],resultado['nome'],resultado['data_utc'],1
             con.execute(f'INSERT INTO {tabela} VALUES(?,?,?,?,?,?)',(*meta,_json(resultado)))
+            from .trabalhos_projeto import resumo_gis
+            con.execute('CREATE TABLE TG_RESUMO(uuid TEXT PRIMARY KEY, dados TEXT NOT NULL)')
+            con.execute('INSERT INTO TG_RESUMO VALUES(?,?)',(resultado['uuid'],_json(resumo_gis(resultado))))
+            _registrar(con,'TG_RESUMO')
             _registrar(con,tabela);_verificar(con)
         verificar_cancelamento(cancelar)
         publicar(temporario,caminho)
@@ -202,4 +212,7 @@ def _carregar_snapshot(caminho, uid, projeto_uid, tabela):
         d=json.loads(r[3])
         if (d.get('uuid'),d.get('projeto_uid'))!=(uid,projeto_uid):
             raise ValueError('O conteúdo do trabalho diverge da sua identidade.')
+        if tabela=='TG_ESTRUTURA' and (d.get('foto',{}).get('uuid'),d.get('foto',{}).get('projeto_uid'))!=(
+                d.get('topologia_uid'),projeto_uid):
+            raise ValueError('A fotografia topológica incorporada diverge da execução de origem.')
         return d
