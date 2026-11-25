@@ -29,7 +29,7 @@ def _categoria(grupo, nome, geometria, campos=''):
 
 
 CATEGORIAS = {
-    'PIPE': _categoria('Redes', 'Tubulações', 'Line', 'gis_id diametro material comprimento rugosidade ano situacao'),
+    'PIPE': _categoria('Redes', 'Tubulações', 'Line', 'gis_id diametro material comprimento rugosidade ano situacao setor_operacional'),
     'JUNCTION': _categoria('Nós', 'Junctions / nós GIS', 'Point', 'elevacao'),
     'RESERVOIR': _categoria('Reservatórios e bombas', 'Reservoirs', 'Point', 'elevacao carga nivel'),
     'TANK': _categoria('Reservatórios e bombas', 'Tanks', 'Point', 'elevacao nivel nivel_minimo nivel_maximo diametro volume'),
@@ -75,6 +75,7 @@ VINCULOS_WG = ('Label', 'GIS-ID', 'DomainElementID')
 ROTULOS = {
     'id': 'ID da feição', 'label': 'Nome exibido', 'wg': 'Campo de correspondência WaterGEMS',
     'gis_id': 'GIS-ID', 'diametro': 'Diâmetro', 'comprimento': 'Comprimento',
+    'setor_operacional': 'Setor operacional declarado',
     'rugosidade': 'Rugosidade', 'elevacao': 'Elevação', 'ano': 'Ano de instalação',
     'situacao': 'Situação cadastral', 'nivel': 'Nível', 'nivel_minimo': 'Nível mínimo',
     'nivel_maximo': 'Nível máximo', 'instalacao': 'Instalação', 'equipamento': 'Equipamento associado',

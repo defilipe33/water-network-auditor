@@ -47,6 +47,7 @@ Desktop.ini
 !/testes/test_*.py
 !/testes/empacotar_plugin.py
 !/testes/executar_suite_isolada.py
+!/testes/medir_grafo_gis.py
 !/testes/validar_estrutura_xlsx.py
 !/testes/validar_relatorio_locais.py
 !/testes/validar_excel_desktop.py
@@ -56,6 +57,8 @@ Desktop.ini
 *.wtg
 *.wtg.*
 *.wgs
+*.wna
+*.wna.lock
 *.sqlite
 *.sqlite3
 *.db

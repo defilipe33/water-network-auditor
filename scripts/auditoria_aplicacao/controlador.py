@@ -140,6 +140,8 @@ class Aplicacao:
         central=getattr(self,'central',None)
         gis=central.__dict__.get('analise_gis') if central is not None else None
         if gis is not None and not sip.isdeleted(gis) and not gis.resolver():return False
+        topologia=central.__dict__.get('conectividade_gis') if central is not None else None
+        if topologia is not None and not sip.isdeleted(topologia) and not topologia.resolver_edicao():return False
         if self.painel is not None and sip.isdeleted(self.painel):self.painel=None
         direta=getattr(self,'topologia_direta',None)
         if direta is not None and not sip.isdeleted(direta) and not direta.resolver():return False

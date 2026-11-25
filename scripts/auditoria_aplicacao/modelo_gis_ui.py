@@ -601,6 +601,8 @@ class PainelModeloGIS(QWidget):
 
     def recarregar(self):
         self._pendencias_cache = {}
+        self._fontes_sujas = True
+        self._estado = {}
         self.cancelar_tarefa()
         projeto = self.projetos.atual() or {}
         hist = revisoes(projeto)

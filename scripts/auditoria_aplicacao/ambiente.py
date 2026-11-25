@@ -4,7 +4,7 @@ from pathlib import Path
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (
     QComboBox, QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QMenu,
-    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QStackedWidget, QVBoxLayout, QWidget, QFileDialog, QInputDialog,
 )
 from .central import CentralTrabalho
 from .mapa_fontes import MapaFontes
@@ -54,7 +54,11 @@ class AmbienteTrabalho(CentralTrabalho):
         menu_b = QPushButton('⋯')
         menu_b.setMaximumWidth(36)
         menu = QMenu(menu_b)
-        menu.addAction('Criar projeto', self.criar_projeto)
+        menu.addAction('Novo projeto (.wna)…', self.novo_manifesto)
+        menu.addAction('Abrir projeto (.wna)…', self.abrir_projeto)
+        menu.addAction('Gerar arquivo .wna do projeto atual…', self.migrar_manifesto)
+        recentes=menu.addMenu('Projetos recentes')
+        recentes.aboutToShow.connect(lambda:self.menu_projetos_recentes(recentes))
         menu.addAction('Configuração WaterGEMS', lambda: self.acionar('preparar_wg'))
         menu.addAction('Cenários e versões', lambda: self.acionar('cenarios'))
         menu.addAction('Cadastro auxiliar e intervenções', self.cadastro_auxiliar)
@@ -95,6 +99,7 @@ class AmbienteTrabalho(CentralTrabalho):
         self.descricao = aviso()
         iv.addWidget(self.descricao)
         self.executar_objetivo = acao(iv, 'Abrir análise', self.iniciar_objetivo, True)
+        acao(iv, 'Analisar conectividade', self.abrir_conectividade)
         self.continuar_investigacao = acao(iv, 'Continuar investigação aberta', lambda: self.acionar('continuar'))
         self.investigacao_mais = QPushButton('Outras ações deste contexto')
         self.menu_investigar = QMenu(self.investigacao_mais)
@@ -103,7 +108,7 @@ class AmbienteTrabalho(CentralTrabalho):
             self.menu_investigar.addAction(nome, lambda checked=False, c=chave: self.acionar(c))
         self.investigacao_mais.setMenu(self.menu_investigar)
         iv.addWidget(self.investigacao_mais)
-        iv.addWidget(aviso('No roadmap · Topologia GIS, zonas topológicas e isolamento por válvulas.'))
+        iv.addWidget(aviso('Zonas topológicas e isolamento por válvulas estão no roadmap.'))
         iv.addStretch()
         self.trabalhos, tv = self.pagina()
         tv.addWidget(aviso('Quais trabalhos já realizei?'))
@@ -113,7 +118,8 @@ class AmbienteTrabalho(CentralTrabalho):
         tv.addWidget(self.pesquisa)
         self.tipo_trabalho = QComboBox()
         for rotulo, tipo in [('Todos', None), ('Investigações', 'INTEGRADA'),
-                             ('Auditorias GIS', 'AUDITORIA_GIS'), ('Topologias WaterGEMS', 'TOPOLOGIA_WG')]:
+                             ('Auditorias GIS', 'AUDITORIA_GIS'), ('Topologias WaterGEMS', 'TOPOLOGIA_WG'),
+                             ('Conectividade GIS', 'TOPOLOGIA_GIS')]:
             self.tipo_trabalho.addItem(rotulo, tipo)
         self.tipo_trabalho.currentIndexChanged.connect(self.listar_trabalhos)
         tv.addWidget(self.tipo_trabalho)
@@ -127,6 +133,8 @@ class AmbienteTrabalho(CentralTrabalho):
         self.trabalho_detalhes = aviso()
         tv.addWidget(self.trabalho_detalhes)
         self.abrir_trabalho_b = acao(tv, 'Abrir trabalho', self.abrir_trabalho, True)
+        self.localizar_trabalho_b = acao(tv,'Localizar arquivo do trabalho…',self.relocalizar_trabalho)
+        self.localizar_trabalho_b.hide()
         self.trabalhos_menu_b = QPushButton('Histórico, conjuntos e exportações')
         self.trabalhos_menu = QMenu(self.trabalhos_menu_b)
         for nome, fn in [
@@ -209,6 +217,14 @@ class AmbienteTrabalho(CentralTrabalho):
             return
         if self.ocupado():
             self.app.atividades.exibir()
+        conectividade=self.__dict__.get('conectividade_gis')
+        if conectividade is not None:
+            if self.paginas.currentWidget() is conectividade and not conectividade.resolver_edicao():
+                bloqueado=self.area.blockSignals(True)
+                self.area.setCurrentIndex(self.area.findData('investigar'))
+                self.area.blockSignals(bloqueado)
+                return
+            conectividade.cancelar_captura()
         codigo = self.area.currentData()
         self.paginas.setCurrentWidget({'preparar': self.quadro, 'investigar': self.investigar,
                                        'trabalhos': self.trabalhos}[codigo])
@@ -378,9 +394,83 @@ class AmbienteTrabalho(CentralTrabalho):
         if self._pronto and antes != self.projetos.dados['ativo']:
             self.limpar_mapa()
             self.quadro.escolher(self.quadro.grupo)
+            if self.__dict__.get('conectividade_gis') is self.paginas.currentWidget():
+                self.mudar_area()
             if self.__dict__.get('analise_gis') is not None:
                 self.analise_gis.abrir(self.analise_gis.objetivo)
                 self.abrir_modelo_gis()
+
+    def menu_projetos_recentes(self, menu):
+        menu.clear()
+        for p in reversed(self.projetos.dados['projetos']):
+            menu.addAction(p['nome'], lambda checked=False,uid=p['uuid']:self.escolher_projeto(self.projeto.findData(uid)))
+
+    def _resolver_troca_projeto(self):
+        return (not self.ocupado() and self.app.resolver() and self.app.geo.resolver_pendencias()
+                and self.app.resolver_configuracao_wg() and self.modelo_gis.resolver())
+
+    def novo_manifesto(self):
+        if not self._resolver_troca_projeto():return
+        nome,ok=QInputDialog.getText(self,'Novo projeto','Nome do projeto')
+        if ok and nome.strip():self._salvar_manifesto(nome.strip())
+
+    def migrar_manifesto(self):
+        if self._resolver_troca_projeto() and self.projetos.atual():self._salvar_manifesto(None)
+
+    def _salvar_manifesto(self,nome):
+        arq,_=QFileDialog.getSaveFileName(self,'Arquivo do projeto','','Projeto Water Network Auditor (*.wna)')
+        if not arq:return
+        try:
+            self.projetos.salvar_manifesto(arq,nome)
+            self._manifesto_aberto()
+        except (ValueError,OSError) as e:self.receber_mapa(str(e))
+
+    def abrir_projeto(self):
+        if not self._resolver_troca_projeto():return
+        arq,_=QFileDialog.getOpenFileName(self,'Abrir projeto','','Projeto Water Network Auditor (*.wna)')
+        if not arq:return
+        try:
+            self.projetos.abrir_manifesto(arq)
+            self._manifesto_aberto()
+        except (ValueError,OSError) as e:self.receber_mapa(str(e))
+
+    def _manifesto_aberto(self):
+        self.limpar_mapa()
+        self._carregar_projetos()
+        from .manifesto_projeto import recuperar_camadas_locais
+        avisos=recuperar_camadas_locais(self.projetos.atual())
+        self.modelo_gis.recarregar()
+        self._catalogo_lido=None
+        self.area.setCurrentIndex(self.area.findData('trabalhos'))
+        self.mudar_area()
+        self.atualizar()
+        if avisos:self.receber_mapa('\n'.join(avisos))
+        p=self.projetos.atual()
+        ult=next((r for r in reversed(p['bases']) if r['tipo']=='TOPOLOGIA_GIS' and Path(r['base']).is_file()),None)
+        if ult or p.get('arquivo_complementos'):
+            pagina=self._pagina_conectividade()
+            pagina.abrir()
+            if ult:pagina.reabrir(dict(ult,nome='Recuperar representação cartográfica GIS'))
+
+    def abrir_conectividade(self, checked=False, origens=False):
+        if self.ocupado() or not self.app.resolver() or not self.modelo_gis.resolver():
+            return False
+        if not self.projetos.atual():
+            self.receber_mapa('Crie ou abra um projeto para analisar sua rede.')
+            return False
+        pagina=self._pagina_conectividade()
+        pagina.abrir(origens)
+        self.area.setCurrentIndex(self.area.findData('investigar'))
+        self.paginas.setCurrentWidget(pagina)
+        return True
+
+    def _pagina_conectividade(self):
+        pagina=self.__dict__.get('conectividade_gis')
+        if pagina is None:
+            from .topologia_gis_ui import TopologiaGIS
+            pagina=self.conectividade_gis=TopologiaGIS(self)
+            self.paginas.addWidget(pagina)
+        return pagina
 
     def escolher_projeto(self, i):
         antes = self.projetos.dados['ativo']
@@ -388,6 +478,8 @@ class AmbienteTrabalho(CentralTrabalho):
         if self._pronto and antes != self.projetos.dados['ativo']:
             self.limpar_mapa()
             self.quadro.escolher(self.quadro.grupo)
+            if self.__dict__.get('conectividade_gis') is self.paginas.currentWidget():
+                self.mudar_area()
 
     def destacar_fonte(self, fonte):
         token = (fonte['uid'], fonte['assinatura'], fonte['filtro'])
@@ -410,7 +502,7 @@ class AmbienteTrabalho(CentralTrabalho):
 
     def atualizar_objetivo(self):
         textos = [
-            ('Auditoria geométrica das redes GIS. Não exige WaterGEMS. A conectividade hidráulica não é inferida por proximidade.', 'Verificar redes GIS'),
+            ('Auditoria geométrica de travessias em setores, zonas de VRP, zonas de booster e outros limites cadastrados.', 'Verificar travessias e limites'),
             ('Disponível sobre topologia WaterGEMS persistida. Corredores sobre topologia GIS serão uma etapa futura.', 'Identificar corredores WaterGEMS'),
             ('Auditoria GIS de travessias entre redes e limites. Não exige WaterGEMS. Zonas topológicas são futuras.', 'Investigar fronteiras GIS'),
             ('Examinar travessias e dispositivos próximos nas camadas GIS. Comparação topológica com WaterGEMS é adicional.', 'Examinar interferências GIS'),
@@ -460,10 +552,15 @@ class AmbienteTrabalho(CentralTrabalho):
         termo = self.pesquisa.text().casefold()
         tipo = self.tipo_trabalho.currentData()
         p = self.projetos.atual()
-        refs = {(r['uuid'], r['tipo']) for r in (p or {}).get('bases', [])}
+        refs = {(r['uuid'], r['tipo'], str(Path(r['base']).resolve())) for r in (p or {}).get('bases', [])}
+        registros=list(self._registros)
+        conhecidos={(r['uuid'],r['tipo'],str(Path(r['base']).resolve())) for r in registros}
+        for r in (p or {}).get('bases',[]):
+            if (r['uuid'],r['tipo'],str(Path(r['base']).resolve())) not in conhecidos:
+                registros.append(dict(r,nome=r.get('nome',Path(r['base']).stem)))
         chave_lista = (self.projetos.dados['ativo'], termo, tipo, tuple(sorted(refs)),
                        tuple(tuple(str(r.get(k, '')) for k in ('uuid','tipo','base','nome','versao','estado_catalogo','classe_arquivo'))
-                             for r in self._registros))
+                             for r in registros))
         if chave_lista == getattr(self, '_lista_trabalhos_chave', None):
             self.detalhar_trabalho(self.trabalhos_lista.currentItem())
             return
@@ -471,8 +568,9 @@ class AmbienteTrabalho(CentralTrabalho):
         self.trabalhos_lista.blockSignals(True)
         self.trabalhos_lista.clear()
         self._trabalhos = []
-        for r in self._registros:
-            if p and (r['uuid'], r['tipo']) not in refs:
+        for r in registros:
+            if p and (r['uuid'], r['tipo'], str(Path(r['base']).resolve())) not in refs and not any(
+                    (r['uuid'],r['tipo'],str(Path(c).resolve())) in refs for c in r.get('caminhos',())):
                 continue
             if r.get('estado_catalogo') in ('ARQUIVADA', 'RETIRADA') or r.get('classe_arquivo') in ('BACKUP_TECNICO', 'BACKUP_CANDIDATO'):
                 continue
@@ -494,6 +592,7 @@ class AmbienteTrabalho(CentralTrabalho):
     def detalhar_trabalho(self, item, *_):
         r = self.registro_trabalho()
         self.abrir_trabalho_b.setEnabled(bool(r))
+        self.localizar_trabalho_b.setVisible(bool(r and not Path(r['base']).is_file()))
         if r:
             dispo = 'Disponível' if Path(r['base']).is_file() else 'Arquivo ausente · localizar pelo catálogo'
             cenario = r.get('cenario')
@@ -505,6 +604,24 @@ class AmbienteTrabalho(CentralTrabalho):
     def registro_trabalho(self):
         i = self.trabalhos_lista.currentRow()
         return self._trabalhos[i] if 0 <= i < len(getattr(self, '_trabalhos', [])) else None
+
+    def relocalizar_trabalho(self):
+        r=self.registro_trabalho()
+        if not r or not self.projetos.atual() or not self._resolver_troca_projeto():return
+        arquivo,_=QFileDialog.getOpenFileName(self,'Localizar trabalho','','GeoPackage (*.gpkg)')
+        if not arquivo:return
+        try:
+            from auditoria_topologica_watergems.gerenciamento import identificar
+            novo=next((n for n in identificar(arquivo) if (n['uuid'],n['tipo'])==(r['uuid'],r['tipo'])),None)
+            if novo is None:
+                raise ValueError('Este arquivo não contém o trabalho selecionado.')
+            if novo['tipo']=='TOPOLOGIA_GIS' and novo.get('projeto_uid')!=self.projetos.atual()['uuid']:
+                raise ValueError('O trabalho pertence a outro projeto.')
+            self.app.catalogo.registrar(arquivo)
+            self.projetos.vincular(novo)
+            self._catalogo_lido=None
+            self.mudar_area()
+        except (ValueError,OSError,RuntimeError) as e:self.receber_mapa(str(e))
 
     def abrir_trabalho(self):
         r = self.registro_trabalho()
@@ -524,6 +641,10 @@ class AmbienteTrabalho(CentralTrabalho):
             if r['tipo'] == 'AUDITORIA_GIS':
                 if not self.abrir_analise_gis('verificar'): return False
                 return self.analise_gis.abrir_persistida(r)
+            if r['tipo']=='TOPOLOGIA_GIS':
+                if not self.abrir_conectividade():return False
+                self.conectividade_gis.reabrir(r)
+                return True
             if self.app.abrir_registro(r):
                 self.projetos.vincular(r)
                 self.atualizar()
@@ -559,5 +680,7 @@ class AmbienteTrabalho(CentralTrabalho):
         if not self.app.preparar_saida():
             event.ignore()
             return
+        pagina=self.__dict__.get('conectividade_gis')
+        if pagina is not None:pagina.cancelar_captura()
         self.limpar_mapa()
         super().closeEvent(event)

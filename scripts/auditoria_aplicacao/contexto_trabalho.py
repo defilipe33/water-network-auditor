@@ -1,5 +1,7 @@
 """Identidade de projeto e contexto de navegação; sem dados hidráulicos."""
 import json,os,time
+from copy import deepcopy
+from contextlib import contextmanager
 from pathlib import Path
 from uuid import uuid4
 from auditoria_fronteiras.versoes import abrir_ro
@@ -7,15 +9,116 @@ from auditoria_topologica_watergems import bases
 from auditoria_topologica_watergems.referencia_espacial import estado_referencia
 
 class Projetos:
-    def __init__(self,raiz):self.path=Path(raiz)/'projetos_wna.json';self.dados=self.ler()
+    def __init__(self,raiz):
+        self.path=Path(raiz)/'projetos_wna.json'
+        self.dados=self.ler()
+        self._original=deepcopy(self.dados)
+
+    @staticmethod
+    @contextmanager
+    def trava(caminho):
+        from qgis.PyQt.QtCore import QLockFile
+        lock=QLockFile(str(caminho)+'.lock')
+        if not lock.tryLock(1000):
+            raise ValueError('O projeto está sendo salvo em outra sessão. Tente novamente.')
+        try:
+            yield
+        finally:
+            lock.unlock()
+
     def ler(self):
         if not self.path.exists():return dict(versao=1,ativo=None,projetos=[])
         d=json.loads(self.path.read_text(encoding='utf8'))
         if d.get('versao')!=1 or not isinstance(d.get('projetos'),list):raise ValueError('Índice de projetos incompatível; arquivo preservado')
+        from .manifesto_projeto import ler
+        for i,p in enumerate(d['projetos']):
+            caminho=p.get('manifesto_wna')
+            if caminho and Path(caminho).is_file():
+                try:
+                    lido=ler(caminho)
+                    if lido['uuid']==p['uuid']:
+                        d['projetos'][i]=lido
+                except (ValueError,OSError):
+                    # O índice local conserva a referência para recuperar o arquivo.
+                    continue
         return d
     def salvar(self):
         self.gravar(self.dados)
     def gravar(self,dados):
+        from .manifesto_projeto import gravar, ler
+        from contextlib import ExitStack
+        with self.trava(self.path), ExitStack() as locks:
+            disco=self.ler()
+            antigos={p['uuid']:p for p in self._original['projetos']}
+            atuais={p['uuid']:p for p in disco['projetos']}
+            novos={p['uuid']:p for p in dados['projetos']}
+            tocados={u for u in antigos.keys() | novos.keys() if novos.get(u)!=antigos.get(u)}
+            for u in sorted(tocados):
+                p=novos.get(u,{})
+                caminho=p.get('manifesto_wna')
+                if caminho:locks.enter_context(self.trava(caminho))
+            atuais={p['uuid']:p for p in self.ler()['projetos']}
+            for u in tocados:
+                if atuais.get(u)!=antigos.get(u):
+                    raise ValueError('O projeto mudou em outra sessão. Reabra antes de salvar.')
+            for u in tocados:
+                p=novos.get(u)
+                caminho=(p or {}).get('manifesto_wna')
+                if caminho:
+                    if not Path(caminho).is_file():
+                        raise ValueError('Arquivo .wna indisponível. Abra o arquivo em sua nova localização.')
+                    publicado=ler(caminho)
+                    if publicado['uuid']!=u:
+                        raise ValueError('O arquivo .wna registrado possui outra identidade.')
+                    if u in antigos and antigos[u].get('manifesto_wna')==caminho:
+                        gravar(caminho,p)
+                        p=ler(caminho)
+                if p is None:atuais.pop(u,None)
+                else:atuais[u]=p
+            novo=dict(dados,projetos=list(atuais.values()))
+            self._gravar_indice(novo)
+            self._original=deepcopy(novo)
+
+    def abrir_manifesto(self,caminho):
+        from .manifesto_projeto import ler
+        with self.trava(self.path):
+            p=ler(caminho)
+            dados=self.ler()
+            existentes=[r for r in dados['projetos'] if r['uuid']==p['uuid']]
+            if existentes:
+                antigo=existentes[0]
+                ref=antigo.get('manifesto_wna')
+                if ref and ref!=p['manifesto_wna'] and Path(ref).exists():
+                    raise ValueError('Já existe outro arquivo .wna ativo com esta identidade. Abra o original registrado.')
+            dados['projetos']=[r for r in dados['projetos'] if r['uuid']!=p['uuid']]+[p]
+            dados['ativo']=p['uuid']
+            self._gravar_indice(dados)
+            self._original=deepcopy(dados)
+            return p
+
+    def salvar_manifesto(self,caminho,nome=None):
+        from .manifesto_projeto import gravar, ler
+        p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={}) if nome else self.atual()
+        if p is None:raise ValueError('Selecione um projeto.')
+        caminho=Path(caminho).resolve()
+        if caminho.suffix.lower()!='.wna':
+            caminho=caminho.with_suffix('.wna')
+        if p.get('manifesto_wna'):
+            raise ValueError('O projeto já possui um arquivo .wna.')
+        with self.trava(self.path):
+            dados=self.ler()
+            atual=next((r for r in dados['projetos'] if r['uuid']==p['uuid']),None)
+            if not nome and atual!=p:
+                raise ValueError('O projeto mudou em outra sessão. Reabra antes da migração.')
+            gravar(caminho,p,exclusivo=True)
+            registrado=ler(caminho)
+            dados['projetos']=[r for r in dados['projetos'] if r['uuid']!=p['uuid']]+[registrado]
+            dados['ativo']=p['uuid']
+            self._gravar_indice(dados)
+            self._original=deepcopy(dados)
+            return registrado
+
+    def _gravar_indice(self,dados):
         tmp=self.path.with_name(self.path.name+'.'+uuid4().hex+'.tmp')
         # No Windows, indexadores podem reter o destino durante uma leitura.
         # Não se apaga o índice antigo; erro persistente é comunicado ao chamador.
@@ -34,9 +137,10 @@ class Projetos:
             tmp.unlink(missing_ok=True)
     def criar(self,nome):
         if not nome.strip():raise ValueError('Informe o nome do projeto')
-        self.dados=self.ler();p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={});self.dados['projetos'].append(p);self.dados['ativo']=p['uuid'];self.salvar();return p
+        self.dados=self.ler();self._original=deepcopy(self.dados);p=dict(uuid=uuid4().hex,nome=nome.strip(),bases=[],ultima=None,contexto={});self.dados['projetos'].append(p);self.dados['ativo']=p['uuid'];self.salvar();return p
     def ativar(self,uid):
         self.dados=self.ler()
+        self._original=deepcopy(self.dados)
         if not any(p['uuid']==uid for p in self.dados['projetos']):raise ValueError('Projeto não identificado')
         self.dados['ativo']=uid;self.salvar()
     def atual(self):return next((p for p in self.dados['projetos'] if p['uuid']==self.dados['ativo']),None)
@@ -66,7 +170,8 @@ def validar_registro(r):
                 if m['uuid']!=r['uuid']:raise ValueError('UUID diverge do catálogo')
                 if c.execute('SELECT count(*) FROM WB_RESULTADOS').fetchone()[0]!=2:raise ValueError('Perspectivas persistidas incompletas')
                 resultado=dict(valido=True,meta=m,base=str(p),uuid=m['uuid']);_CACHE[chave]=resultado;return resultado
-            tabela,campo=('IG_EXECUCOES','ig_uid') if r['tipo']=='INTEGRADA' else ('EXECUCOES','exe_uid')
+            tabelas={'INTEGRADA':('IG_EXECUCOES','ig_uid'),'TOPOLOGIA_GIS':('TG_EXECUCAO','uuid')}
+            tabela,campo=tabelas.get(r['tipo'],('EXECUCOES','exe_uid'))
             if not c.execute(f'SELECT 1 FROM {tabela} WHERE {campo}=?',(r['uuid'],)).fetchone():raise ValueError('Execução não encontrada na base')
             resultado=dict(valido=True,base=str(p),uuid=r['uuid']);_CACHE[chave]=resultado;return resultado
     except Exception as e:return dict(valido=False,erro=str(e))

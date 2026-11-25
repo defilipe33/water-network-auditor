@@ -21,7 +21,7 @@ from .modelo_gis import CATEGORIAS, descrever, identificar, expressao
 
 AREAS = ('SETOR', 'ZONA_VRP', 'ZONA_BOOSTER', 'ZONA', 'LIMITE')
 OBJETIVOS = {
-    'verificar': ('Verificar rede GIS', Modo.PERIMETRO,
+    'verificar': ('Verificar travessias e limites', Modo.PERIMETRO,
                   'Geometrias e ocorrências nas fronteiras cadastradas; não constrói conectividade.'),
     'fronteiras': ('Zonas e fronteiras', Modo.TRANSICAO,
                    'Transições geométricas entre regiões, preservando sobreposições e ambiguidades.'),

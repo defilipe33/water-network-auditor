@@ -37,6 +37,9 @@ class QuadroModelo(QWidget):
         self.categorias = combo({c: CATEGORIAS[c].nome for c in GRUPOS_QUADRO[self.grupo]})
         self.categorias.currentIndexChanged.connect(self.escolher_categoria)
         v.addWidget(self.categorias)
+        self.fontes_agua=QPushButton('Definir fontes de água')
+        self.fontes_agua.clicked.connect(lambda:self.central.abrir_conectividade(origens=True))
+        v.addWidget(self.fontes_agua)
         v.addWidget(self.modelo, 1)
         self.modelo.show()
         self.modelo.contexto.hide()
@@ -112,6 +115,7 @@ class QuadroModelo(QWidget):
             self.categorias.addItem(CATEGORIAS[c].nome, c)
         self.categorias.blockSignals(False)
         self.categorias.setVisible(len(GRUPOS_QUADRO[grupo]) > 1)
+        self.fontes_agua.setVisible(grupo=='CONECTIVIDADE')
         self.escolher_categoria()
 
     def escolher_categoria(self):
@@ -139,7 +143,7 @@ class QuadroModelo(QWidget):
             fs = [f for f in m.fontes if f['categoria'] in cats]
             linhas.append(f'{nome} · {len(fs)} fonte(s)')
             linhas.extend(f"  {f['nome']} · {CATEGORIAS[f['categoria']].nome}" for f in fs)
-        linhas += [m.estrategia.currentText(), 'Topologia GIS ainda não construída.']
+        linhas += [m.estrategia.currentText(), 'Use Analisar conectividade para gerar uma topologia GIS.']
         self.resumo_texto.setText('\n'.join(linhas))
         m.mostrar(self.resumo_pagina)
 

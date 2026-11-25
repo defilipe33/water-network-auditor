@@ -27,6 +27,11 @@ def identificar(base):
     p=Path(base).resolve(strict=True);saida=[]
     with abrir_ro(p) as con:
         nomes={r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+        if 'TG_EXECUCAO' in nomes:
+            for uid,projeto,nome,data,versao in con.execute('SELECT uuid,projeto_uid,nome,data_utc,schema FROM TG_EXECUCAO'):
+                saida.append(dict(uuid=uid,tipo='TOPOLOGIA_GIS',nome=nome,
+                                  projeto_uid=projeto,versao=versao,data=data,
+                                  situacao='CONCLUIDA',base=str(p)))
         if 'WB_BASE' in nomes:
             m=bases.metadados(p);saida.append(dict(m,base=str(p)))
         if 'IG_EXECUCOES' in nomes:
