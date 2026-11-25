@@ -32,6 +32,11 @@ def identificar(base):
                 saida.append(dict(uuid=uid,tipo='TOPOLOGIA_GIS',nome=nome,
                                   projeto_uid=projeto,versao=versao,data=data,
                                   situacao='CONCLUIDA',base=str(p)))
+        if 'TG_ESTRUTURA' in nomes:
+            for uid,projeto,nome,data,versao in con.execute('SELECT uuid,projeto_uid,nome,data_utc,schema FROM TG_ESTRUTURA'):
+                saida.append(dict(uuid=uid,tipo='ESTRUTURA_GIS',nome=nome,
+                                  projeto_uid=projeto,versao=versao,data=data,
+                                  situacao='CONCLUIDA',base=str(p)))
         if 'WB_BASE' in nomes:
             m=bases.metadados(p);saida.append(dict(m,base=str(p)))
         if 'IG_EXECUCOES' in nomes:

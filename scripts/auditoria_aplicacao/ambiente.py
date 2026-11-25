@@ -105,7 +105,8 @@ class AmbienteTrabalho(CentralTrabalho):
         self.investigacao_mais = QPushButton('Outras ações deste contexto')
         self.menu_investigar = QMenu(self.investigacao_mais)
         for nome, chave in [('Consulta topológica', 'topologia'), ('Ilhas sem origem', 'ilhas'),
-                             ('Auditoria GIS', 'gis'), ('Associar GIS e WaterGEMS', 'integrar')]:
+                             ('Auditoria GIS', 'gis'), ('Associar GIS e WaterGEMS', 'integrar'),
+                             ('Corredores sobre topologia WaterGEMS', 'corredores')]:
             self.menu_investigar.addAction(nome, lambda checked=False, c=chave: self.acionar(c))
         self.investigacao_mais.setMenu(self.menu_investigar)
         iv.addWidget(self.investigacao_mais)
@@ -120,7 +121,7 @@ class AmbienteTrabalho(CentralTrabalho):
         self.tipo_trabalho = QComboBox()
         for rotulo, tipo in [('Todos', None), ('Investigações', 'INTEGRADA'),
                              ('Auditorias GIS', 'AUDITORIA_GIS'), ('Topologias WaterGEMS', 'TOPOLOGIA_WG'),
-                             ('Conectividade GIS', 'TOPOLOGIA_GIS')]:
+                             ('Conectividade GIS', 'TOPOLOGIA_GIS'), ('Redes estruturantes GIS', 'ESTRUTURA_GIS')]:
             self.tipo_trabalho.addItem(rotulo, tipo)
         self.tipo_trabalho.currentIndexChanged.connect(self.listar_trabalhos)
         tv.addWidget(self.tipo_trabalho)
@@ -229,6 +230,8 @@ class AmbienteTrabalho(CentralTrabalho):
                 self.area.blockSignals(bloqueado)
                 return
             conectividade.cancelar_captura()
+        estrutura=self.__dict__.get('estrutura_gis')
+        if estrutura is not None:estrutura.cancelar_captura()
         codigo = self.area.currentData()
         self.paginas.setCurrentWidget({'preparar': self.quadro, 'investigar': self.investigar,
                                        'trabalhos': self.trabalhos}[codigo])
@@ -476,13 +479,34 @@ class AmbienteTrabalho(CentralTrabalho):
             self.paginas.addWidget(pagina)
         return pagina
 
+    def abrir_estrutura(self, checked=False, foto=None, recuperar=False):
+        if self.ocupado() or not self.app.resolver() or not self.modelo_gis.resolver():
+            return False
+        p=self.projetos.atual()
+        if not p:
+            self.receber_mapa('Crie ou abra um projeto para analisar redes estruturantes.')
+            return False
+        topologia=self.__dict__.get('conectividade_gis')
+        if foto is None and not recuperar and topologia is not None:
+            d=topologia.dados
+            if d and d.get('projeto_uid')==p['uuid']:foto=d
+        pagina=self.__dict__.get('estrutura_gis')
+        if pagina is None:
+            from .estrutura_gis_ui import EstruturaGIS
+            pagina=self.estrutura_gis=EstruturaGIS(self)
+            self.paginas.addWidget(pagina)
+        self.area.setCurrentIndex(self.area.findData('investigar'))
+        self.paginas.setCurrentWidget(pagina)
+        pagina.abrir(foto)
+        return True
+
     def escolher_projeto(self, i):
         antes = self.projetos.dados['ativo']
         super().escolher_projeto(i)
         if self._pronto and antes != self.projetos.dados['ativo']:
             self.limpar_mapa()
             self.quadro.escolher(self.quadro.grupo)
-            if self.__dict__.get('conectividade_gis') is self.paginas.currentWidget():
+            if self.paginas.currentWidget() in (self.__dict__.get('conectividade_gis'),self.__dict__.get('estrutura_gis')):
                 self.mudar_area()
 
     def destacar_fonte(self, fonte):
@@ -507,7 +531,7 @@ class AmbienteTrabalho(CentralTrabalho):
     def atualizar_objetivo(self):
         textos = [
             ('Auditoria geométrica de travessias em setores, zonas de VRP, zonas de booster e outros limites cadastrados.', 'Verificar travessias e limites'),
-            ('Disponível sobre topologia WaterGEMS persistida. Corredores sobre topologia GIS serão uma etapa futura.', 'Identificar corredores WaterGEMS'),
+            ('Investigue corredores, ligações críticas e dependências sobre uma execução de conectividade GIS.', 'Abrir redes estruturantes'),
             ('Auditoria GIS de travessias entre redes e limites. Não exige WaterGEMS. Zonas topológicas são futuras.', 'Investigar fronteiras GIS'),
             ('Examinar travessias e dispositivos próximos nas camadas GIS. Comparação topológica com WaterGEMS é adicional.', 'Examinar interferências GIS'),
             ('Propostas existentes pertencem à investigação integrada aberta. Planejamento sobre topologia GIS independente é futuro.', 'Consultar propostas existentes'),
@@ -524,7 +548,7 @@ class AmbienteTrabalho(CentralTrabalho):
         elif i in (0, 2, 3):
             self.abrir_analise_gis({0: 'verificar', 2: 'fronteiras', 3: 'interferencias'}[i])
         else:
-            self.acionar('corredores')
+            self.abrir_estrutura()
 
     def abrir_analise_gis(self, objetivo):
         if self.ocupado() or not self.modelo_gis.resolver(): return False
@@ -619,7 +643,7 @@ class AmbienteTrabalho(CentralTrabalho):
             novo=next((n for n in identificar(arquivo) if (n['uuid'],n['tipo'])==(r['uuid'],r['tipo'])),None)
             if novo is None:
                 raise ValueError('Este arquivo não contém o trabalho selecionado.')
-            if novo['tipo']=='TOPOLOGIA_GIS' and novo.get('projeto_uid')!=self.projetos.atual()['uuid']:
+            if novo['tipo'] in ('TOPOLOGIA_GIS','ESTRUTURA_GIS') and novo.get('projeto_uid')!=self.projetos.atual()['uuid']:
                 raise ValueError('O trabalho pertence a outro projeto.')
             self.app.catalogo.registrar(arquivo)
             self.projetos.vincular(novo)
@@ -629,7 +653,7 @@ class AmbienteTrabalho(CentralTrabalho):
 
     def trabalho_cartografico(self,indice):
         return (0<=indice.row()<len(getattr(self,'_trabalhos',())) and
-                self._trabalhos[indice.row()]['tipo'] in ('AUDITORIA_GIS','TOPOLOGIA_GIS'))
+                self._trabalhos[indice.row()]['tipo'] in ('AUDITORIA_GIS','TOPOLOGIA_GIS','ESTRUTURA_GIS'))
 
     def abrir_trabalho(self,checked=False,cartografar=False,aproximar=False):
         r = self.registro_trabalho()
@@ -639,6 +663,9 @@ class AmbienteTrabalho(CentralTrabalho):
             return False
         try:
             self.limpar_mapa()
+            if r['tipo']=='ESTRUTURA_GIS':
+                if not self.abrir_estrutura(recuperar=True):return False
+                return bool(self.estrutura_gis.reabrir(r,cartografar=cartografar,aproximar=aproximar))
             from .contexto_trabalho import validar_registro
             check = validar_registro(r)
             if not check['valido']:
@@ -688,7 +715,8 @@ class AmbienteTrabalho(CentralTrabalho):
         if not self.app.preparar_saida():
             event.ignore()
             return
-        pagina=self.__dict__.get('conectividade_gis')
-        if pagina is not None:pagina.cancelar_captura()
+        for chave in ('conectividade_gis','estrutura_gis'):
+            pagina=self.__dict__.get(chave)
+            if pagina is not None:pagina.cancelar_captura()
         self.limpar_mapa()
         super().closeEvent(event)

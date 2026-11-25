@@ -165,6 +165,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.executar_b.setObjectName('Principal')
         self.resumo=aviso()
         v.addWidget(self.resumo)
+        self.estrutura_b=botao(v,'Redes estruturantes',lambda:self.central.abrir_estrutura(foto=self.dados))
         self.categoria=QComboBox()
         self.categoria.currentIndexChanged.connect(self.mudar_resultados)
         self.ordem=QComboBox()
@@ -253,6 +254,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             (self.nova_hip_b,redes,'Grava uma hipótese independente com os parâmetros atuais.'),
             (self.reexecutar_b,redes,'Escolha entre execução temporária, nova revisão ou nova hipótese.'),
             (self.comparar_b,outra,'Compara dois resultados imutáveis e localiza suas diferenças.'),
+            (self.estrutura_b,'' if self.dados else 'Execute ou abra uma análise de conectividade.',
+             'Investiga a função das tubulações nesta execução topológica.'),
             (self.consultar_mapa_b,mapa,'Identifica o registro representado pelo elemento clicado.'),
             (self.revisar_mapa_b,mapa or ('' if tem_conexao else 'Nenhuma conexão representada no mapa.'),'Abre a revisão da conexão selecionada.'),
             (self.destacar_b,falta_resultado,'Realça as geometrias relacionadas.'),

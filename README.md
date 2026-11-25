@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+A pré-release **1.17.0** acrescenta a [análise de redes estruturantes sobre a topologia GIS](documentacao/publica/REDES_ESTRUTURANTES_GIS.md). O complemento identifica corredores, alternativas e dependências de origens, permite testar interrupções e recupera os trabalhos pelo projeto `.wna`.
+
 Etapa 2 com [topologia GIS independente e projetos .wna](documentacao/publica/TOPOLOGIA_GIS_1_16_0.md), [hipóteses versionadas e simbologia na 1.16.1](documentacao/publica/REFINAMENTO_TOPOLOGIA_GIS_1_16_1.md) e [navegação e revisão cartográfica na 1.16.2](documentacao/publica/USABILIDADE_TOPOLOGIA_GIS_1_16_2.md).
 
 Pré-release 1.15.2: [relevância das ocorrências GIS, fila de revisão, mapa e compatibilidade](documentacao/publica/RELEVANCIA_GIS_1_15_2.md). [Roadmap de topologia GIS e elementos complementares](documentacao/publica/ROADMAP_GIS_ELEMENTOS_COMPLEMENTARES.md).

@@ -115,7 +115,7 @@ def vigentes(caminho, projeto_uid):
 
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
-    if tipo not in ('ORIGEM','CONEXAO','HIPOTESE','DECISAO'):
+    if tipo not in ('ORIGEM','CONEXAO','HIPOTESE','DECISAO','DESTINO_ZONA'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO') and dados.get('situacao') not in SITUACOES:
@@ -124,6 +124,9 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
         raise ValueError('Defina a interpretação da conexão.')
     if tipo=='HIPOTESE' and not str(dados.get('nome','')).strip():
         raise ValueError('Dê um nome à hipótese.')
+    if tipo=='DESTINO_ZONA' and (not dados.get('topologia_uid') or not dados.get('zona')
+                               or not isinstance(dados.get('destinos'),list)):
+        raise ValueError('Informe a execução, a zona e os destinos declarados.')
     if dados.get('excluido') and not complemento_editavel(dict(dados,tipo=tipo)):
         raise ValueError('Somente elementos complementares podem ser excluídos.')
     uid, rev=uid or uuid4().hex,uuid4().hex
@@ -151,17 +154,25 @@ def selecionar(registros, ids):
 
 
 def salvar_execucao(caminho, resultado, cancelar=None):
+    return _salvar_snapshot(caminho,resultado,'TG_EXECUCAO',cancelar)
+
+
+def salvar_estrutura(caminho, resultado, cancelar=None):
+    return _salvar_snapshot(caminho,resultado,'TG_ESTRUTURA',cancelar)
+
+
+def _salvar_snapshot(caminho, resultado, tabela, cancelar):
     caminho=Path(caminho)
     temporario=caminho.with_name('.preparando_'+uuid4().hex+'.gpkg')
     try:
         verificar_cancelamento(cancelar)
         _criar_gpkg(temporario)
         with closing(sqlite3.connect(temporario)) as con, con:
-            con.execute('''CREATE TABLE TG_EXECUCAO(uuid TEXT PRIMARY KEY,projeto_uid TEXT NOT NULL,
+            con.execute(f'''CREATE TABLE {tabela}(uuid TEXT PRIMARY KEY,projeto_uid TEXT NOT NULL,
                 nome TEXT NOT NULL,data_utc TEXT NOT NULL,schema INTEGER NOT NULL,snapshot TEXT NOT NULL)''')
             meta=resultado['uuid'],resultado['projeto_uid'],resultado['nome'],resultado['data_utc'],1
-            con.execute('INSERT INTO TG_EXECUCAO VALUES(?,?,?,?,?,?)',(*meta,_json(resultado)))
-            _registrar(con,'TG_EXECUCAO');_verificar(con)
+            con.execute(f'INSERT INTO {tabela} VALUES(?,?,?,?,?,?)',(*meta,_json(resultado)))
+            _registrar(con,tabela);_verificar(con)
         verificar_cancelamento(cancelar)
         publicar(temporario,caminho)
     finally:
@@ -169,8 +180,16 @@ def salvar_execucao(caminho, resultado, cancelar=None):
 
 
 def carregar(caminho, uid, projeto_uid):
+    return _carregar_snapshot(caminho,uid,projeto_uid,'TG_EXECUCAO')
+
+
+def carregar_estrutura(caminho, uid, projeto_uid):
+    return _carregar_snapshot(caminho,uid,projeto_uid,'TG_ESTRUTURA')
+
+
+def _carregar_snapshot(caminho, uid, projeto_uid, tabela):
     with abrir_ro(caminho) as con:
-        r=con.execute('SELECT uuid,projeto_uid,schema,snapshot FROM TG_EXECUCAO').fetchone()
+        r=con.execute(f'SELECT uuid,projeto_uid,schema,snapshot FROM {tabela}').fetchone()
         if r is None or r[:3]!=(uid,projeto_uid,1):
             raise ValueError('A execução pertence a outro projeto ou usa versão incompatível.')
         d=json.loads(r[3])

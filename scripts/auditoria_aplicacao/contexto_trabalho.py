@@ -150,7 +150,13 @@ class Projetos:
     def vincular(self,registro):
         p=self.atual()
         if not p:return
-        identidade=dict(uuid=registro['uuid'],tipo=registro['tipo'],base=registro['base']);p.setdefault('em_memoria',{})[registro['tipo']]=registro['uuid'];p['bases']=[r for r in p['bases'] if (r['uuid'],r['tipo'])!=(identidade['uuid'],identidade['tipo'])]+[identidade];p['ultima']=identidade;self.salvar()
+        identidade={k:registro[k] for k in ('uuid','tipo','base')}
+        if identidade['tipo'] in ('TOPOLOGIA_GIS','ESTRUTURA_GIS'):
+            identidade.update({k:registro[k] for k in ('nome','versao') if k in registro})
+        p.setdefault('em_memoria',{})[identidade['tipo']]=identidade['uuid']
+        p['bases']=[r for r in p['bases'] if (r['uuid'],r['tipo'])!=(identidade['uuid'],identidade['tipo'])]+[identidade]
+        p['ultima']=identidade
+        self.salvar()
 
 
 _CACHE={}
@@ -170,7 +176,8 @@ def validar_registro(r):
                 if m['uuid']!=r['uuid']:raise ValueError('UUID diverge do catálogo')
                 if c.execute('SELECT count(*) FROM WB_RESULTADOS').fetchone()[0]!=2:raise ValueError('Perspectivas persistidas incompletas')
                 resultado=dict(valido=True,meta=m,base=str(p),uuid=m['uuid']);_CACHE[chave]=resultado;return resultado
-            tabelas={'INTEGRADA':('IG_EXECUCOES','ig_uid'),'TOPOLOGIA_GIS':('TG_EXECUCAO','uuid')}
+            tabelas={'INTEGRADA':('IG_EXECUCOES','ig_uid'),'TOPOLOGIA_GIS':('TG_EXECUCAO','uuid'),
+                     'ESTRUTURA_GIS':('TG_ESTRUTURA','uuid')}
             tabela,campo=tabelas.get(r['tipo'],('EXECUCOES','exe_uid'))
             if not c.execute(f'SELECT 1 FROM {tabela} WHERE {campo}=?',(r['uuid'],)).fetchone():raise ValueError('Execução não encontrada na base')
             resultado=dict(valido=True,base=str(p),uuid=r['uuid']);_CACHE[chave]=resultado;return resultado
