@@ -9,6 +9,7 @@ from qgis.PyQt.QtWidgets import (
 from .central import CentralTrabalho
 from .mapa_fontes import MapaFontes
 from .modelo_gis_ui import aviso
+from .navegacao_cartografica import acao_disponivel,navegar_registros
 from .quadro_modelo import QuadroModelo
 
 
@@ -129,6 +130,9 @@ class AmbienteTrabalho(CentralTrabalho):
         self.trabalhos_lista.setMinimumHeight(90)
         self.trabalhos_lista.setMaximumHeight(120)
         self.trabalhos_lista.currentItemChanged.connect(self.detalhar_trabalho)
+        navegar_registros(self.trabalhos_lista,lambda _,a:self.abrir_trabalho(cartografar=True,aproximar=a),
+                          acoes=lambda _: [('Abrir trabalho',self.abrir_trabalho)],limpar=self.limpar_mapa,
+                          elegivel=self.trabalho_cartografico)
         tv.addWidget(self.trabalhos_lista)
         self.trabalho_detalhes = aviso()
         tv.addWidget(self.trabalho_detalhes)
@@ -591,7 +595,7 @@ class AmbienteTrabalho(CentralTrabalho):
 
     def detalhar_trabalho(self, item, *_):
         r = self.registro_trabalho()
-        self.abrir_trabalho_b.setEnabled(bool(r))
+        acao_disponivel(self.abrir_trabalho_b,'' if r else 'Selecione um trabalho para abrir.')
         self.localizar_trabalho_b.setVisible(bool(r and not Path(r['base']).is_file()))
         if r:
             dispo = 'Disponível' if Path(r['base']).is_file() else 'Arquivo ausente · localizar pelo catálogo'
@@ -623,7 +627,11 @@ class AmbienteTrabalho(CentralTrabalho):
             self.mudar_area()
         except (ValueError,OSError,RuntimeError) as e:self.receber_mapa(str(e))
 
-    def abrir_trabalho(self):
+    def trabalho_cartografico(self,indice):
+        return (0<=indice.row()<len(getattr(self,'_trabalhos',())) and
+                self._trabalhos[indice.row()]['tipo'] in ('AUDITORIA_GIS','TOPOLOGIA_GIS'))
+
+    def abrir_trabalho(self,checked=False,cartografar=False,aproximar=False):
         r = self.registro_trabalho()
         if not r:
             return False
@@ -640,10 +648,10 @@ class AmbienteTrabalho(CentralTrabalho):
                 return False
             if r['tipo'] == 'AUDITORIA_GIS':
                 if not self.abrir_analise_gis('verificar'): return False
-                return self.analise_gis.abrir_persistida(r)
+                return self.analise_gis.abrir_persistida(r,cartografar=cartografar,aproximar=aproximar)
             if r['tipo']=='TOPOLOGIA_GIS':
                 if not self.abrir_conectividade():return False
-                self.conectividade_gis.reabrir(r)
+                self.conectividade_gis.reabrir(r,cartografar=cartografar,aproximar=aproximar)
                 return True
             if self.app.abrir_registro(r):
                 self.projetos.vincular(r)

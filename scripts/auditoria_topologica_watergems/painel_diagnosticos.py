@@ -70,6 +70,8 @@ class PainelDiagnosticos(QDockWidget):
         self.lista=QTableWidget(0,5);self.lista.setHorizontalHeaderLabels(['Ocorrência / diagnóstico','Prioridade','Acompanhamento','Regiões','Resultado da análise'])
         self.lista.setSelectionBehavior(QAbstractItemView.SelectRows);self.lista.setSelectionMode(QAbstractItemView.SingleSelection);self.lista.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.lista.setColumnWidth(1,70);self.lista.setColumnWidth(2,130);self.lista.horizontalHeader().setSectionResizeMode(0,QHeaderView.Stretch)
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        navegar_registros(self.lista,self.navegar_caso,self.acoes_caso,self.mapa.limpar)
         self.investigacao=QSplitter(Qt.Vertical);self.area_trabalho=QSplitter(Qt.Horizontal);layout.addWidget(self.area_trabalho,1);self.area_trabalho.addWidget(self.investigacao);pagina_widget=QWidget();pv=QVBoxLayout(pagina_widget);pv.setContentsMargins(0,0,0,0);pv.addWidget(self.lista,1);nav=QHBoxLayout();self.pagina_anterior=QPushButton('Anterior');self.pagina_seguinte=QPushButton('Próxima página');self.contagem_pagina=QLabel();nav.addWidget(self.pagina_anterior);nav.addWidget(self.contagem_pagina);nav.addWidget(self.pagina_seguinte);pv.addLayout(nav);self.pagina_anterior.clicked.connect(lambda checked=False:self.mudar_pagina(-1));self.pagina_seguinte.clicked.connect(lambda checked=False:self.mudar_pagina(1));self.investigacao.addWidget(pagina_widget)
         self.lista.setMinimumHeight(75)
         self.cartao=QTextBrowser();self.cartao.setOpenExternalLinks(False);self.investigacao.addWidget(self.cartao)
@@ -112,6 +114,8 @@ class PainelDiagnosticos(QDockWidget):
         self.editor_filtros=EditorFiltros(self);filtros.addWidget(self.editor_filtros,13,0,1,2);self.editor_filtros.alterado.connect(self.filtrar);self.fila.currentIndexChanged.connect(self.filtrar)
         from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
         self.elementos_tabela=TabelaConsulta(['Tipo','ID GIS','Camada GIS','Label WG','DomainElementID','Componente','Tipo de vínculo','Diagnóstico','Revisão','ID GIS bruto','Chave GIS','UID WG'])
+        self.elementos_tabela.vincular_mapa(lambda i,a:self.navegar_elementos([i],a),limpar=self.mapa.limpar,
+                                           navegar_varios=lambda is_:self.navegar_elementos(is_,True))
         self.tabs.insertTab(1,self.elementos_tabela,'ELEMENTOS E VÍNCULOS')
         for c in (9,10,11):self.elementos_tabela.tabela.setColumnHidden(c,True)
         b=QPushButton('IMPORTAR SELECTION SETS DO WATERGEMS…');b.clicked.connect(self.abrir_selection_sets);fv.addWidget(b)
@@ -367,6 +371,25 @@ class PainelDiagnosticos(QDockWidget):
 
     def componentes(self):
         if self.atual:self.mapa.destacar(self.atual,self.modo.currentData(),True)
+
+    def navegar_caso(self,indice,aproximar):
+        if self.atual is not None and self.lista.currentRow()==indice.row():
+            total=self.mapa.destacar(self.atual,self.modo.currentData())
+            if aproximar:self.aproximar()
+            elif not total:self.aviso.setText('Geometria indisponível para esta ocorrência.')
+
+    def acoes_caso(self,indice):
+        return [('Analisar ou anotar',self.anotar),('Destacar componentes',self.componentes),
+                ('Enquadrar toda a extensão',lambda:(self.navegar_caso(indice,False),self.extensao_elementos())),
+                ('Selecionar GIS original',self.origens),
+                ('Consultar histórico e propostas',lambda:self.tabs.setCurrentWidget(self.analise))]
+
+    def navegar_elementos(self,indices,aproximar):
+        tabela=self.elementos_tabela.tabela
+        linhas=[i.row() for i in indices]
+        def valores(coluna):
+            return [item.data(Qt.UserRole) for i in linhas if (item:=tabela.item(i,coluna)) and item.data(Qt.UserRole) is not None]
+        self.aviso.setText(self.mapa.localizar_elementos(valores(4),valores(10),aproximar))
 
     def aproximar(self):self.aviso.setText(self.mapa.aproximar())
     def extensao_elementos(self):

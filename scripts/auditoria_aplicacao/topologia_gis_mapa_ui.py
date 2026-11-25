@@ -1,11 +1,10 @@
 """Ferramentas de mapa vinculadas ao painel e ao contexto em edição."""
 
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import QTimer, Qt
-from qgis.PyQt.QtWidgets import QInputDialog
 from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry, QgsPointXY, QgsProject
 
 from .complementos_gis_ui import _nome
-from .grafo_gis import ROTULOS
 from .investigacao_gis import geometria
 from .mapa_topologia_gis import (
     FerramentaMapa, IndiceSelecao, _ponto, _transformar, escolher,
@@ -16,6 +15,8 @@ from .mapa_topologia_gis import (
 class MapaGIS:
     def _configuracao_alterada(self,*_):
         self._resultado_historico=False
+        self._atualizar_acoes()
+        self._indicar_rascunho()
         self.agendar_mapa()
 
     def agendar_mapa(self,*_):
@@ -63,12 +64,14 @@ class MapaGIS:
             crs=QgsProject.instance().crs()
         preparados=[]
         for r in registros.values():
-            if r['tipo'] not in ('ORIGEM','CONEXAO'):continue
+            if r['tipo'] not in ('ORIGEM','CONEXAO') or r.get('excluido'):continue
             if not r.get('pontos_rede') and d:
                 pontos=pontos_portas(r['portas'],self.tubos)
                 r=dict(r,pontos_rede=pontos,crs_rede=d['crs'])
             preparados.append(r)
         self.mapa_gis.atualizar(self.uid_projeto,crs,preparados,ativos,d,nome)
+        self._tem_conexoes_mapa=any(papel=='conexoes' for papel,_ in self.mapa_gis.registros)
+        self._atualizar_acoes()
 
     def iniciar_ferramenta(self,clique,concluir=None,cancelar=None):
         canvas=self.app.iface.mapCanvas()
@@ -76,33 +79,65 @@ class MapaGIS:
         self.cancelar_captura()
         anterior=canvas.mapTool()
         def sair(sucesso):
-            if self._ferramenta is None:return
+            if self._ferramenta is not sessao:return
             self.cancelar_captura(reabrir=False)
             cb=concluir if sucesso else cancelar
-            if cb:QTimer.singleShot(0,cb)
+            if cb:cb()
+        def desativada():
+            if self._ferramenta is not sessao:return
+            # O QGIS ainda está trocando de ferramenta durante este sinal.
+            self.cancelar_captura(reabrir=False,restaurar=False)
+            if cancelar:
+                QTimer.singleShot(0,lambda:cancelar() if self._ferramenta is None else None)
         def seguro(p):
-            self._com_erro(lambda:clique(p,sair))
+            if self._ferramenta is not sessao:return
+            try:
+                clique(p,sair)
+            except Exception as erro:
+                sair(False)
+                self.status.setText('Seleção cancelada. '+str(erro))
         ferramenta=FerramentaMapa(canvas,seguro,lambda:sair(True),lambda:sair(False))
-        self._ferramenta=(canvas,ferramenta,anterior)
+        sessao=(canvas,ferramenta,anterior)
+        self._ferramenta=sessao
         self._finalizar_ferramenta=cancelar
-        ferramenta.deactivated.connect(lambda:sair(False))
-        canvas.setMapTool(ferramenta)
+        ferramenta.deactivated.connect(desativada)
+        try:
+            canvas.setMapTool(ferramenta)
+            if canvas.mapTool() is not ferramenta:
+                raise RuntimeError('O QGIS não ativou a ferramenta do Auditor.')
+            tela=canvas.window()
+            tela.raise_()
+            tela.activateWindow()
+            canvas.setFocus(Qt.OtherFocusReason)
+        except (RuntimeError,TypeError) as erro:
+            sair(False)
+            self.status.setText(str(erro))
+            return False
         return True
 
-    def cancelar_captura(self,reabrir=True):
+    def cancelar_captura(self,reabrir=True,restaurar=True):
         t=self._ferramenta
         if not t:return
-        from qgis.PyQt import sip
         canvas,ferramenta,anterior=t
         cb=self._finalizar_ferramenta
         self._ferramenta=None
         self._finalizar_ferramenta=None
+        self._mensagem_captura()
         if not sip.isdeleted(canvas) and not sip.isdeleted(ferramenta):
-            if canvas.mapTool() is ferramenta:
+            if restaurar and canvas.mapTool() is ferramenta:
                 if anterior is not None and not sip.isdeleted(anterior):canvas.setMapTool(anterior)
                 else:canvas.unsetMapTool(ferramenta)
             ferramenta.deleteLater()
         if reabrir and cb:cb()
+
+    def _mensagem_captura(self,texto=''):
+        barra=getattr(self.app.iface,'messageBar',lambda:None)()
+        atual=getattr(self,'_aviso_captura',None)
+        if barra is not None and not sip.isdeleted(barra):
+            if atual is not None and not sip.isdeleted(atual):
+                barra.popWidget(atual)
+            self._aviso_captura=barra.pushMessage('Water Network Auditor',texto,duration=0) if texto else None
+        if texto:self.status.setText(texto)
 
     def _clique_metricas(self,p,crs):
         canvas=self.app.iface.mapCanvas()
@@ -117,15 +152,27 @@ class MapaGIS:
         if self.central.ocupado():return
         geoms=[]
         for uid in dict.fromkeys(u for u,_ in dlg.portas):
-            t=dlg.tubos[uid]
+            t=dlg.tubos.get(uid,{})
             g=t.get('geom') or geometria(t.get('wkb'))
             if g is not None:geoms.append(g)
-        self.central.mapa.limpar()
+        pontos=pontos_portas(dlg.portas,dlg.tubos)
+        itens=[('evento',QgsGeometry.fromMultiPointXY([QgsPointXY(*xy) for xy in pontos]))] if pontos else []
+        if dlg.tipo=='CONEXAO' and len(pontos)>=2:
+            itens.append(('vinculo',QgsGeometry.fromPolylineXY([QgsPointXY(*xy) for xy in pontos])))
         if geoms:
-            self.central.mapa.destacar_investigacao([('tubo',QgsGeometry.collectGeometry(geoms))],crs)
+            itens.insert(0,('tubo',QgsGeometry.collectGeometry(geoms)))
+        self.central.mapa.destacar_investigacao(itens,crs)
+
+    def _destacar_tubo_editor(self,dlg,uid,crs,aproximar):
+        t=dlg.tubos.get(uid,{})
+        g=t.get('geom') or geometria(t.get('wkb'))
+        if not self.central.mapa.destacar_investigacao([('tubo',g)],crs,aproximar,toda_extensao=True):
+            dlg.info.setText('Geometria indisponível para a tubulação escolhida.')
 
     def selecionar_no_editor(self,dlg,wkt,origem=False):
-        if self.central.ocupado():return
+        if self.central.ocupado():
+            dlg.info.setText('Aguarde a conclusão da atividade antes de selecionar no mapa.')
+            return
         crs=QgsCoordinateReferenceSystem(wkt)
         elementos=dlg.equipamentos.values() if origem else dlg.tubos.values()
         atributo='_indice_equipamentos' if origem else '_indice_tubos'
@@ -137,19 +184,29 @@ class MapaGIS:
             dlg.info.setText('Nenhuma feição disponível no escopo atual.')
             return
         portas=list(dlg.portas)
-        editor=self._editor
+        geometria_janela=dlg.saveGeometry()
+        conclusao=False
+        def existe():
+            return not sip.isdeleted(self) and not sip.isdeleted(dlg) and self._editor is dlg
         def mostrar():
-            if self._editor is not editor:return
+            nonlocal conclusao
+            if conclusao or not existe():return
+            conclusao=True
+            dlg.restoreGeometry(geometria_janela)
             dlg.show()
             dlg.raise_()
             dlg.activateWindow()
+            dlg.info.setText(f'{len(dlg.portas)} ponto(s) de conexão escolhidos.')
         def cancelar():
-            if self._editor is not editor:return
+            if not existe():return
             dlg.portas=portas
             dlg.listar_portas()
-            self._destacar_tubos_editor(dlg,crs)
-            mostrar()
+            try:self._com_erro(lambda:self._destacar_tubos_editor(dlg,crs))
+            finally:
+                mostrar()
+                dlg.info.setText('Seleção cancelada. Os pontos anteriores foram preservados.')
         def clique(p,sair):
+            if not existe():sair(False);return
             g,tol=self._clique_metricas(p,crs)
             rs=indice.consultar(g,tol)
             escolha=escolher(self,rs,lambda r:_nome(r[2]))
@@ -162,10 +219,14 @@ class MapaGIS:
                 sair(True)
             else:
                 dlg.adicionar_mapa(uid,fracao_clicada(linha,g,tol))
-        dlg.hide()
+                self._mensagem_captura(f'{len(dlg.portas)} ponto(s). Clique para adicionar. Botão direito: concluir. Esc: cancelar.')
         if self.iniciar_ferramenta(clique,mostrar,cancelar):
-            self.status.setText('Clique nas feições. Botão direito conclui a seleção. Esc restaura os vínculos anteriores.')
-        else:mostrar()
+            dlg.hide()
+            self._mensagem_captura('Clique nas tubulações para adicioná-las. Botão direito: concluir. Esc: cancelar.'
+                                   if not origem else 'Selecione a origem no mapa. Esc: cancelar.')
+        else:
+            mostrar()
+            dlg.info.setText('Não foi possível iniciar a seleção no mapa.')
 
     def capturar(self,registro=None):
         if self.central.ocupado():return
@@ -175,7 +236,7 @@ class MapaGIS:
             if crs.isValid():
                 QTimer.singleShot(0,lambda:self.editar('ORIGEM',anterior=registro,ponto=dict(xy=[p.x(),p.y()],crs=crs.toWkt())))
         if self.iniciar_ferramenta(clique):
-            self.status.setText('Clique no mapa para posicionar a origem. Esc ou botão direito cancela.')
+            self._mensagem_captura('Clique no mapa para posicionar a origem. Esc ou botão direito cancela.')
 
     def consultar_mapa(self,revisar=False):
         if self.central.ocupado() or not self.mapa_gis.camadas:return
@@ -185,12 +246,15 @@ class MapaGIS:
             if camada is None:return
             pt,tol=self._clique_metricas(p,camada.crs())
             opcoes=self.mapa_gis.consultar(pt,camada.crs(),tol)
+            if revisar:
+                opcoes=[o for o in opcoes if o[1].get('tipo') in ('CONEXAO','CONEXAO_T','CRUZAMENTO','EXTREMIDADES_PROXIMAS')]
             escolha=escolher(self,opcoes,lambda r:r[0])
             if not escolha:return
             sair(True)
             QTimer.singleShot(0,lambda:self.abrir_registro_mapa(escolha[1],revisar))
         if self.iniciar_ferramenta(clique):
-            self.status.setText('Clique num símbolo visível. Esc cancela.')
+            self._mensagem_captura('Selecione uma conexão no mapa. Esc cancela.' if revisar
+                                   else 'Selecione um elemento visível no mapa. Esc cancela.')
 
     def abrir_registro_mapa(self,r,revisar=False):
         if r.get('tipo') in ('ORIGEM','CONEXAO'):
@@ -203,30 +267,44 @@ class MapaGIS:
             self.detalhar_relacao(r)
             self.destacar_relacao(r=r)
             if revisar:
-                self.editar(r['tipo'],r,candidato=self._candidato_da_relacao(r))
+                self._editar_relacao(r)
             return
         if self.selecionar_resultado_uid(r['uid'],r.get('tipo','COMPONENTES')):
             self.destacar()
             if revisar:self.revisar_conexao()
 
-    def destacar_relacao(self,aproximar=False,r=None):
+    def destacar_relacao(self,aproximar=False,r=None,extensao=False):
         r=r or self._registro_selecionado()
-        if not r or self.central.ocupado():return
-        crs=QgsCoordinateReferenceSystem((self.dados or {}).get('crs') or self.crs.crs().toWkt())
+        if not r or self.central.ocupado():
+            self.status.setText('Selecione uma fonte de água ou conexão disponível.')
+            return
+        crs=QgsCoordinateReferenceSystem((self.dados or {}).get('crs') or r.get('crs_rede') or self.crs.crs().toWkt())
         tubos=getattr(self,'tubos',{})
-        gs=[]
-        for uid in dict.fromkeys(u for u,_ in r['portas']):
-            wkb=tubos.get(uid,{}).get('wkb')
-            g=geometria(wkb)
-            if g is not None:gs.append(g)
         def mostrar():
-            itens=[('tubo',QgsGeometry.collectGeometry(gs))] if gs and not aproximar else []
+            crs_rede=QgsCoordinateReferenceSystem(r.get('crs_rede') or r.get('crs') or '')
+            gs=[]
+            for uid in dict.fromkeys(u for u,_ in r['portas']):
+                tubo=geometria(tubos.get(uid,{}).get('wkb'))
+                if tubo is None and crs_rede.isValid():
+                    historico=geometria(r.get('geometrias_rede',{}).get(uid))
+                    if historico is not None:tubo=_transformar(historico,crs_rede,crs)
+                if tubo is not None:gs.append(tubo)
+            itens=[('tubo',QgsGeometry.collectGeometry(gs))] if gs else []
             g=geometria_referencia(r,crs)
-            if g is None and r.get('pontos_rede'):
-                crs_portas=QgsCoordinateReferenceSystem(r.get('crs_rede') or '')
-                g=QgsGeometry.collectGeometry([_transformar(_ponto(xy),crs_portas,crs)
-                                              for xy in r['pontos_rede']])
-            if g is not None:itens.append(('equipamento' if r['tipo']=='ORIGEM' else 'evento',g))
-            if g is None and gs:itens=[('tubo',QgsGeometry.collectGeometry(gs))]
-            if itens:self.central.mapa.destacar_investigacao(itens,crs,aproximar)
+            fonte=r['tipo']=='ORIGEM'
+            if g is not None:itens.append(('equipamento' if fonte else 'evento',g))
+            pontos=[_transformar(_ponto(xy),crs_rede,crs)
+                    for xy in r.get('pontos_rede',[])] if crs_rede.isValid() else []
+            if pontos:itens.append(('evento',QgsGeometry.collectGeometry(pontos)))
+            if fonte and g is not None and g.type()==0 and not g.isMultipart():
+                vinculos=[[QgsPointXY(g.asPoint()),QgsPointXY(p.asPoint())] for p in pontos if p.distance(g)>1e-8]
+            elif not fonte and len(pontos)==2 and pontos[0].distance(pontos[1])>1e-8:
+                vinculos=[[QgsPointXY(p.asPoint()) for p in pontos]]
+            else:vinculos=[]
+            if vinculos:itens.append(('vinculo',QgsGeometry.fromMultiPolylineXY(vinculos)))
+            foco=g if fonte and not extensao else None
+            if not self.central.mapa.destacar_investigacao(itens,crs,aproximar,toda_extensao=extensao,foco=foco):
+                self.status.setText('Geometria indisponível para a fonte ou conexão selecionada.')
+            elif not gs and r['portas']:
+                self.status.setText('Localização destacada. As geometrias das tubulações desta revisão estão indisponíveis.')
         self._com_erro(mostrar)

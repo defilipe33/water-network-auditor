@@ -199,7 +199,7 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
         self._pagina = 0; self.listar()
         self._resultado_timer.start(0)
 
-    def abrir_persistida(self, registro):
+    def abrir_persistida(self, registro, cartografar=False, aproximar=False):
         if self.central.ocupado() or not self.resolver(): return False
         from auditoria_fronteiras.persistencia import carregar_execucao
         from auditoria_fronteiras.versoes import abrir_ro
@@ -228,7 +228,14 @@ class AnaliseGIS(PainelInvestigacaoGIS, QWidget):
                                'Executar novamente utiliza a configuração atual do Modelo GIS.')
             self.executar_b.setText('Executar nova análise com o cadastro atual')
             self.carregar_camadas(); self.info.setText('Trabalho recuperado, com observações e histórico. Fontes não reprocessadas.')
-        self.app.atividades.executar_thread('Abrindo trabalho GIS', registro.get('nome', 'Auditoria GIS'), trabalho, pronto, self.info.setText)
+        worker=self.app.atividades.executar_thread('Abrindo trabalho GIS', registro.get('nome', 'Auditoria GIS'), trabalho, pronto, self.info.setText)
+        if cartografar:
+            operacao=self.app.atividades.atual
+            def localizar():
+                if operacao.estado!='CONCLUIDO' or self.dossie['execucao_uid']!=registro['uuid']:return
+                if self.selecionado:self.destacar(aproximar=aproximar)
+                else:self.info.setText('O trabalho foi recuperado. Ajuste os filtros para localizar um resultado.')
+            worker.finished.connect(localizar)
         return True
 
     def carregar_camadas(self):

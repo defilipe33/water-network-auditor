@@ -9,6 +9,7 @@ class MapaDiagnosticos:
     def __init__(self,pacote,projeto,canvas=None):
         self.pacote=pacote;self.projeto=projeto;self.canvas=canvas;self.destaques=[];self.geometrias=[];self.foco=[];self.selecoes={}
         self.elementos=pacote['topologia']['modelo']['elementos']
+        self._tubos_gis={t['uid']:t for t in pacote.get('dossie',{}).get('tubulacoes',[])}
         self.comps={c['uid']:c for c in pacote['resultado']['componentes']+pacote['resultado']['componentes_potenciais']}
 
     def limpar(self):
@@ -31,6 +32,26 @@ class MapaDiagnosticos:
         b.setWidth(1.5 if copia.type()==2 else 4);b.setZValue(10 if copia.type()==2 else 60 if tracado else 40);b.setIconSize(12);b.setIcon(QgsRubberBand.ICON_CIRCLE)
         if tracado:b.setLineStyle(Qt.DashLine)
         b.setToGeometry(copia,None);self.destaques.append(b)
+
+    def localizar_elementos(self,ids=(),gis=(),aproximar=False):
+        self.limpar()
+        grupos={}
+        geometrias=self.pacote.get('geometrias') or {}
+        for i in set(ids):
+            e=self.elementos.get(i)
+            g=geometrias.get(i)
+            if e and g and not g.isEmpty():
+                cor={'LINK':'#1464dc','DISPOSITIVO':'#b817c8'}.get(e['familia'],'#008a69')
+                grupos.setdefault((cor,g.type()),[]).append(g)
+        for uid in set(gis):
+            wkb=self._tubos_gis.get(uid,{}).get('geometria_wkb_hex')
+            if wkb:
+                g=QgsGeometry()
+                g.fromWkb(bytes.fromhex(wkb))
+                if not g.isEmpty():grupos.setdefault(('#008ac0',g.type()),[]).append(g)
+        for (cor,_),gs in grupos.items():self.adicionar(QgsGeometry.collectGeometry(gs),cor)
+        if not self.geometrias:return 'Geometria ou referência espacial indisponível para estes elementos.'
+        return self.aproximar() if aproximar else 'Destaque temporário aplicado aos elementos localizáveis.'
 
     def destacar(self,caso,modo='ESTRUTURAL',completo=False):
         self.limpar();ids=set(caso['wg_ids']);p=self.pacote;gs=p.get('geometrias') or {}

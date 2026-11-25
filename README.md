@@ -1,6 +1,6 @@
 # Water Network Auditor — GIS & WaterGEMS
 
-Etapa 2 com [topologia GIS independente, fontes de água e projetos .wna](documentacao/publica/TOPOLOGIA_GIS_1_16_0.md) e [seleção no mapa, simbologia e hipóteses versionadas na 1.16.1](documentacao/publica/REFINAMENTO_TOPOLOGIA_GIS_1_16_1.md).
+Etapa 2 com [topologia GIS independente e projetos .wna](documentacao/publica/TOPOLOGIA_GIS_1_16_0.md), [hipóteses versionadas e simbologia na 1.16.1](documentacao/publica/REFINAMENTO_TOPOLOGIA_GIS_1_16_1.md) e [navegação e revisão cartográfica na 1.16.2](documentacao/publica/USABILIDADE_TOPOLOGIA_GIS_1_16_2.md).
 
 Pré-release 1.15.2: [relevância das ocorrências GIS, fila de revisão, mapa e compatibilidade](documentacao/publica/RELEVANCIA_GIS_1_15_2.md). [Roadmap de topologia GIS e elementos complementares](documentacao/publica/ROADMAP_GIS_ELEMENTOS_COMPLEMENTARES.md).
 

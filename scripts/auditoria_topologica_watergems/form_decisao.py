@@ -52,6 +52,9 @@ class AnaliseDecisao(QWidget):
         self.rotulos=QLabel();self.rotulos.setWordWrap(True);f.addRow('Labels / tipos',self.rotulos);self.ids.textChanged.connect(self.mostrar_rotulos)
         from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
         self.tabela_proposta=TabelaConsulta(['Tipo','Label WaterGEMS','DomainElementID','Identificação']);f.addRow(self.tabela_proposta)
+        self.tabela_proposta.vincular_mapa(
+            lambda i,a:self.localizar_elemento_proposto(i.row(),a),
+            limpar=lambda:self.painel.mapa.limpar())
         self.elementos_confirmados=QCheckBox('Conferi as identidades dos elementos e seu papel nesta proposta');f.addRow(self.elementos_confirmados)
         self.prop_just=QPlainTextEdit();self.prop_just.setMaximumHeight(70);f.addRow('Justificativa',self.prop_just)
         self.requisitos=QPlainTextEdit();self.requisitos.setMaximumHeight(70);f.addRow('Requisitos de validação',self.requisitos)
@@ -132,6 +135,12 @@ class AnaliseDecisao(QWidget):
             # Salvar pode reconstruir a lista; procure novamente o destino escolhido.
             self.seletor.blockSignals(True);self.seletor.setCurrentIndex(self.seletor.findData(uid));self.seletor.blockSignals(False)
         self.carregar_proposta(uid);self._baseline=(self._baseline[0],self.valores_proposta(),self._baseline[2])
+
+    def localizar_elemento_proposto(self,linha,aproximar):
+        item=self.tabela_proposta.tabela.item(linha,2)
+        if item:
+            texto=self.painel.mapa.localizar_elementos([item.data(Qt.UserRole)],aproximar=aproximar)
+            self.mensagem.setText(texto)
 
     def mostrar_rotulos(self):
         if not self.caso:return

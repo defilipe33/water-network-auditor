@@ -24,10 +24,15 @@ class IlhasDialog(QDialog):
         self.estado=QLabel('Estrutural: conectividade fraca cadastrada, incluindo inativos. Restrita: alcance dirigido na hipótese selecionada. Nenhuma delas comprova abastecimento real.');self.estado.setWordWrap(True);v.addWidget(self.estado)
         self.incluir_orfaos=QCheckBox('Incluir grupos sem tubulações (nós/dispositivos órfãos)');v.addWidget(self.incluir_orfaos);self.incluir_orfaos.toggled.connect(lambda:self.preencher() if self.resultado else None)
         self.tabela=QTableWidget(0,8);self.tabela.setHorizontalHeaderLabels(['Ilha','Perspectiva','Tubos','Junctions','Dispositivos','Comprimento (m)','Prioridade sugerida','Regiões relacionadas']);self.tabela.setSelectionBehavior(QTableWidget.SelectRows);self.tabela.setSelectionMode(QTableWidget.SingleSelection);self.tabela.setEditTriggers(QTableWidget.NoEditTriggers);v.addWidget(self.tabela,1);self.tabela.itemSelectionChanged.connect(self.destacar)
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        navegar_registros(self.tabela,self.navegar_ilha,
+                          lambda _: [('Investigar candidatos',self.candidatos)],limpar=painel.mapa.limpar)
         h=QHBoxLayout();v.addLayout(h)
         for t,fn in [('Aproximar ilha',self.aproximar),('Analisar / resolver ocorrência',self.analisar_caso),('Exportar para WaterGEMS',self.exportar),('Origem → todos alcançáveis: exportar',self.exportar_alcancaveis),('Salvar inventário CSV',self.csv)]:b=QPushButton(t);b.clicked.connect(fn);h.addWidget(b)
         f=QFormLayout();v.addLayout(f);self.raio=QDoubleSpinBox();self.raio.setRange(.01,10000);self.raio.setValue(10);self.raio.setSuffix(' m');f.addRow('Busca de candidatos geométricos',self.raio);b=QPushButton('Investigar candidatos / referências / bloqueios');b.clicked.connect(self.candidatos);v.addWidget(b);self.cands=QTableWidget(0,4);self.cands.setHorizontalHeaderLabels(['Tipo','Elemento da ilha','Outro elemento','Distância (m) / motivo']);self.cands.setMaximumHeight(130);v.addWidget(self.cands);b=QPushButton('Criar local manual no candidato escolhido');b.clicked.connect(self.local_manual);v.addWidget(b);self.comparacao_tabela=QTableWidget(0,5);self.comparacao_tabela.setHorizontalHeaderLabels(['Ilha anterior','Ilhas atuais','Situação','Tubos antes / depois','Nós antes / depois']);self.comparacao_tabela.setMaximumHeight(150);self.comparacao_tabela.hide();v.addWidget(self.comparacao_tabela);b=QPushButton('Exportar comparação completa JSON');b.clicked.connect(self.exportar_comparacao);v.addWidget(b);b=QPushButton('Fechar');b.clicked.connect(self.close);v.addWidget(b);adaptar_janela(self);self.tabela.setMinimumHeight(200);sistema(painel).vincular(self)
         self.origens.currentIndexChanged.connect(self.tipo_origem);self.tipo_origem()
+        navegar_registros(self.cands,self.navegar_candidato,
+                          lambda _: [('Criar local manual no candidato',self.local_manual)],limpar=painel.mapa.limpar)
     def tipo_origem(self):self.seletor.setVisible(self.origens.currentData() in ('SELECIONADAS','PERSONALIZADAS'))
     def cfg(self):
         el=self.painel.pacote['topologia']['modelo']['elementos'];selecionadas=[dict(t,uid=el[t['id']]['uid'],tipo=el[t['id']]['tipo']) for t in self.seletor.valores()];prio=dict(percentual_alta=self.percentual.value())
@@ -68,6 +73,11 @@ class IlhasDialog(QDialog):
         for t in (self.resultado or {}).get('origens',[]):
             g=(self.painel.pacote.get('geometrias') or {}).get(t['id'])
             if g:m.adicionar(g,'#008a69',foco=False)
+    def navegar_ilha(self,indice,aproximar):
+        if self.tabela.currentRow()!=indice.row():return
+        self.destacar()
+        if aproximar and self.painel.pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):
+            self.aproximar()
     def aproximar(self):self.estado.setText(self.painel.mapa.aproximar())
     def salvar(self,apos=None):
         if not self.resultado:return
@@ -116,6 +126,11 @@ class IlhasDialog(QDialog):
         v='RESTRITA' if 'RESTRITA' in self.resultado['alcance'] else 'ESTRUTURAL'
         try:self.registro=inv.registro_alcancaveis(self.painel.pacote,self.resultado,v);self._exportacao=ExportarWatergems(self);self._exportacao.show()
         except Exception as e:QMessageBox.warning(self,'Alcance indisponível',str(e))
+    def navegar_candidato(self,indice,aproximar):
+        candidato=self._linhas_candidatos[indice.row()]
+        ids=[candidato['ilha_elemento'],candidato.get('outro')]
+        self.estado.setText(self.painel.mapa.localizar_elementos(ids,aproximar=aproximar))
+
     def candidatos(self):
         if not self.atual_valido():return
         v=self.atual()

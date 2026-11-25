@@ -5,7 +5,7 @@ from pathlib import Path
 from uuid import uuid4
 
 from qgis.PyQt.QtCore import QTimer, Qt
-from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog,
+from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QAbstractItemView,
     QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget)
 from qgis.core import QgsCoordinateReferenceSystem, QgsGeometry, QgsPointXY, QgsProject
 from qgis.gui import QgsProjectionSelectionWidget
@@ -19,10 +19,12 @@ from .grafo_gis import ROTULOS
 from .investigacao_gis import geometria
 from .modelo_gis import revisoes, identificar, descrever
 from .modelo_gis_ui import aviso, botao, expansivel, formulario
-from .mapa_topologia_gis import MapaTopologiaGIS, pontos_portas
+from .mapa_topologia_gis import IndiceSelecao, MapaTopologiaGIS, pontos_portas
 from .tabelas_topologia_gis import TabelaRelacoes, TabelaGIS, ACOMPANHAMENTO, ESTADO_COMPONENTE
 from .topologia_gis_hipoteses_ui import HipotesesGIS
 from .topologia_gis_mapa_ui import MapaGIS
+from .topologia_gis_relacoes_ui import RelacoesGIS, CANDIDATAS
+from .navegacao_cartografica import acao_disponivel, navegar_registros
 
 
 def _itens(lista):
@@ -41,7 +43,7 @@ def _inserir(lista, titulo, uid, marcado=None):
     return item
 
 
-class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
+class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
     def __init__(self, central):
         super().__init__(central)
         self.central=central
@@ -85,8 +87,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self.tolerancia.setDecimals(3)
         self.tolerancia.setValue(.20)
         self.tolerancia.setSuffix(' m')
+        self.tolerancia.setToolTip('Distância em metros para procurar pontos de ligação próximos.')
         f.addRow('Tolerância de conexão',self.tolerancia)
         self.aproximadas=QCheckBox('Inferir união de pontas próximas quando inequívoca')
+        self.aproximadas.setToolTip('Une extremidades inequívocas dentro da tolerância. Ligações em T exigem revisão explícita.')
         cfg.addWidget(self.aproximadas)
         self.limite=QDoubleSpinBox()
         self.limite.setRange(1,100000)
@@ -100,6 +104,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self.redes=QListWidget()
         self.redes.setMaximumHeight(120)
         cfg.addWidget(self.redes)
+        navegar_registros(self.redes,self._navegar_fonte_gis,limpar=self.central.mapa.limpar)
         self.redes.itemChanged.connect(self._configuracao_alterada)
         self.crs.crsChanged.connect(self._configuracao_alterada)
         self.tolerancia.valueChanged.connect(self._configuracao_alterada)
@@ -120,36 +125,44 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self.tipo_escopo.activated.connect(self.selecionar_tipo)
         f2.addRow('Marcar redes por tipo',self.tipo_escopo)
         self.orig_b, orig=expansivel(v,'Definir fontes de água e conexões')
-        orig.addWidget(aviso('Marque os elementos que participarão desta execução. Origens marcadas indicam acesso topológico na hipótese selecionada.'))
+        orig.addWidget(aviso('Marque as relações que participarão da hipótese em edição. Uma origem precisa de pontos de conexão válidos para participar do cálculo.'))
         self.participantes=TabelaRelacoes()
         self.participantes.setMaximumHeight(145)
         self.participantes.itemChanged.connect(self.alterou_participacao)
         self.participantes.currentCellChanged.connect(lambda *_:self.detalhar_relacao())
         orig.addWidget(self.participantes)
+        navegar_registros(self.participantes,self._navegar_relacao,self._menu_relacao,self.central.mapa.limpar)
+        self.mostrar_excluidos=QCheckBox('Mostrar complementos excluídos')
+        self.mostrar_excluidos.toggled.connect(lambda _:self.atualizar_complementos())
+        orig.addWidget(self.mostrar_excluidos)
         self.relacao_info=aviso()
         orig.addWidget(self.relacao_info)
-        botao(orig,'Adicionar origem cadastrada…',lambda:self.editar('ORIGEM'))
-        botao(orig,'Adicionar origem no mapa',lambda:self.capturar())
-        botao(orig,'Adicionar conexão entre tubulações…',lambda:self.editar('CONEXAO'))
-        botao(orig,'Editar elemento selecionado…',self.editar_selecionado)
-        botao(orig,'Reposicionar origem complementar selecionada',self.reposicionar)
+        atalhos=QHBoxLayout();orig.addLayout(atalhos)
+        self.destacar_relacao_b=botao(atalhos,'Destacar no mapa',lambda:self.destacar_relacao())
+        self.aproximar_relacao_b=botao(atalhos,'Aproximar fonte ou conexão',lambda:self.destacar_relacao(aproximar=True))
+        self.origem_gis_b=botao(orig,'Adicionar origem cadastrada…',lambda:self.editar('ORIGEM'))
+        self.origem_mapa_b=botao(orig,'Adicionar origem no mapa',lambda:self.capturar())
+        self.adicionar_conexao_b=botao(orig,'Adicionar conexão entre tubulações…',lambda:self.editar('CONEXAO'))
+        self.editar_relacao_b=botao(orig,'Editar elemento selecionado…',self.editar_selecionado)
+        self.reposicionar_b=botao(orig,'Reposicionar origem complementar selecionada',self.reposicionar)
         _, mais_rel=expansivel(orig,'Opções do elemento')
-        botao(mais_rel,'Ativar ou desativar no cadastro…',self.alternar_elemento)
-        botao(mais_rel,'Usar revisão mais recente nesta hipótese',self.adotar_revisao_atual)
-        botao(mais_rel,'Destacar tubulações da relação',lambda:self.destacar_relacao())
-        botao(mais_rel,'Aproximar origem ou conexão',lambda:self.destacar_relacao(aproximar=True))
-        botao(orig,'Histórico do elemento selecionado',self.historico_elemento)
+        self.alternar_elemento_b=botao(mais_rel,'Ativar ou desativar no cadastro…',self.alternar_elemento)
+        self.adotar_revisao_b=botao(mais_rel,'Usar revisão mais recente nesta hipótese',self.adotar_revisao_atual)
+        self.historico_elemento_b=botao(orig,'Histórico do elemento selecionado',self.historico_elemento)
         self.relocalizar_b=botao(orig,'Localizar GeoPackage de complementos…',self.relocalizar_complementos)
         self.relocalizar_b.hide()
         self.hipoteses=QComboBox()
-        _, hip=expansivel(v,'Hipóteses e reexecução')
+        self.hipoteses_b, hip=expansivel(v,'Hipóteses e reexecução')
         formulario(hip).addRow('Hipótese e revisão',self.hipoteses)
+        self.hipotese_info=aviso()
+        hip.addWidget(self.hipotese_info)
         self.hipoteses.activated.connect(self.aplicar_hipotese)
-        botao(hip,'Salvar revisão da hipótese…',lambda:self.salvar_hipotese())
-        botao(hip,'Salvar como nova hipótese…',lambda:self.salvar_hipotese(nova=True))
-        botao(hip,'Reexecutar análise com estas alterações…',self.reexecutar)
-        botao(hip,'Comparar duas execuções…',self.comparar)
-        botao(v,'Executar análise de conectividade',lambda:self.iniciar()).setObjectName('Principal')
+        self.salvar_hip_b=botao(hip,'Salvar revisão da hipótese…',lambda:self.salvar_hipotese())
+        self.nova_hip_b=botao(hip,'Salvar como nova hipótese…',lambda:self.salvar_hipotese(nova=True))
+        self.reexecutar_b=botao(hip,'Reexecutar análise com estas alterações…',self.reexecutar)
+        self.comparar_b=botao(hip,'Comparar duas execuções…',self.comparar)
+        self.executar_b=botao(v,'Executar análise de conectividade',lambda:self.iniciar())
+        self.executar_b.setObjectName('Principal')
         self.resumo=aviso()
         v.addWidget(self.resumo)
         self.categoria=QComboBox()
@@ -167,31 +180,37 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self.busca.editingFinished.connect(self.mudar_resultados)
         v.addWidget(self.busca)
         self.resultados=TabelaGIS()
+        self.resultados.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.resultados.setMaximumHeight(210)
         self.resultados.currentCellChanged.connect(self.detalhar)
         self.resultados.horizontalHeader().sectionClicked.connect(self.ordenar_resultados)
         v.addWidget(self.resultados)
-        botao(v,'Página anterior',lambda:self.paginar(-1))
-        botao(v,'Próxima página',lambda:self.paginar(1))
+        navegar_registros(self.resultados,self._navegar_resultado,self._menu_resultado,self.central.mapa.limpar,
+                          self._enquadrar_varios)
+        nav=QHBoxLayout();v.addLayout(nav)
+        self.pagina_anterior_b=botao(nav,'‹ Anterior',lambda:self.paginar(-1))
+        self.pagina_info=aviso()
+        nav.addWidget(self.pagina_info,1)
+        self.proxima_pagina_b=botao(nav,'Próxima ›',lambda:self.paginar(1))
         self.detalhes=aviso()
         v.addWidget(self.detalhes)
         _, mapa=expansivel(v,'Mapa e legenda')
         mapa.addWidget(aviso('Use a árvore de camadas para ajustar a visibilidade. Fontes são triângulos, pentágonos ou losangos. Círculo verde indica conexão confirmada. Contornos tracejados representam hipóteses ou propostas. As linhas auxiliares representam vínculos topológicos.'))
-        botao(mapa,'Consultar símbolo no mapa',lambda:self.consultar_mapa())
-        botao(mapa,'Revisar conexão no mapa',lambda:self.consultar_mapa(revisar=True))
-        botao(mapa,'Destacar seleção',self.destacar)
-        botao(mapa,'Aproximar seleção',lambda:self.destacar(aproximar=True))
+        self.consultar_mapa_b=botao(mapa,'Consultar elemento no mapa',lambda:self.consultar_mapa())
+        self.revisar_mapa_b=botao(mapa,'Revisar conexão pelo mapa',lambda:self.consultar_mapa(revisar=True))
+        self.destacar_b=botao(mapa,'Destacar seleção',self.destacar)
+        self.aproximar_b=botao(mapa,'Aproximar seleção',lambda:self.destacar(aproximar=True))
         _, decisoes=expansivel(v,'Decisões e acompanhamento')
         self.acompanhamento=QComboBox()
         for k,n in ACOMPANHAMENTO.items():self.acompanhamento.addItem(n,k)
         formulario(decisoes).addRow('Situação',self.acompanhamento)
-        botao(decisoes,'Salvar situação e observação…',self.anotar)
-        botao(decisoes,'Revisar conexão selecionada…',self.revisar_conexao)
-        _, historico=expansivel(v,'Histórico')
-        botao(historico,'Histórico do resultado selecionado',self.historico_resultado)
+        self.anotar_b=botao(decisoes,'Salvar situação e observação…',self.anotar)
+        self.revisar_b=botao(decisoes,'Revisar conexão selecionada…',self.revisar_conexao)
+        self.historico_b, historico=expansivel(v,'Histórico')
+        self.historico_resultado_b=botao(historico,'Histórico do resultado selecionado',self.historico_resultado)
         _, av=expansivel(v,'Exportações')
-        botao(av,'Exportar GeoPackage e tabelas…',lambda:self.exportar('GPKG'))
-        botao(av,'Exportar Shapefile e tabelas…',lambda:self.exportar('ESRI Shapefile'))
+        self.exportar_gpkg_b=botao(av,'Exportar GeoPackage e tabelas…',lambda:self.exportar('GPKG'))
+        self.exportar_shp_b=botao(av,'Exportar Shapefile e tabelas…',lambda:self.exportar('ESRI Shapefile'))
         self.historico=QPlainTextEdit()
         self.historico.setReadOnly(True)
         self.historico.setMaximumHeight(160)
@@ -200,9 +219,65 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self.comparacao=TabelaGIS()
         self.comparacao.colunas(('Diferença','Antes','Depois','Trechos'))
         self.comparacao.setMaximumHeight(150)
-        self.comparacao.currentCellChanged.connect(self.destacar_diferenca)
+        self.comparacao.currentCellChanged.connect(self.detalhar_diferenca)
+        navegar_registros(self.comparacao,lambda i,a:self.destacar_diferenca(i.row(),aproximar=a),
+                          limpar=self.central.mapa.limpar)
         hip.addWidget(self.comparacao)
         self.comparacao.hide()
+        self._atualizar_acoes()
+
+    def _atualizar_acoes(self):
+        r=self._registro_selecionado()
+        resultado=self._selecionado()
+        falta_relacao='' if r else 'Selecione uma fonte ou conexão na tabela.'
+        falta_resultado='' if resultado else ('Selecione um resultado na tabela.' if self.dados else
+                                               'Execute uma análise ou abra um resultado salvo.')
+        redes='' if self._redes_marcadas() else 'Marque pelo menos uma fonte de tubulações.'
+        cadastrado='' if r and r['tipo']=='ORIGEM' and pg.complemento_editavel(r) else 'Selecione uma origem complementar.'
+        outra='' if self.dados and self._outras_execucoes() else 'Abra um resultado e salve outra execução do mesmo projeto.'
+        mapa='' if self.mapa_gis.registros else 'Adicione ou carregue elementos cartográficos para consultar.'
+        tem_conexao=getattr(self,'_tem_conexoes_mapa',False)
+        controles=(
+            (self.destacar_relacao_b,falta_relacao,'Destaca a fonte, as tubulações e os pontos vinculados disponíveis.'),
+            (self.aproximar_relacao_b,falta_relacao,'Prioriza o ponto da fonte quando ela está afastada da rede.'),
+            (self.editar_relacao_b,falta_relacao or self._motivo_edicao(r),'Edita os dados e pontos de conexão do complemento.'),
+            (self.reposicionar_b,cadastrado or self._motivo_edicao(r),'Muda a posição da origem complementar.'),
+            (self.historico_elemento_b,falta_relacao,'Consulta as revisões deste elemento.'),
+            (self.adotar_revisao_b,falta_relacao,'Carrega a última revisão no rascunho da hipótese.'),
+            (self.alternar_elemento_b,falta_relacao or self._motivo_edicao(r),'Altera a disponibilidade no cadastro.'),
+            (self.origem_gis_b,redes,'Associe uma origem cadastrada aos pontos de conexão da rede.'),
+            (self.origem_mapa_b,redes,'Posicione no mapa uma origem complementar.'),
+            (self.adicionar_conexao_b,redes,'Escolha os pontos da ligação no mapa. A rede GIS original é preservada.'),
+            (self.executar_b,redes,'Calcula conectividade topológica no escopo indicado.'),
+            (self.salvar_hip_b,redes,'Acrescenta uma revisão à hipótese em edição.'),
+            (self.nova_hip_b,redes,'Grava uma hipótese independente com os parâmetros atuais.'),
+            (self.reexecutar_b,redes,'Escolha entre execução temporária, nova revisão ou nova hipótese.'),
+            (self.comparar_b,outra,'Compara dois resultados imutáveis e localiza suas diferenças.'),
+            (self.consultar_mapa_b,mapa,'Identifica o registro representado pelo elemento clicado.'),
+            (self.revisar_mapa_b,mapa or ('' if tem_conexao else 'Nenhuma conexão representada no mapa.'),'Abre a revisão da conexão selecionada.'),
+            (self.destacar_b,falta_resultado,'Realça as geometrias relacionadas.'),
+            (self.aproximar_b,falta_resultado,'Enquadra o resultado selecionado.'),
+            (self.anotar_b,falta_resultado,'Salva situação e observação opcional.'),
+            (self.revisar_b,falta_resultado or ('' if resultado and resultado.get('tipo') in CANDIDATAS else
+                                               'Selecione uma conexão candidata para revisá-la.'),'Abra a revisão detalhada.'),
+            (self.historico_resultado_b,falta_resultado,'Consulta as revisões do resultado selecionado.'),
+            (self.exportar_gpkg_b,'' if self.dados else falta_resultado,'Exporta a execução para GeoPackage.'),
+            (self.exportar_shp_b,'' if self.dados else falta_resultado,'Exporta a execução para Shapefile e tabelas.'),
+        )
+        for controle,motivo,dica in controles:acao_disponivel(controle,motivo,dica)
+
+    def _indicar_rascunho(self):
+        pendente=self._edicao_limpa is not None and self._assinatura_edicao()!=self._edicao_limpa
+        self.hipotese_info.setText('Hipótese modificada · alterações por salvar.' if pendente else '')
+        self.hipotese_info.setVisible(pendente)
+
+    def _navegar_fonte_gis(self,indice,aproximar):
+        fonte=self.por_fonte.get(indice.data(Qt.UserRole))
+        if fonte:self.central.mapa.destacar(fonte,aproximar=aproximar)
+
+    def _navegar_relacao(self,indice,aproximar):
+        r=self._relacao_na_linha(indice)
+        if r:self.destacar_relacao(aproximar,r)
 
     def _projeto(self):
         return self.central.projetos.atual()
@@ -291,6 +366,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         if self._edicao_limpa is None:self._edicao_limpa=self._assinatura_edicao()
         self.orig_b.setChecked(origens or self.orig_b.isChecked())
         self.mostrar_contexto()
+        self._indicar_rascunho()
 
     def voltar(self):
         if not self.resolver_edicao():return
@@ -346,30 +422,47 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             for uid,rev in r.get('vinculos',{}).items():
                 participacoes.setdefault((uid,rev),set()).add(r['nome'])
         self._participacoes=participacoes
+        self._por_candidata={}
         for r in {**self.registros,**self._pinos}.values():
             if r['tipo'] not in ('ORIGEM','CONEXAO'):continue
-            ativo=r.get('habilitado',True)
+            excluido=bool(r.get('excluido'))
+            if r.get('candidato') and not excluido:
+                self._por_candidata.setdefault(r['candidato'],[]).append(r)
+            if excluido and not self.mostrar_excluidos.isChecked():continue
+            ativo=r.get('habilitado',True) and not excluido
             titulo=r.get('nome') or r.get('categoria') or 'Conexão '+r['uuid'][:8]
-            if not ativo:titulo+=' · desativado'
+            if excluido:titulo+=' · excluído'
+            elif not ativo:titulo+=' · desativado'
             interpretacao=pg.DECISOES.get(r.get('decisao'),'—')
             nomes=', '.join(sorted(participacoes.get((r['uuid'],r['rev']),())))
-            item=self.participantes.inserir((titulo,pg.SITUACOES[r['situacao']],interpretacao,nomes),r['uuid'])
+            tipo='Fonte de água' if r['tipo']=='ORIGEM' else 'Conexão'
+            item=self.participantes.inserir((titulo,tipo,pg.SITUACOES[r['situacao']],interpretacao,r['rev'][:8],
+                ACOMPANHAMENTO.get(r.get('acompanhamento'),'Pendente'),nomes),r['uuid'])
             item.setCheckState(Qt.Checked if ativo and r['uuid'] in marcados else Qt.Unchecked)
             if not ativo:item.setFlags(item.flags() & ~Qt.ItemIsUserCheckable)
             if anterior and anterior['uuid']==r['uuid']:self.participantes.setCurrentCell(item.row(),0)
         self.participantes.blockSignals(False)
         self.hipoteses.setCurrentIndex(max(0,self.hipoteses.findData(preferida)))
         self.detalhar_relacao()
+        self._indicar_rascunho()
         self.agendar_mapa()
 
     def alterou_participacao(self,item):
         if item.column()!=0:return
+        uid=item.data(Qt.UserRole)
+        if item.checkState()==Qt.Checked and self.registros.get(uid,{}).get('excluido'):
+            estado=self.participantes.blockSignals(True)
+            item.setCheckState(Qt.Unchecked)
+            self.participantes.blockSignals(estado)
+            self.status.setText('Recupere o complemento antes de incluí-lo em outra hipótese.')
         self._resultado_historico=False
         self.detalhar_relacao()
+        self._indicar_rascunho()
         self.agendar_mapa()
 
     def detalhar_relacao(self,r=None):
         r=r or self._registro_selecionado()
+        self._atualizar_acoes()
         if not r:
             self.relacao_info.clear()
             return
@@ -420,7 +513,9 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         def trabalho(parar,etapa):
             tubos,_,eq,_,_=ler(prep,parar,etapa)
             _declaracoes_existentes([f for f,_,_ in prep[0]],tubos,eq)
-            return tubos,[e for e in eq if e['categoria'] in ORIGENS],prep[1].toWkt()
+            origens=[e for e in eq if e['categoria'] in ORIGENS]
+            etapa(0,'Indexando elementos disponíveis no mapa')
+            return tubos,origens,prep[1].toWkt(),(IndiceSelecao(tubos,parar),IndiceSelecao(origens,parar))
         # A seleção/cartografia permanece no thread principal.
         self.app.atividades.executar_thread('Carregar elementos GIS',self._projeto()['nome'],trabalho,pronto,self.status.setText)
 
@@ -430,17 +525,22 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             self._editor.show()
             self._editor.raise_()
             return
-        def dialogo(tubos,eq,crs):
+        def dialogo(tubos,eq,crs,indices=None):
             atual=self.registros.get(anterior['uuid']) if anterior else None
             local=ponto
             if local is None and anterior and anterior.get('xy'):
                 local={k:anterior[k] for k in ('xy','crs')}
             dlg=EditarComplemento(self,tipo,tubos,eq,local,anterior,candidato)
+            if indices is not None:
+                dlg._indice_tubos,dlg._indice_equipamentos=indices
             self._editor=dlg
             crs_editor=QgsCoordinateReferenceSystem(crs)
             dlg.escolher_tubos.connect(lambda:self.selecionar_no_editor(dlg,crs))
             dlg.escolher_origem.connect(lambda:self.selecionar_no_editor(dlg,crs,origem=True))
             dlg.portas_alteradas.connect(lambda:self._destacar_tubos_editor(dlg,crs_editor))
+            dlg.navegar_tubo.connect(lambda uid,aproximar:self._destacar_tubo_editor(dlg,uid,crs_editor,aproximar))
+            if anterior and pg.complemento_editavel(anterior):
+                dlg.configurar_exclusao(lambda:self.excluir_relacao(anterior))
             def salvar(dados):
                 if tipo=='ORIGEM' and dados.get('equipamento'):dados['crs']=crs
                 if tipo=='CONEXAO':
@@ -448,16 +548,20 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
                     if candidato and candidato.get('wkb'):dados['wkb']=candidato['wkb']
                 dados['pontos_rede']=pontos_portas(dados['portas'],dlg.tubos)
                 dados['crs_rede']=crs
+                dados['geometrias_rede']={}
+                for uid,_ in dados['portas']:
+                    t=dlg.tubos[uid]
+                    g=t.get('geom')
+                    wkb=bytes(g.asWkb()).hex() if g else t.get('wkb')
+                    if wkb:dados['geometrias_rede'][uid]=wkb
                 novo=self._salvar(tipo,dados,atual)
-                escolhidos=set(self._selecionados())
-                if novo['uuid'] in escolhidos:self._pinos[novo['uuid']]=novo
-                self._resultado_historico=False
-                self.atualizar_complementos(escolhidos=escolhidos)
+                self._atualizar_rascunho_relacao(novo)
                 self.status.setText('Revisão salva. Marque a relação para reexecutar. Hipóteses anteriores preservam suas revisões.')
             def terminou(_):
                 self._editor=None
                 self.cancelar_captura(reabrir=False)
                 self.central.mapa.limpar()
+                self._atualizar_acoes()
                 dlg.deleteLater()
             dlg.antes_salvar=salvar
             dlg.finished.connect(terminou)
@@ -471,7 +575,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         i=self.participantes.currentItem()
         if not i:return None
         uid=i.data(Qt.UserRole)
-        return self._pinos.get(uid,self.registros.get(uid))
+        return self._relacao_por_id(uid)
 
     def _candidato_da_relacao(self,r):
         if not r.get('candidato'):return None
@@ -479,11 +583,14 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
 
     def editar_selecionado(self):
         r=self._registro_selecionado()
-        if r:self.editar(r['tipo'],r,candidato=self._candidato_da_relacao(r))
+        if r:self._editar_relacao(r)
 
     def alternar_elemento(self):
         r=self._registro_selecionado()
         if r and not self.central.ocupado():
+            if r.get('excluido'):
+                self.status.setText('Recupere o complemento antes de alterar sua disponibilidade.')
+                return
             atual=self.registros.get(r['uuid'])
             if atual and atual['rev']!=r['rev']:
                 self.status.setText('A hipótese fixou uma revisão anterior. Adote a revisão atual antes de editar o cadastro.')
@@ -509,7 +616,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             p=self._projeto()
             projeto_uid=p['uuid']
             rev=self._revisao_operacional()
-            participantes=self._participantes_exatos()
+            participantes=self._participantes_exatos(repetir=modo!='temporaria')
             grupos=[r['candidato'] for r in participantes if r.get('candidato')]
             if len(grupos)!=len(set(grupos)):
                 raise ValueError('Selecione apenas uma interpretação por conexão candidata.')
@@ -544,11 +651,15 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             self.app.atividades.executar_thread('Analisar conectividade',p['nome'],trabalho,pronto,self.status.setText)
         self._com_erro(iniciar)
 
-    def reabrir(self,r):
+    def reabrir(self,r,cartografar=False,aproximar=False):
         uid=self.uid_projeto
-        self.app.atividades.executar_thread('Reabrir topologia GIS',r.get('nome','Conectividade GIS'),
+        worker=self.app.atividades.executar_thread('Reabrir topologia GIS',r.get('nome','Conectividade GIS'),
             lambda parar,etapa:pg.carregar(r['base'],r['uuid'],uid),
             lambda d:self.receber(d,restaurar_configuracao=True),self.status.setText)
+        if cartografar:
+            operacao=self.app.atividades.atual
+            worker.finished.connect(lambda:self.destacar(aproximar=aproximar)
+                                    if operacao.estado=='CONCLUIDO' and self.dados['uuid']==r['uuid'] else None)
 
     def receber(self,d,restaurar_configuracao=False):
         if d['projeto_uid']!=self.uid_projeto or d['projeto_uid']!=self._projeto()['uuid']:
@@ -579,10 +690,12 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             self.atualizar_complementos(escolhidos=self._pinos)
             self.mostrar_unidade(self.redes.currentItem())
             self._edicao_limpa=self._assinatura_edicao()
+            self._indicar_rascunho()
         self._resultado_historico=True
         self.status.setText(d['nome'])
         self.config_b.setChecked(False)
         self.listar_categorias()
+        self._resultados_por_uid={r['uid']:r for r in [*d['componentes'],*d['diagnosticos']]}
         self.mostrar_contexto()
         self.agendar_mapa()
 
@@ -621,6 +734,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             cont=Counter(r['tipo'] for r in self.dados['diagnosticos'])
             self.categoria.addItem(f"Todos os componentes ({len(self.dados['componentes'])})",'COMPONENTES')
             for k,n in ROTULOS.items():
+                if k=='CONEXAO_T':n='Conexões em T'
                 self.categoria.addItem(f'{n} ({cont[k]})',k)
         self.categoria.blockSignals(False)
         self.mudar_resultados()
@@ -665,7 +779,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         componentes=r.get('componentes') or sorted({self.componentes_tubo[u]['uid'] for u in ts if u in self.componentes_tubo})
         return (r['uid'][:8],self._rotulo_tubo(a) if a else None,self._rotulo_tubo(b) if b else None,
                 r.get('distancia_m'),', '.join(u[:8] for u in componentes),
-                pg.DECISOES.get(r['situacao'],r['situacao'].replace('_',' ').capitalize()),situacao)
+                self._interpretacao_atual(r),situacao)
 
     def ordenar_resultados(self,coluna):
         atual=self._ordem_coluna
@@ -673,9 +787,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         self._ordem_coluna=(coluna,descendente)
         self.resultados.horizontalHeader().setSortIndicator(coluna,Qt.DescendingOrder if descendente else Qt.AscendingOrder)
         self.resultados.horizontalHeader().setSortIndicatorShown(True)
-        self.mudar_resultados()
+        self.mudar_resultados(preservar=True)
 
-    def mudar_resultados(self,*_):
+    def mudar_resultados(self,*_,preservar=False):
+        anterior=self._selecionado() if preservar else None
         self._pagina=0
         categoria=self.categoria.currentData()
         if categoria!=getattr(self,'_ultima_categoria',None):
@@ -711,7 +826,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
                 self._lista_resultados.sort(key=chave,reverse=desc)
         else:self._lista_resultados=[]
         self.resultados.colunas(self._colunas_resultados())
+        pos=next((i for i,r in enumerate(self._lista_resultados) if anterior and r['uid']==anterior['uid']),None)
+        if pos is not None:self._pagina=pos//200
         self.paginar(0)
+        if pos is not None:self.resultados.setCurrentCell(pos%200,0)
 
     def paginar(self,delta):
         n=len(self._lista_resultados)
@@ -721,8 +839,16 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         for r in self._lista_resultados[200*self._pagina:200*(self._pagina+1)]:
             self.resultados.inserir(self._valores(r),r['uid'])
         self.resultados.blockSignals(bloqueado)
+        total=max(1,(n+199)//200)
+        self.pagina_info.setText(f'{self._pagina+1}/{total} · {n} resultado(s)')
+        acao_disponivel(self.pagina_anterior_b,'Primeira página.' if self._pagina==0 else '', 'Página anterior')
+        acao_disponivel(self.proxima_pagina_b,'Não há outra página.' if self._pagina+1>=total else '', 'Próxima página')
         if n:self.resultados.setCurrentCell(0,0)
-        else:self.detalhes.setText('Nenhum resultado nesta categoria e filtro.')
+        else:
+            sem_t=self.categoria.currentData()=='CONEXAO_T' and not self.busca.text().strip()
+            self.detalhes.setText('Nenhuma extremidade próxima do interior de outra tubulação foi identificada nas fontes e tolerância utilizadas.'
+                                  if sem_t else 'Nenhum resultado nesta categoria e filtro.')
+        self._atualizar_acoes()
 
     def selecionar_resultado_uid(self,uid,categoria):
         indice=self.categoria.findData(categoria)
@@ -745,12 +871,14 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
 
     def detalhar(self,*_):
         r=self._selecionado()
+        self._atualizar_acoes()
         if r is None:return
         g=self.componentes.get(r.get('componente',r['uid']))
         partes=[]
         if g:
             origens=', '.join(self.comps_origens[o].get('nome') or self.comps_origens[o]['categoria'] for o in g['origens'])
-            partes.append(f"{g['quantidade_tubos']} tubulações · {len(g['nos'])} nós · {len(g['candidatas'])} conexões candidatas")
+            partes.append(f"{g['quantidade_tubos']} tubulações · {len(g['nos'])} nós")
+            partes.append(f"Conexões candidatas neste componente: {len(g['candidatas'])}")
             partes.append('Maior diâmetro: '+(f"{g['max_mm']:g} mm" if g['max_mm'] else 'indisponível'))
             partes.append('Comprimento por faixa: '+ ' · '.join(f'{k}: {v:.2f} m' for k,v in g['faixas_m'].items()))
             partes.append('Origens alcançáveis: '+(origens or 'nenhuma na hipótese'))
@@ -767,6 +895,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         if r.get('tipo')=='CONEXAO_T':
             partes.append('Nós cadastrais ou pontas próximas do ponto projetado: '+
                           str(len(r.get('junctions_proximas',[]))+len(r.get('pontas_proximas',[]))))
+            partes.append('Pontos escolhidos: '+', '.join(f'{self._rotulo_tubo(u)} ({p*100:g}%)' for u,p in r.get('portas',[])))
+        if r.get('tipo') in CANDIDATAS:
+            partes.append('Componentes envolvidos: '+', '.join(u[:8] for u in r.get('componentes',[])))
+            partes.append('Interpretação: '+self._interpretacao_atual(r))
         if r['tubos']:
             partes.append('Tubulações: '+', '.join(str(self.tubos[t].get('id') or t[:8]) for t in r['tubos'][:12]))
         if r.get('motivo') or r.get('criterio'):partes.append(r.get('motivo') or r['criterio'])
@@ -781,51 +913,102 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         partes.append('Hipótese: '+(hip['nome']+' · '+hip['rev'][:8] if hip else 'Execução temporária'))
         self.detalhes.setText(f"Página {self._pagina+1} · {len(self._lista_resultados)} resultados\n"+'\n'.join(partes))
 
-    def destacar(self,checked=False,aproximar=False):
-        r=self._selecionado()
-        if r is None or self.central.ocupado():return
+    def _registro_resultado(self,indice):
+        item=self.resultados.item(indice.row(),0)
+        return getattr(self,'_resultados_por_uid',{}).get(item.data(Qt.UserRole)) if item else None
+
+    def _navegar_resultado(self,indice,aproximar):
+        r=self._registro_resultado(indice)
+        if r:self.destacar(aproximar=aproximar,registros=[r])
+
+    def _enquadrar_varios(self,indices):
+        rs=[r for i in indices if (r:=self._registro_resultado(i))]
+        if rs:self.destacar(aproximar=True,registros=rs,toda_extensao=True)
+
+    def _menu_resultado(self,indice):
+        r=self._registro_resultado(indice)
+        if not r:return ()
+        acoes=[('Enquadrar toda a extensão',lambda:self.destacar(aproximar=True,registros=[r],toda_extensao=True))]
+        if r.get('tipo') in CANDIDATAS:
+            try:
+                motivo=self._motivo_edicao(self._registro_da_candidata(r))
+            except ValueError as erro:
+                motivo=str(erro)
+            motivo=motivo or ('' if r.get('portas') else 'A candidata não possui pontos de conexão confiáveis.')
+            acoes.extend((rotulo,lambda d=d:self.interpretar_candidata(r,d),motivo)
+                         for rotulo,d in [('Confirmar conexão','CONFIRMADA'),('Manter tubulações separadas','SEPARADA'),
+                                          ('Registrar como indeterminada','INDETERMINADA')])
+            acoes.append(('Abrir editor detalhado…',lambda:self.revisar_conexao(r=r),motivo))
+            rel=self._com_erro(lambda:self._registro_da_candidata(r)) if not motivo else None
+            if rel:
+                marcado=rel['uuid'] in self._selecionados()
+                acoes.extend([
+                    ('Retirar da hipótese em edição' if marcado else 'Incluir na hipótese em edição',
+                     lambda:self._marcar_relacao(rel['uuid'],not marcado),'' if marcado else self._motivo_participacao(rel)),
+                    ('Histórico da conexão',lambda:self._mostrar_historico(rel['uuid'])),
+                ])
+        acoes.extend([None,('Alterar situação e observação…',lambda:self.anotar(r=r,escolher_situacao=True)),
+                       ('Histórico do resultado',lambda:self._mostrar_historico(self._id_resultado(r)))])
+        return acoes
+
+    def destacar(self,checked=False,aproximar=False,registros=None,toda_extensao=None):
+        if registros is None:registros=[self._selecionado()]
+        registros=[r for r in registros if r]
+        if not registros or self.central.ocupado():
+            self.status.setText('Selecione um resultado disponível para consultar no mapa.')
+            return
         d=self.dados
-        # Agrupa geometrias por papel para manter poucos itens no canvas.
-        tubos=[geometria(self.tubos[t]['wkb']) for t in r['tubos']]
-        grupos=[]
-        if tubos:grupos.append(('tubo',QgsGeometry.collectGeometry([g for g in tubos if g])))
-        g=self.componentes.get(r.get('componente',r['uid']))
-        if g:
-            pontos=[QgsPointXY(*self.nos[u]['xy']) for u in g['nos']]
+        from .mapa_topologia_gis import geometria_referencia
+        crs=QgsCoordinateReferenceSystem(d['crs'])
+        def mostrar():
+            ids=dict.fromkeys(t for r in registros for t in r['tubos'])
+            tubos=[g for t in ids if (g:=geometria(self.tubos.get(t,{}).get('wkb')))]
+            grupos=[('tubo',QgsGeometry.collectGeometry(tubos))] if tubos else []
+            componentes=[g for r in registros if (g:=self.componentes.get(r.get('componente',r['uid'])))]
+            nos=dict.fromkeys(u for g in componentes for u in g['nos'])
+            pontos=[QgsPointXY(*self.nos[u]['xy']) for u in nos if u in self.nos]
             if pontos:grupos.append(('local',QgsGeometry.fromMultiPointXY(pontos)))
-        if r.get('wkb'):grupos.append(('evento',geometria(r['wkb'])))
-        for uid in (g['origens'] if g else []):
-            origem=self.comps_origens[uid]
-            geom=geometria(origem.get('wkb'))
-            if geom is None and origem.get('xy'):
-                geom=QgsGeometry.fromPointXY(QgsPointXY(*origem['xy']))
-            if geom and origem.get('crs'):
-                from qgis.core import QgsCoordinateTransform
-                trans=QgsCoordinateTransform(QgsCoordinateReferenceSystem(origem['crs']),
-                    QgsCoordinateReferenceSystem(d['crs']),QgsProject.instance())
-                if geom.transform(trans)==0:grupos.append(('equipamento',geom))
-        self._com_erro(lambda:self.central.mapa.destacar_investigacao(
-            grupos,QgsCoordinateReferenceSystem(d['crs']),aproximar,toda_extensao=True))
+            grupos.extend(('evento',g) for r in registros if (g:=geometria(r.get('wkb'))))
+            for uid in dict.fromkeys(u for c in componentes for u in c['origens']):
+                g=geometria_referencia(self.comps_origens[uid],crs)
+                if g:grupos.append(('equipamento',g))
+            total=bool(componentes) if toda_extensao is None else toda_extensao
+            if not self.central.mapa.destacar_investigacao(grupos,crs,aproximar,toda_extensao=total):
+                self.status.setText('Geometria indisponível para esta seleção.')
+        self._com_erro(mostrar)
 
-    def revisar_conexao(self):
-        r=self._selecionado()
-        if not r or r.get('tipo') not in ('CONEXAO_T','CRUZAMENTO','EXTREMIDADES_PROXIMAS'):return
-        antigos=[c for c in {**self.registros,**self._pinos}.values() if c.get('candidato')==r['uid']]
-        self.editar('CONEXAO',antigos[0] if len(antigos)==1 else None,candidato=r)
+    def revisar_conexao(self,checked=False,r=None):
+        r=r or self._selecionado()
+        if not r or r.get('tipo') not in CANDIDATAS:
+            self.status.setText('Selecione uma conexão candidata antes de revisar.')
+            return
+        def abrir():
+            anterior=self._registro_da_candidata(r)
+            motivo=self._motivo_edicao(anterior)
+            if motivo:raise ValueError(motivo)
+            self.editar('CONEXAO',anterior,candidato=r)
+        self._com_erro(abrir)
 
-    def _id_resultado(self):
+    def _id_resultado(self,r=None):
         from auditoria_fronteiras.entradas import digest
-        r=self._selecionado()
+        r=r or self._selecionado()
         return digest([self.dados['uuid'],r['uid']]) if r else None
 
-    def anotar(self):
-        uid=self._id_resultado()
+    def anotar(self,checked=False,r=None,escolher_situacao=False):
+        alvo=r or self._selecionado()
+        uid=self._id_resultado(alvo)
         if not uid or self.central.ocupado():return
         anterior=self.registros.get(uid,dict(uuid=uid))
+        estado=self.acompanhamento.currentData()
+        if escolher_situacao:
+            codigos=list(ACOMPANHAMENTO)
+            rotulos=list(ACOMPANHAMENTO.values())
+            atual=anterior.get('acompanhamento','PENDENTE')
+            escolhido,ok=QInputDialog.getItem(self,'Acompanhamento do resultado','Situação',rotulos,codigos.index(atual),False)
+            if not ok:return
+            estado=codigos[rotulos.index(escolhido)]
         txt,ok=QInputDialog.getMultiLineText(self,'Observação do resultado','Observação',anterior.get('nota',''))
         if ok:
-            alvo=self._selecionado()
-            estado=self.acompanhamento.currentData()
             r=self._com_erro(lambda:self._salvar('DECISAO',dict(nota=txt,execucao=self.dados['uuid'],
                                                alvo=alvo['uid'],acompanhamento=estado),anterior))
             if r:self.selecionar_resultado_uid(alvo['uid'],self.categoria.currentData())
@@ -836,10 +1019,13 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             rs=pg.revisoes(self._base_complementos(),self.uid_projeto,uid)
             def resumo(r):
                 estado=ACOMPANHAMENTO.get(r.get('acompanhamento')) or pg.DECISOES.get(r.get('decisao'))
+                estado='Excluído do cadastro' if r.get('excluido') else estado
                 return r['data_utc']+' · '+(estado or ('Habilitado' if r.get('habilitado',True) else 'Desabilitado'))+(
                     '\n'+r['nota'] if r.get('nota') else '')
             self.historico.setPlainText('\n\n'.join(resumo(r) for r in rs) or 'Nenhuma revisão registrada.')
+            self.historico_b.setChecked(True)
             self.historico.show()
+            self.ensureWidgetVisible(self.historico)
         self._com_erro(mostrar)
 
     def historico_resultado(self):
@@ -849,10 +1035,14 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
         r=self._registro_selecionado()
         if r:self._mostrar_historico(r['uuid'])
 
+    def _outras_execucoes(self):
+        return [r for r in (self._projeto() or {}).get('bases',[])
+                if r['tipo']=='TOPOLOGIA_GIS' and r['uuid']!=(self.dados or {}).get('uuid')]
+
     def comparar(self):
         d=self.dados
         if not d or self.central.ocupado():return
-        rs=[r for r in self._projeto()['bases'] if r['tipo']=='TOPOLOGIA_GIS' and r['uuid']!=d['uuid']]
+        rs=self._outras_execucoes()
         if not rs:
             self.status.setText('Salve outra execução deste projeto para comparar hipóteses.')
             return
@@ -879,10 +1069,17 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
             def medida(n):return 'indeterminado' if n is None else f'{n:.2f} m'
             self.status.setText(f"Componentes {a} → {b} · {diff['unioes']} união(ões) · {diff['divisoes']} divisão(ões). "
                                 f"Sem origem {medida(antes)} → {medida(depois)}. "
-                                f"Acesso topológico acrescentado a {diff['passou_alcancar_m']:.2f} m em trechos comuns.")
+                                f"Entre trechos comuns, {diff['passou_alcancar_m']:.2f} m ganharam acesso e "
+                                f"{diff['deixou_alcancar_m']:.2f} m perderam acesso a uma origem.")
         self.app.atividades.executar_thread('Comparar topologias GIS',d['nome'],trabalho,pronto,self.status.setText)
 
-    def destacar_diferenca(self,linha,*_):
+    def detalhar_diferenca(self,linha,*_):
+        item=self.comparacao.item(linha,0) if linha>=0 else None
+        if item:
+            r=item.data(Qt.UserRole)
+            self.status.setText(f"{r['nome']} · {len(r['tubos'])} trecho(s). Duplo clique para aproximar.")
+
+    def destacar_diferenca(self,linha,*_,aproximar=False):
         item=self.comparacao.item(linha,0) if linha>=0 else None
         if item is None:return
         r=item.data(Qt.UserRole)
@@ -901,7 +1098,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS):
                 if rel:
                     g=geometria_referencia(rel,crs_b)
                     if g:grupos.append((simbolo,g))
-            if grupos:self.central.mapa.destacar_investigacao(grupos,crs_b)
+            if not self.central.mapa.destacar_investigacao(grupos,crs_b,aproximar,toda_extensao=True):
+                self.status.setText('Geometria indisponível para esta diferença.')
         self._com_erro(mostrar)
 
     def exportar(self,formato):

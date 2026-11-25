@@ -5,7 +5,7 @@ from qgis.PyQt.QtCore import Qt,pyqtSignal
 from qgis.PyQt.QtWidgets import (QDialog,QVBoxLayout,QHBoxLayout,QComboBox,QLabel,
     QTreeWidget,QTreeWidgetItem,QPushButton,QPlainTextEdit,QLineEdit,QFormLayout,
     QFileDialog,QMessageBox,QSplitter,QWidget,QCheckBox,QTabWidget)
-from qgis.core import QgsVectorLayer,QgsGeometry,QgsCoordinateTransform
+from qgis.core import QgsVectorLayer,QgsGeometry,QgsCoordinateTransform,QgsCoordinateReferenceSystem
 from .inspecao import detalhes_local,contagens
 from .apresentacao import legivel
 from .entradas import digest,valor_python
@@ -96,6 +96,18 @@ class PainelInspecao(QDialog):
         self.dados_tabs=QTabWidget();raiz.addWidget(self.dados_tabs,1)
         self.tubulacoes_tabela=TabelaConsulta(['Tipo','ID GIS','Camada','Setor cadastral','Regiões geométricas','Diâmetro','Material','Chave técnica'])
         self.eventos_tabela=TabelaConsulta(['ID','Classificação','Limite','Área','Região antes','Região depois','Ambiguidade','X','Y','Chave técnica'])
+        from auditoria_aplicacao.mapa_fontes import MapaFontes
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        self._mapa_inspecao=MapaFontes(None,self,canvas)
+        self.tubulacoes_tabela.vincular_mapa(
+            lambda i,a:self._navegar_inspecao('tubo',i.siblingAtColumn(7).data(Qt.UserRole),a),
+            limpar=self._mapa_inspecao.limpar)
+        self.eventos_tabela.vincular_mapa(
+            lambda i,a:self._navegar_inspecao('evento',i.siblingAtColumn(9).data(Qt.UserRole),a),
+            limpar=self._mapa_inspecao.limpar)
+        navegar_registros(self.arvore,lambda i,a:self._navegar_inspecao(*i.siblingAtColumn(0).data(Qt.UserRole),a),
+                          limpar=self._mapa_inspecao.limpar,
+                          elegivel=lambda i:bool(i.siblingAtColumn(0).data(Qt.UserRole)))
         self.dados_tabs.addTab(self.tubulacoes_tabela,'Tubulações');self.dados_tabs.addTab(self.eventos_tabela,'Eventos');self.dados_tabs.addTab(self.arvore,'Detalhes completos')
         self.tubulacoes_tabela.tabela.setColumnHidden(7,True);self.eventos_tabela.tabela.setColumnHidden(9,True)
         botoes=QHBoxLayout()
@@ -238,11 +250,13 @@ class PainelInspecao(QDialog):
         else:
             if self.tem_edicoes():
                 self.atualizar()  # Descartar explicitamente repõe o último registro salvo.
+            self._mapa_inspecao.limpar()
             super().closeEvent(evento)
 
     def desativar(self):
         """Um painel de outra execução não pode reagir à seleção ou salvar revisões."""
         self._ativo=False
+        self._mapa_inspecao.limpar()
         if self.camada_locais is not None and not sip.isdeleted(self.camada_locais):
             try:
                 self.camada_locais.selectionChanged.disconnect(self.selecao_inversa)
@@ -250,6 +264,22 @@ class PainelInspecao(QDialog):
                 pass
         self.setEnabled(False)
         self.hide()
+
+    def _navegar_inspecao(self,tipo,uid,aproximar):
+        from auditoria_aplicacao.investigacao_gis import geometria
+        local=self.locais.currentData()
+        if not local:return
+        dados=detalhes_local(self.dossie,local)
+        itens=[]
+        if tipo=='tubo':
+            itens=[('tubo',geometria(t.get('geometria_wkb_hex'))) for t in dados['tubulacoes'] if t['uid']==uid]
+        elif tipo=='evento':
+            membros={r['tubo_uid'] for r in self.dossie['evento_rede'] if r['evento_uid']==uid}
+            itens=[('evento',geometria(e['tecnico'].get('geometria_wkb_hex'))) for e in dados['eventos'] if e['uid']==uid]
+            itens.extend(('tubo',geometria(t.get('geometria_wkb_hex'))) for t in dados['tubulacoes'] if t['uid'] in membros)
+        crs=QgsCoordinateReferenceSystem(self.dossie['contexto']['parametros']['crs'])
+        if not self._mapa_inspecao.destacar_investigacao(itens,crs,aproximar):
+            self.aviso.setText('Geometria histórica indisponível para este registro.')
 
     def destacar(self):
         uid=self.locais.currentData()

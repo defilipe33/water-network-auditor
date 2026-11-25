@@ -18,6 +18,9 @@ class SelectionSetsDialog(QDialog):
         for t,fn in [('Selecionar modelo / atualizar…',self.ler),('Recuperar importação salva',self.recuperar),('Importar conjuntos marcados',self.importar)]:b=QPushButton(t);b.clicked.connect(fn);h.addWidget(b)
         self.estado=QLabel('Selecione o SQLite do mesmo modelo da investigação. Nenhum modelo será modificado.');self.estado.setWordWrap(True);v.addWidget(self.estado)
         self.arvore=QTreeWidget();self.arvore.setColumnCount(7);self.arvore.setHeaderLabels(['Nome original','Caminho hierárquico','Tipo','Elementos declarados','Situação','ID técnico','Quantidade por tipo']);v.addWidget(self.arvore,1)
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        self.arvore.setExpandsOnDoubleClick(False)
+        navegar_registros(self.arvore,self.navegar_conjunto,limpar=painel.mapa.limpar)
         self.contorno=QCheckBox('Gerar envolvente aproximada (convex hull), sem representar limite oficial');v.addWidget(self.contorno);self.shp=QCheckBox('Acrescentar cópia Shapefile às camadas GeoPackage');v.addWidget(self.shp)
         h=QHBoxLayout();v.addLayout(h)
         for t,fn in [('Mostrar camadas no QGIS',self.mostrar),('Destacar seleção / zoom explícito',self.destacar),('Filtrar ocorrências por membros',self.aplicar_filtro),('Limpar filtro de conjuntos',self.limpar_filtro),('Relatório ilustrado offline…',self.relatorio),('Relatório com opções de mapa-base…',self.opcoes_relatorio),('Comparar marcados × destaque da árvore',self.comparar),('Comparar com outra investigação…',self.comparar_versoes),('Exportar metadados / diferenças',self.exportar),('Importar lista alternativa CSV…',self.lista_csv)]:b=QPushButton(t);b.clicked.connect(fn);h.addWidget(b)
@@ -86,6 +89,14 @@ class SelectionSetsDialog(QDialog):
             g=(self.painel.pacote.get('geometrias') or {}).get(i)
             if g:m.adicionar(g,'#008a80')
         if ids and QMessageBox.question(self,'Aproximar conjuntos','Ajustar a extensão aos elementos destacados?',QMessageBox.Yes|QMessageBox.No)==QMessageBox.Yes:self.painel.mapa.aproximar()
+    def navegar_conjunto(self,indice,aproximar):
+        if not self.painel.pacote['resultado']['meta']['parametros'].get('espacial_habilitado'):
+            self.estado2.setText('Valide o CRS e as unidades antes de localizar conjuntos.')
+            return
+        conjuntos=self.ids_conjuntos([indice.siblingAtColumn(0).data(Qt.UserRole)])
+        ids=store.escopo(self.painel.base,self.painel.pacote,conjuntos)
+        self.estado2.setText(self.painel.mapa.localizar_elementos(ids,aproximar=aproximar) if ids else
+                             'Importe o conjunto e verifique os membros antes de localizá-lo.')
     def aplicar_filtro(self):
         if not self.painel.resolver_formularios():return
         self.painel._ss_escopo=store.escopo(self.painel.base,self.painel.pacote,self.ids_conjuntos());self.painel.filtrar();self.estado2.setText('Filtro por identidade WG: pelo menos um membro. Combina por E com os filtros existentes; não altera o grafo dos corredores.')

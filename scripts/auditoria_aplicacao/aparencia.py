@@ -52,6 +52,8 @@ def cores(paleta):
         ('selecionado_texto', QPalette.HighlightedText))}
     c['texto'] = legivel(c['texto'], c['fundo'])
     c['secundario'] = misturar(c['fundo'], c['superficie'], .6)
+    c['secao'] = misturar(c['fundo'], c['texto'], .09)
+    c['texto_secao'] = legivel(c['texto'], c['secao'])
     c['campo_texto'] = legivel(c['campo_texto'], c['superficie'])
     c['botao_texto'] = legivel(c['botao_texto'], c['cartao'])
     c['texto_secundario'] = legivel(misturar(c['texto'], c['fundo'], .25), c['fundo'])
@@ -77,6 +79,13 @@ def estilo(c):
         QLabel[papel="aviso"] {color:%(aviso)s;}
         QLabel[papel="erro"] {color:%(erro)s;}
         QLabel[papel="sucesso"] {color:%(sucesso)s;}
+        QWidget#WnaSecaoExpandida {background-color:%(secao)s; border-left:2px solid %(borda)s;}
+        QWidget#WnaSecaoExpandida > QLabel {background:transparent; color:%(texto_secao)s;}
+        QToolButton#WnaCabecalhoSecao {padding:5px; border:1px solid %(borda)s;
+                                    background-color:%(fundo)s; color:%(texto)s;}
+        QToolButton#WnaCabecalhoSecao:hover {background-color:%(hover)s; color:%(hover_texto)s;}
+        QToolButton#WnaCabecalhoSecao:checked {background-color:%(secao)s; color:%(texto_secao)s;}
+        QToolButton#WnaCabecalhoSecao:focus {border:2px solid %(foco)s;}
         QScrollArea {border:0;}
         QPushButton {padding:5px 7px; border:1px solid %(borda)s; border-radius:6px;
                      background-color:%(cartao)s; color:%(botao_texto)s;}

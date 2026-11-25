@@ -106,9 +106,11 @@ def comparar_execucoes(a,b):
         return (sum(g['comprimento_m'] for g in d['componentes'] if g['situacao']=='SEM_ORIGEM_ALCANCAVEL')
                 if d.get('origens_validas') else None)
 
-    compr={t['uid']:t['comprimento_m'] for t in b['tubos']}
+    compr_antes={t['uid']:t['comprimento_m'] for t in a['tubos']}
+    compr_depois={t['uid']:t['comprimento_m'] for t in b['tubos']}
     return dict(componentes=[len(ga),len(gb)], sem_origem_m=[sem_origem(a),sem_origem(b)],
-                passou_alcancar_m=sum(compr[u] for r in difs if r['tipo']=='GANHOU' for u in r['tubos']),
+                passou_alcancar_m=sum(compr_depois[u] for r in difs if r['tipo']=='GANHOU' for u in r['tubos']),
+                deixou_alcancar_m=sum(compr_antes[u] for r in difs if r['tipo']=='PERDEU' for u in r['tubos']),
                 unioes=sum(r['tipo']=='UNIDO' for r in difs), divisoes=sum(r['tipo']=='DIVIDIDO' for r in difs),
                 diferencas=difs)
 

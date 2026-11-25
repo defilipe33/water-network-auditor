@@ -6,6 +6,7 @@ from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import QHBoxLayout,QLineEdit,QComboBox,QPlainTextEdit,QMessageBox,QDoubleSpinBox
 from qgis.core import QgsProject,QgsCoordinateReferenceSystem,QgsGeometry,QgsPointXY
 from .modelo_gis_ui import aviso,botao,expansivel,formulario,tabela,linha,secao
+from .navegacao_cartografica import acao_disponivel,navegar_registros
 from .investigacao_gis import IndiceInvestigacao,SITUACOES,descricao,geometria
 from .relevancia_gis import ROTULOS,VERSAO
 from auditoria_fronteiras import revisoes_ocorrencias as individuais
@@ -40,6 +41,8 @@ class PainelInvestigacaoGIS:
         botao(filtros,'Limpar filtros',self.limpar_filtros)
         self.lista=tabela(['Local','Ocorrências','Tubulações','Acompanhamento']);self.lista.setMinimumHeight(120);self.lista.setMaximumHeight(240);v.addWidget(self.lista)
         self.lista.currentCellChanged.connect(self.escolher_local)
+        navegar_registros(self.lista,lambda i,a:self.navegar_alvo(i,a),
+                          self.acoes_alvo,self.limpar_destaque)
         nav=QHBoxLayout();v.addLayout(nav)
         botao(nav,'Local anterior',lambda:self.navegar(-1));botao(nav,'Próximo local',lambda:self.navegar(1))
         self.pagina_info=aviso();v.addWidget(self.pagina_info)
@@ -50,8 +53,13 @@ class PainelInvestigacaoGIS:
         self.local_info=aviso();det.addWidget(self.local_info)
         self.eventos_lista=tabela(['Ocorrência','Relevância','Classificação','Análise','Ambiguidade','Decisão individual']);self.eventos_lista.setMaximumHeight(150);det.addWidget(self.eventos_lista)
         self.eventos_lista.currentCellChanged.connect(self.escolher_evento_tabela)
+        navegar_registros(self.eventos_lista,lambda i,a:self.navegar_alvo(i,a,evento=True),
+                          lambda i:self.acoes_alvo(i,evento=True),self.limpar_destaque)
         self.descricao_evento=QPlainTextEdit();self.descricao_evento.setReadOnly(True);self.descricao_evento.setMaximumHeight(130);det.addWidget(self.descricao_evento)
         self.tubos_lista=tabela(['ID cadastral','Camada de origem']);self.tubos_lista.setMaximumHeight(120);det.addWidget(self.tubos_lista)
+        navegar_registros(self.tubos_lista,lambda i,a:self.destacar(
+            aproximar=a,somente_tubos=True,tubos_uids={self.tubos_lista.item(i.row(),0).data(Qt.UserRole)}),
+            limpar=self.limpar_destaque)
         self.poligonos_info=aviso();det.addWidget(self.poligonos_info)
         _,equip=expansivel(det,'Equipamentos próximos e associações declaradas')
         equip.addWidget(aviso('Consulta opcional às fontes atuais do Modelo GIS. Proximidade não confirma conexão; associações declaradas podem estar afastadas da tubulação. Não altera relevância ou topologia.'))
@@ -59,6 +67,7 @@ class PainelInvestigacaoGIS:
         botao(equip,'Consultar / atualizar equipamentos',self.consultar_equipamentos)
         self.equipamentos_info=aviso('Equipamentos ainda não consultados.');equip.addWidget(self.equipamentos_info)
         self.equipamentos_lista=tabela(['Tipo','ID / nome','Fonte','Relação','Distância (m)']);self.equipamentos_lista.setMaximumHeight(150);equip.addWidget(self.equipamentos_lista)
+        navegar_registros(self.equipamentos_lista,self.navegar_equipamento,limpar=self.limpar_destaque)
         self._equipamentos=None;self._equipamentos_chave=None
         self.tecnicos_b,tec=expansivel(det,'Informações técnicas das ocorrências')
         self.tecnicos_info=QPlainTextEdit();self.tecnicos_info.setReadOnly(True);self.tecnicos_info.setMaximumHeight(180);tec.addWidget(self.tecnicos_info)
@@ -80,6 +89,8 @@ class PainelInvestigacaoGIS:
         h.addWidget(aviso('Revisões do agrupamento ou da ocorrência escolhida. Recuperar preenche um rascunho; Salvar cria uma nova revisão.'))
         botao(h,'Consultar histórico do alvo selecionado',self.historico)
         self.historico_lista=tabela(['Data (UTC)','Situação','Observação']);self.historico_lista.setMaximumHeight(150);h.addWidget(self.historico_lista)
+        navegar_registros(self.historico_lista,lambda _,a:self.destacar(aproximar=a),
+                          lambda _: [('Recuperar revisão como rascunho',self.recuperar_revisao)],self.limpar_destaque)
         botao(h,'Recuperar revisão selecionada',self.recuperar_revisao)
         self.historico_info=aviso();h.addWidget(self.historico_info)
         self.exportacao_b,e=expansivel(v,'EXPORTAÇÃO');self.exportacao_widget=e.parentWidget()
@@ -182,6 +193,30 @@ class PainelInvestigacaoGIS:
     def escolher_evento_tabela(self,row,*_):
         if row>=0 and self.selecionado:self.alvo.setCurrentIndex(row+1)
 
+    def navegar_alvo(self,indice,aproximar,evento=False,extensao=False):
+        if not self.selecionado:return
+        alvo=self.alvo.itemData(indice.row()+1) if evento else None
+        if alvo!=self._evento_uid:
+            self.alvo.setCurrentIndex(self.alvo.findData(alvo))
+        if alvo==self._evento_uid:self.destacar(aproximar=aproximar,toda_extensao=extensao)
+
+    def acoes_alvo(self,indice,evento=False):
+        def acao(fn):
+            alvo=self.alvo.itemData(indice.row()+1) if evento else None
+            if self._evento_uid!=alvo:self.alvo.setCurrentIndex(self.alvo.findData(alvo))
+            if self._evento_uid==alvo:fn()
+        return [('Enquadrar toda a extensão',lambda:self.navegar_alvo(indice,True,evento,True)),
+                ('Alterar situação ou observação',lambda:acao(self.observacao.setFocus)),
+                ('Consultar histórico',lambda:acao(self.historico))]
+
+    def navegar_equipamento(self,indice,aproximar):
+        registros=self.equipamentos_alvo()
+        if not 0<=indice.row()<len(registros) or self.central.ocupado():return
+        r=registros[indice.row()]
+        crs=QgsCoordinateReferenceSystem(self.dossie['contexto']['parametros']['crs'])
+        if not self.central.mapa.destacar_investigacao([('equipamento',r['geometria'])],crs,aproximar):
+            self.equipamentos_info.setText('Geometria indisponível para este equipamento.')
+
     def escolher_alvo(self,i):
         anterior=self._evento_uid
         destino=self.alvo.itemData(i)
@@ -199,12 +234,15 @@ class PainelInvestigacaoGIS:
     def carregar_alvo(self):
         self.sincronizar_evento()
         r=self.revisao_alvo();self.situacao.setCurrentIndex(self.situacao.findData(r['situacao']));self.observacao.setPlainText(r['observacoes'])
-        self.salvar_b.setEnabled(bool(self.selecionado));self.historico_lista.setRowCount(0);self._historico=[];self.historico_info.clear()
+        acao_disponivel(self.salvar_b,'' if self.selecionado else 'Selecione um local ou ocorrência antes de salvar.')
+        self.historico_lista.setRowCount(0);self._historico=[];self.historico_info.clear()
         if not self.selecionado:return
         d=detalhes_local(self.dossie,self.selecionado['uid'],self.indice,self._evento_uid)
         self.descricao_evento.setPlainText('\n\n'.join('Ocorrência '+str(e['registro']['ID'])+': '+descricao(e)+'\n'+ROTULOS[self.indice.relevancias[e['uid']]['categoria']]+': '+self.indice.relevancias[e['uid']]['motivo']+'\n'+'\n'.join(map(str,e['tecnico'].get('observacoes',[]))) for e in d['eventos']))
         self.tubos_lista.setRowCount(0)
-        for t in d['tubulacoes']:linha(self.tubos_lista,[t['id_exibido'],t['camada']],t['uid'])
+        for t in d['tubulacoes']:
+            linha(self.tubos_lista,[t['id_exibido'],t['camada']],t['uid'])
+            self.tubos_lista.item(self.tubos_lista.rowCount()-1,0).setData(Qt.UserRole,t['uid'])
         self.tubos_lista.setFixedHeight(min(140,max(75,self.tubos_lista.horizontalHeader().height()+22*self.tubos_lista.rowCount()+4)))
         self.poligonos_info.setText('Regiões / polígonos: '+'; '.join(str(p.get('nome') or p.get('id_original') or 'Sem identificação')+' · '+p['camada'] for p in d['poligonos']) if d['poligonos'] else 'Sem região associada neste registro.')
         self.mostrar_equipamentos()
@@ -363,13 +401,14 @@ class PainelInvestigacaoGIS:
 
     def aproximar(self):return self.destacar(aproximar=True)
 
-    def destacar(self,checked=False,somente_tubos=False,aproximar=False,toda_extensao=False):
+    def destacar(self,checked=False,somente_tubos=False,aproximar=False,toda_extensao=False,tubos_uids=None):
         if not self.selecionado or self.central.ocupado():return
         from .geometrias_investigacao import preparar,localizar
         uid,e=self.selecionado['uid'],self._evento_uid;d=detalhes_local(self.dossie,uid,self.indice,e)
         crs=QgsCoordinateReferenceSystem(self.dossie['contexto']['parametros']['crs'])
         gs={};faltantes=[]
         for t in d['tubulacoes']:
+            if tubos_uids is not None and t['uid'] not in tubos_uids:continue
             g=geometria(t.get('geometria_wkb_hex'))
             if g is None and t['uid'] in self._cache_geometrias:g=geometria(self._cache_geometrias[t['uid']].hex())
             if g is None:faltantes.append(t)
@@ -382,8 +421,10 @@ class PainelInvestigacaoGIS:
                 itens += [('evento_'+self.indice.relevancias[x['uid']]['categoria'],geometria(x['tecnico'].get('geometria_wkb_hex'))) for x in d['eventos']]
                 itens += [('equipamento',r['geometria']) for r in self.equipamentos_alvo() if r['relacao']=='Associação declarada']
                 r=d['local']['registro'];itens.append(('local',QgsGeometry.fromPointXY(QgsPointXY(r['X'],r['Y']))))
-            self.central.mapa.destacar_investigacao(itens,crs,aproximar,toda_extensao);self._destaque_alvo=(uid,e)
-            self.info.setText('Destaque temporário · azul: tubulações; ocorrências por relevância; violeta: local. '+(' '.join(avisos) if avisos else ''))
+            mostrou=self.central.mapa.destacar_investigacao(itens,crs,aproximar,toda_extensao)
+            self._destaque_alvo=(uid,e) if mostrou else None
+            texto='Destaque temporário aplicado. ' if mostrou else 'Geometria indisponível para esta seleção. '
+            self.info.setText(texto+' '.join(avisos))
         if faltantes:
             prep=preparar(self.dossie,faltantes,QgsProject.instance())
             # Publicação pela thread principal após o worker finalizar; o gerenciador ainda está ocupado no callback.

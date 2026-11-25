@@ -1,10 +1,12 @@
 """Edição de origens e relações explícitas usando a identidade do inventário GIS."""
 
+from sqlite3 import Error as ErroBanco
 from qgis.PyQt.QtCore import Qt, pyqtSignal
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QHBoxLayout, QLineEdit, QListWidget, QListWidgetItem, QPushButton, QVBoxLayout)
 
-from .modelo_gis_ui import aviso
+from .modelo_gis_ui import aviso, expansivel
+from .navegacao_cartografica import acao_disponivel, navegar_registros
 from .persistencia_grafo_gis import SITUACOES, DECISOES
 
 
@@ -22,9 +24,11 @@ class EditarComplemento(QDialog):
     escolher_tubos=pyqtSignal()
     escolher_origem=pyqtSignal()
     portas_alteradas=pyqtSignal()
+    navegar_tubo=pyqtSignal(str,bool)
 
     def __init__(self, parent, tipo, tubos, equipamentos, ponto, anterior=None, candidato=None):
         super().__init__(parent)
+        self.setWindowModality(Qt.NonModal)
         self.tipo=tipo
         self.tubos={t['uid']:t for t in tubos}
         self.equipamentos={t['uid']:t for t in equipamentos}
@@ -51,6 +55,7 @@ class EditarComplemento(QDialog):
         self.equipamento.addItem('Elemento complementar',None)
         self.decisao=_combo(DECISOES)
         self.decisao.setCurrentIndex(self.decisao.findData(self.anterior.get('decisao','CANDIDATA')))
+        self.decisao.setToolTip('Confirmada aceita a conexão na hipótese em que for incluída. Sem conexão mantém as tubulações separadas nessa hipótese.')
         if tipo=='ORIGEM':
             for e in equipamentos:
                 self.equipamento.addItem(_nome(e),e['uid'])
@@ -58,6 +63,8 @@ class EditarComplemento(QDialog):
             f.addRow('Origem cadastrada',self.equipamento)
             f.addRow('Categoria complementar',self.categoria)
             selecionar_origem=QPushButton('Selecionar origem no mapa')
+            acao_disponivel(selecionar_origem,'' if self.equipamentos else 'Nenhum equipamento de origem está disponível no escopo.',
+                            'Clique em um reservatório, tanque ou origem cadastrada.')
             selecionar_origem.clicked.connect(self.escolher_origem.emit)
             v.addWidget(selecionar_origem)
             self.reusar=QPushButton('Usar associação já declarada')
@@ -74,13 +81,18 @@ class EditarComplemento(QDialog):
         if not candidato:
             selecionar_tubos=QPushButton('Selecionar tubulações no mapa')
             selecionar_tubos.setObjectName('Principal')
+            acao_disponivel(selecionar_tubos,'' if self.tubos else 'Nenhuma tubulação está disponível no escopo.',
+                            'Clique nos pontos de conexão. Botão direito conclui e Esc restaura os pontos anteriores.')
             selecionar_tubos.clicked.connect(self.escolher_tubos.emit)
             v.addWidget(selecionar_tubos)
-            v.addWidget(self.busca)
-            v.addWidget(self.disponiveis,1)
+            _,avancado=expansivel(v,'Buscar tubulação ou ajustar posição')
+            avancado.addWidget(self.busca)
+            avancado.addWidget(self.disponiveis,1)
+            self.disponiveis.setMaximumHeight(130)
             linha=QHBoxLayout()
-            v.addLayout(linha)
-            self.posicao=_combo({0.:'Início',1.:'Fim',None:'Posição intermediária'})
+            avancado.addLayout(linha)
+            self.posicao=_combo({0.:'Início da tubulação (0%)',1.:'Fim da tubulação (100%)',None:'Ponto ao longo da tubulação'})
+            self.posicao.setToolTip('Início e fim seguem a ordem dos vértices da geometria GIS. O sentido do escoamento não é conhecido.')
             linha.addWidget(self.posicao)
             self.fracao=QDoubleSpinBox()
             self.fracao.setRange(.01,99.99)
@@ -89,27 +101,45 @@ class EditarComplemento(QDialog):
             self.fracao.hide()
             self.posicao.currentIndexChanged.connect(lambda:self.fracao.setVisible(self.posicao.currentData() is None))
             linha.addWidget(self.fracao)
-            adicionar=QPushButton('Vincular porta selecionada')
-            adicionar.clicked.connect(self.adicionar)
-            linha.addWidget(adicionar)
+            self.adicionar_b=QPushButton('Adicionar ponto de conexão')
+            self.adicionar_b.clicked.connect(self.adicionar)
+            avancado.addWidget(self.adicionar_b)
+            self.disponiveis.currentItemChanged.connect(self.atualizar_acoes)
+            navegar_registros(self.disponiveis,lambda i,a:self.navegar_tubo.emit(i.data(Qt.UserRole),a),
+                              lambda _: [('Adicionar ponto de conexão',self.adicionar)])
         self.vinculos=QListWidget()
-        v.addWidget(aviso('Tubulações e posições vinculadas'))
+        v.addWidget(aviso('Pontos de conexão escolhidos'))
         v.addWidget(self.vinculos,1)
         if not candidato:
-            remover=QPushButton('Remover vínculo selecionado')
-            remover.clicked.connect(self.remover)
-            v.addWidget(remover)
-            editar_posicao=QPushButton('Aplicar posição acima ao vínculo selecionado')
-            editar_posicao.clicked.connect(self.editar_posicao)
-            v.addWidget(editar_posicao)
+            self.remover_b=QPushButton('Remover ponto de conexão')
+            self.remover_b.clicked.connect(self.remover)
+            v.addWidget(self.remover_b)
+            self.editar_posicao_b=QPushButton('Alterar posição da conexão')
+            self.editar_posicao_b.clicked.connect(self.editar_posicao)
+            avancado.addWidget(self.editar_posicao_b)
+            self.vinculos.currentItemChanged.connect(self.atualizar_acoes)
+        navegar_registros(self.vinculos,lambda i,a:self.navegar_tubo.emit(i.data(Qt.UserRole)[0],a),
+                          (lambda _: [('Remover ponto de conexão',self.remover)]) if not candidato else None)
         self.info=aviso()
         v.addWidget(self.info)
-        botoes=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel)
-        botoes.accepted.connect(self.validar)
-        botoes.rejected.connect(self.reject)
-        v.addWidget(botoes)
+        self.botoes=QDialogButtonBox(QDialogButtonBox.Save|QDialogButtonBox.Cancel)
+        self.botoes.accepted.connect(self.validar)
+        self.botoes.rejected.connect(self.reject)
+        v.addWidget(self.botoes)
         self.listar_tubos()
         self.listar_portas()
+
+    def configurar_exclusao(self,excluir):
+        acao=self.botoes.addButton('Excluir elemento complementar…',QDialogButtonBox.ActionRole)
+        acao.clicked.connect(lambda: self.reject() if excluir() else None)
+
+    def atualizar_acoes(self,*_):
+        if self.candidato:return
+        acao_disponivel(self.adicionar_b,'' if self.disponiveis.currentItem() else
+                        'Selecione uma tubulação na lista ou no mapa.')
+        motivo='' if self.vinculos.currentItem() else 'Selecione um dos pontos de conexão escolhidos.'
+        acao_disponivel(self.remover_b,motivo)
+        acao_disponivel(self.editar_posicao_b,motivo)
 
     def listar_tubos(self):
         from itertools import islice
@@ -119,12 +149,16 @@ class EditarComplemento(QDialog):
             item=QListWidgetItem(_nome(t))
             item.setData(Qt.UserRole,t['uid'])
             self.disponiveis.addItem(item)
+        self.atualizar_acoes()
 
     def listar_portas(self):
         self.vinculos.clear()
         for uid,pos in self.portas:
             t=self.tubos.get(uid)
-            self.vinculos.addItem(((_nome(t) if t else uid+' · referência ausente'))+f' — {100*pos:g}%')
+            item=QListWidgetItem((_nome(t) if t else uid+' · referência ausente')+f' — {100*pos:g}%')
+            item.setData(Qt.UserRole,(uid,pos))
+            self.vinculos.addItem(item)
+        self.atualizar_acoes()
 
     def adicionar(self):
         item=self.disponiveis.currentItem()
@@ -171,7 +205,7 @@ class EditarComplemento(QDialog):
     def validar(self):
         minimo=1 if self.tipo=='ORIGEM' else 2
         if len(set(self.portas))<minimo or any(u not in self.tubos for u,_ in self.portas):
-            self.info.setText(f'Selecione pelo menos {minimo} porta(s) válida(s).')
+            self.info.setText(f'Selecione pelo menos {minimo} ponto(s) de conexão válido(s).')
             return
         eq=self.equipamentos.get(self.equipamento.currentData())
         if self.tipo=='ORIGEM' and not eq and not self.ponto:
@@ -191,7 +225,7 @@ class EditarComplemento(QDialog):
         if self.antes_salvar is not None:
             try:
                 self.antes_salvar(self.dados)
-            except (ValueError, OSError, RuntimeError) as erro:
+            except (ValueError, OSError, RuntimeError, ErroBanco) as erro:
                 self.info.setText(str(erro))
                 return
         self.accept()

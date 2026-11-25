@@ -26,6 +26,8 @@ class TopologiaDireta(QDialog):
         for n,t in enumerate(tipos):
             c=QComboBox();c.addItems(['PERMITIR','EVITAR','BLOQUEAR']);self.regras.setItem(n,0,QTableWidgetItem(t));self.regras.setCellWidget(n,1,c);self._regras[t]=c
         v.addWidget(self.regras);self.estado=QLabel('Grafo completo da versão; não recortado por setor. Resultado não comprova abastecimento ou operação hidráulica.');self.estado.setWordWrap(True);v.addWidget(self.estado);self.tabela=QTableWidget(0,3);self.tabela.setHorizontalHeaderLabels(['Grupo / destino','Tubulações','Situação']);v.addWidget(self.tabela)
+        from .navegacao_cartografica import navegar_registros
+        navegar_registros(self.tabela,self.navegar_resultado,limpar=self.mapa.limpar)
         for t,fn in [('Calcular sobre a base',self.calcular),('Destacar resultado (sem zoom)',self.destacar_resultado),('Exportar resultado topológico JSON…',self.exportar),('Aproximar resultado (explícito)',lambda:self.mapa.aproximar()),('Fechar',self.close)]:b=QPushButton(t);b.clicked.connect(fn);v.addWidget(b)
         self.tipo.currentIndexChanged.connect(self.exibir);self.exibir();self.mudar(self.modo);adaptar_janela(self);sistema(app.geo).vincular(self)
     def exibir(self):
@@ -39,6 +41,9 @@ class TopologiaDireta(QDialog):
         if not self.pacote['resultado']['meta']['parametros']['espacial_habilitado']:return
         for seletor,cor in ((self.origens,'#008a69'),(self.destinos,'#dc3b30')):
             for t in seletor.valores():self.mapa.adicionar(self.pacote['geometrias'].get(t['id']),cor)
+    def navegar_resultado(self,indice,aproximar):
+        ids=self.tabela.item(indice.row(),0).data(Qt.UserRole)
+        self.estado.setText(self.mapa.localizar_elementos(ids,aproximar=aproximar))
     def destacar_resultado(self):
         if self.resultado is None:return
         self.destacar_terminais()
@@ -55,8 +60,15 @@ class TopologiaDireta(QDialog):
             return corredores.calcular(p,modo,orig,dest,criterio=criterio,restricoes=restricoes,progresso=lambda t,n,total:progresso(0,t),cancelado=cancelar)
         def pronto(r):
             self.resultado=r;self._salvo=False;linhas=[(v['nome'],len(v['tubos']),v['visao']) for v in r['ilhas']] if ilha else [(str(v['destino']),len(v['tubulacoes']),'ALCANÇADO') for v in r['rotas']]+[(str(v['destino']),0,v['motivo']) for v in r['destinos_inalcancaveis']];self.tabela.setRowCount(len(linhas))
+            def destino(v):
+                d=v['destino']
+                return d['id'] if isinstance(d,dict) else d[0] if isinstance(d,(tuple,list)) else d
+            elementos=([v['tubos'] for v in r['ilhas']] if ilha else
+                       [[*v['tubulacoes'],*v['dispositivos'],destino(v)] for v in r['rotas']]+
+                       [[destino(v)] for v in r['destinos_inalcancaveis']])
             for n,l in enumerate(linhas):
                 for k,x in enumerate(l):self.tabela.setItem(n,k,QTableWidgetItem(str(x)))
+                self.tabela.item(n,0).setData(Qt.UserRole,elementos[n])
             self.estado.setText(r.get('motivo') or 'Resultado calculado no grafo completo. Exporte a evidência; decisões e RESOLVIDO continuam na investigação integrada.')
         self.worker=sistema(self).executar_thread('Calculando conectividade independente','Versão e cenário selecionados',trabalho,pronto,lambda e:self.estado.setText(e+' · bases preservadas'))
     def exportar(self):

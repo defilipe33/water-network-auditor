@@ -16,6 +16,10 @@ class SeletorTerminais(QGroupBox):
         for nome,fn in [('Buscar',self.procurar),('Usar seleção QGIS',self.usar_selecao),('Clicar no mapa',self.capturar)]:
             b=QPushButton(nome);b.clicked.connect(lambda checked=False,fn=fn:fn());a.addWidget(b)
         self.tabela=QTableWidget(0,4);self.tabela.setHorizontalHeaderLabels(['ID','Label','Tipo','Porta']);self.tabela.setSelectionBehavior(QAbstractItemView.SelectRows);self.tabela.setEditTriggers(QAbstractItemView.NoEditTriggers);self.tabela.setMaximumHeight(100);v.addWidget(self.tabela)
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        navegar_registros(self.tabela,lambda i,a:self.navegar_terminais([i],a),
+                          lambda _: [('Adicionar terminais selecionados',self.adicionar_linhas)],
+                          limpar=dono.painel.mapa.limpar,navegar_varios=lambda is_:self.navegar_terminais(is_,True))
         a=QHBoxLayout();v.addLayout(a)
         b=QPushButton('Adicionar linhas escolhidas');b.clicked.connect(self.adicionar_linhas);a.addWidget(b);b=QPushButton('Limpar terminais');b.clicked.connect(self.limpar);a.addWidget(b)
         self.raio=QDoubleSpinBox();self.raio.setRange(.01,10000);self.raio.setValue(10);self.raio.setSuffix(' m');self.raio.setToolTip('Busca de candidatos ao clique; nenhum nó é escolhido só pela proximidade.');a.addWidget(self.raio)
@@ -29,6 +33,10 @@ class SeletorTerminais(QGroupBox):
 
     @property
     def pacote(self):return self.dono.painel.pacote
+
+    def navegar_terminais(self,indices,aproximar):
+        ids=[self.tabela.item(i.row(),0).data(Qt.UserRole)['id'] for i in indices]
+        self.dono.estado.setText(self.dono.painel.mapa.localizar_elementos(ids,aproximar=aproximar))
     def catalogo(self):
         if not hasattr(self.dono,'_catalogo_terminais'):
             from collections import defaultdict

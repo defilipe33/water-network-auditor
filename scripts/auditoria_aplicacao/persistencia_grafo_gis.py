@@ -21,6 +21,27 @@ DECISOES = {'CONFIRMADA':'Conexão confirmada', 'SEPARADA':'Sem conexão',
             'CANDIDATA':'Conexão candidata', 'INDETERMINADA':'Indeterminado'}
 
 
+def complemento_editavel(r):
+    return r['tipo'] == 'CONEXAO' or (
+        r['tipo'] == 'ORIGEM' and r.get('situacao') != 'CADASTRADA' and not r.get('equipamento'))
+
+
+def alterar_exclusao(caminho, projeto_uid, registro, excluido):
+    """Anexa uma revisão ao complemento e mantém o UUID e as fotos anteriores."""
+    if not complemento_editavel(registro):
+        raise ValueError('A origem cadastrada no GIS só pode ser retirada da hipótese.')
+    if excluido == bool(registro.get('excluido')):
+        raise ValueError('O complemento já está nesta situação.')
+    dados=dict(registro,excluido=excluido)
+    if excluido:
+        dados['habilitado_antes_excluir']=registro.get('habilitado',True)
+        dados['habilitado']=False
+    else:
+        dados['habilitado']=dados.pop('habilitado_antes_excluir',True)
+    return salvar_revisao(caminho, projeto_uid, registro['tipo'], dados,
+                          registro['uuid'], registro['rev'])
+
+
 def _json(dados):
     return json.dumps(dados,ensure_ascii=False,allow_nan=False,default=str,separators=(',',':'))
 
@@ -103,6 +124,8 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
         raise ValueError('Defina a interpretação da conexão.')
     if tipo=='HIPOTESE' and not str(dados.get('nome','')).strip():
         raise ValueError('Dê um nome à hipótese.')
+    if dados.get('excluido') and not complemento_editavel(dict(dados,tipo=tipo)):
+        raise ValueError('Somente elementos complementares podem ser excluídos.')
     uid, rev=uid or uuid4().hex,uuid4().hex
     with closing(sqlite3.connect(caminho)) as con, con:
         con.execute('PRAGMA foreign_keys=ON')
@@ -121,7 +144,7 @@ def selecionar(registros, ids):
     ativos=[]
     for uid in ids:
         r=registros.get(uid)
-        if not r or r['tipo'] not in ('ORIGEM','CONEXAO') or not r.get('habilitado',True):
+        if not r or r['tipo'] not in ('ORIGEM','CONEXAO') or not r.get('habilitado',True) or r.get('excluido'):
             raise ValueError('Uma relação selecionada foi removida ou desabilitada. Revise a hipótese.')
         ativos.append(r)
     return ativos

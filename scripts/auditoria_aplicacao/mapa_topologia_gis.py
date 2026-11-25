@@ -11,6 +11,7 @@ from qgis.gui import QgsMapToolEmitPoint
 
 from .grafo_gis import _indexar, ROTULOS
 from .investigacao_gis import geometria
+from auditoria_fronteiras.modelos import verificar_cancelamento
 
 
 GRUPO = 'WATER NETWORK AUDITOR — MODELO GIS'
@@ -79,15 +80,17 @@ def estilo_conexao(r, ativo):
 
 
 class IndiceSelecao:
-    def __init__(self, elementos):
+    def __init__(self, elementos, cancelar=None):
         self.elementos=[]
         self.geometrias=[]
         for e in elementos:
+            verificar_cancelamento(cancelar)
             g=e.get('geom') or geometria(e.get('wkb'))
             if g is not None and not g.isEmpty():
                 self.elementos.append(e)
                 self.geometrias.append(g)
         self.indice=_indexar(self.geometrias)
+        verificar_cancelamento(cancelar)
 
     def consultar(self,g,distancia):
         caixa=QgsRectangle(g.boundingBox())

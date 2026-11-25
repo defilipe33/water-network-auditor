@@ -6,12 +6,13 @@ from textwrap import fill
 from qgis.PyQt.QtCore import Qt, QTimer
 from qgis.PyQt.QtWidgets import (
     QListWidget, QListWidgetItem, QSizePolicy, QStackedWidget, QComboBox, QDialog, QDialogButtonBox, QFormLayout, QHeaderView, QHBoxLayout,
-    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem,
+    QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea, QTableWidget, QTableWidgetItem, QToolButton,
     QVBoxLayout, QWidget, QFrame, QMenu,
 )
 from qgis.core import QgsProject, QgsVectorLayer, QgsVectorLayerFeatureSource
 
 from .cadastro_gis import OPERADORES, amostra, amostra_elementos, copiar_mapeamento, filtro_simples, incluir_fontes, sugerir_campos
+from .navegacao_cartografica import navegar_registros
 from .modelo_gis import (
     CATEGORIAS, CLASSIFICACOES, ESTRATEGIAS, PAPEIS, ROTULOS, VINCULOS_WG, conferir,
     configurar, descrever, estado_fonte, geometria, identificar, preparar_conferencia, relocalizar, revisoes,
@@ -70,14 +71,22 @@ def botao(layout, texto, acao=None):
 
 
 def expansivel(layout, texto, botao_em=None):
-    b = botao(botao_em if botao_em is not None else layout, texto)
+    b = QToolButton()
+    b.setText(texto)
+    b.setObjectName('WnaCabecalhoSecao')
     b.setCheckable(True)
+    b.setArrowType(Qt.RightArrow)
+    b.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+    b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+    (botao_em if botao_em is not None else layout).addWidget(b)
     w = QWidget()
+    w.setObjectName('WnaSecaoExpandida')
     layout.addWidget(w)
     w.hide()
     b.toggled.connect(w.setVisible)
+    b.toggled.connect(lambda aberto: b.setArrowType(Qt.DownArrow if aberto else Qt.RightArrow))
     corpo = QVBoxLayout(w)
-    corpo.setContentsMargins(10, 2, 2, 4)
+    corpo.setContentsMargins(12, 6, 6, 8)
     return b, corpo
 
 
@@ -180,7 +189,8 @@ class EditorFonte(QWidget):
         menu.addAction('Enquadrar destaque', lambda: self.painel.central.mapa.aproximar() if hasattr(self.painel.central, 'mapa') else None)
         menu.addAction('Limpar destaque', lambda: self.painel.central.mapa.limpar() if hasattr(self.painel.central, 'mapa') else None)
         self.amostra_mais.setMenu(menu)
-        self.amostra.itemDoubleClicked.connect(lambda _: self.destacar_amostra())
+        navegar_registros(self.amostra,lambda i,a:self.destacar_amostra(aproximar=a),
+                          limpar=lambda:self.painel.central.limpar_mapa())
         if fonte['categoria'] in ('RESERVOIR', 'TANK'):
             secao(area, 'Relações com a rede')
             self.abrir_conexoes, self._conexoes_area = expansivel(area, 'Definir conexões com a rede')
@@ -443,14 +453,14 @@ class EditorFonte(QWidget):
         self.amostra.show()
         self.amostra_mais.setEnabled(bool(self._amostra_fids))
 
-    def destacar_amostra(self):
+    def destacar_amostra(self,checked=False,aproximar=False):
         i = self.amostra.currentRow()
         if not hasattr(self.painel.central, 'mapa'):
             self.mensagem.setText('Abra o Quadro do Modelo para utilizar o mapa.'); return
         if i < 0 or i >= len(self._amostra_fids):
             self.mensagem.setText('Selecione uma linha da amostra atual.'); return
         fonte = dict(self.fonte, filtro=self.filtro.text())
-        self.painel.central.mapa.destacar(fonte, [self._amostra_fids[i]])
+        self.painel.central.mapa.destacar(fonte, [self._amostra_fids[i]], aproximar=aproximar)
 
     def mostrar_amostra(self, campos, resultado):
         linhas, n, completa = resultado
@@ -556,7 +566,9 @@ class PainelModeloGIS(QWidget):
         self.remover_b = botao(layout_extra, 'Remover associação', self.remover)
         area.addStretch()
         self.lista.currentItemChanged.connect(self.atualizar_fonte)
-        self.lista.itemDoubleClicked.connect(lambda _: self.editar())
+        navegar_registros(self.lista,self.navegar_fonte,
+                          lambda _: [('Configurar campos e filtro…',self.editar),('Relocalizar fonte…',self.mover)],
+                          limpar=lambda:self.central.limpar_mapa())
         self.estrategia.currentIndexChanged.connect(self.atualizar)
         self.feedback = aviso()
         layout.addWidget(self.feedback)
@@ -683,6 +695,12 @@ class PainelModeloGIS(QWidget):
 
     def fontes_categoria(self):
         return [f for f in self.fontes if f['categoria'] == self.categoria]
+
+    def navegar_fonte(self,indice,aproximar):
+        fonte=self.fonte_selecionada()
+        mapa=getattr(self.central,'mapa',None)
+        if fonte and mapa:
+            mapa.destacar(fonte,aproximar=aproximar)
 
     def fonte_selecionada(self):
         return next((f for f in self.fontes_categoria() if f['uid'] == self.selecionada), None)

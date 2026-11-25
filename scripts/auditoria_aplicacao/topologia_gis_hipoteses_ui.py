@@ -77,6 +77,7 @@ class HipotesesGIS:
         self._marcar_escopo(self.redes,{f['uid'] for f in config['fontes'] if f['categoria']=='PIPE'})
         self.atualizar_complementos(escolhidos=pinos)
         self._edicao_limpa=self._assinatura_edicao()
+        self._indicar_rascunho()
         self._resultado_historico=False
         self.status.setText('Hipótese '+hip['nome']+' · revisão '+hip['rev'][:8]+' carregada.')
         self.agendar_mapa()
@@ -96,6 +97,7 @@ class HipotesesGIS:
             self._listar_redes(self._revisao())
             self.atualizar_complementos(escolhidos=())
             self._edicao_limpa=self._assinatura_edicao()
+            self._indicar_rascunho()
             self._resultado_historico=False
             self.status.setText('Hipótese legada. Para fixar revisões atuais, marque as relações e salve uma nova revisão.'
                                 if hip else 'Hipótese temporária em edição.')
@@ -111,8 +113,13 @@ class HipotesesGIS:
         self._resultado_historico=False
         self.agendar_mapa()
 
-    def _participantes_exatos(self):
+    def _participantes_exatos(self,repetir=False):
         atuais=pg.vigentes(self._base_complementos(),self.uid_projeto)
+        for uid in self._selecionados():
+            if atuais.get(uid,{}).get('excluido'):
+                fixada=(self._hip_ativa or {}).get('vinculos',{}).get(uid)
+                if not repetir or not fixada or self._pinos.get(uid,{}).get('rev')!=fixada:
+                    raise ValueError('Há um complemento excluído na seleção. Retire-o ou recupere-o antes de gravar ou testar outra hipótese.')
         ativos={**atuais,**self._pinos}
         return pg.selecionar(ativos,self._selecionados())
 

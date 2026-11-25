@@ -178,6 +178,10 @@ class DialogoRedes(QDialog):
         self.tabela=QTableWidget(0,5);self.tabela.setHorizontalHeaderLabels(['Incluir','DomainElementID','Label','Origem','Critérios']);self.tabela.setEditTriggers(QAbstractItemView.NoEditTriggers);v.addWidget(self.tabela,1)
         self.tabela.setColumnCount(12);self.tabela.setHorizontalHeaderLabels(['Incluir','DomainElementID','Label','Origem','Critérios','Rotas escolhidas','Destinos','Classe no conjunto','Comprimento (m)','Diâmetro bruto','Unidade diâmetro','Dispositivos'])
         self.rotas_tabela=QTableWidget(0,5);self.rotas_tabela.setHorizontalHeaderLabels(['Rota','Origem → destino','Custo','Comprimento (m)','Tubos / dispositivos']);self.rotas_tabela.setEditTriggers(QAbstractItemView.NoEditTriggers);self.rotas_tabela.setMaximumHeight(130);v.addWidget(self.rotas_tabela)
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        navegar_registros(self.tabela,lambda i,a:self.navegar_tubulacoes([i],a),limpar=painel.mapa.limpar,
+                          navegar_varios=lambda is_:self.navegar_tubulacoes(is_,True))
+        navegar_registros(self.rotas_tabela,self.navegar_rota,self.acoes_rota,painel.mapa.limpar)
         alternativa_botao=QPushButton('Acrescentar à seleção a alternativa escolhida');alternativa_botao.clicked.connect(self.adicionar_alternativa);v.addWidget(alternativa_botao);self.alternativa_botao=alternativa_botao
         local=QPushButton('Criar local manual no destino inalcançável escolhido');local.clicked.connect(self.local_interrupcao);v.addWidget(local);self.local_interrupcao_botao=local
         self.estado=QLabel('Nenhum conjunto calculado. Desmarque linhas para removê-las da seleção final.');self.estado.setWordWrap(True);v.addWidget(self.estado)
@@ -188,6 +192,26 @@ class DialogoRedes(QDialog):
         self.metodo.currentIndexChanged.connect(self.metodo_alterado);self.metodo_alterado()
         from auditoria_fronteiras.atividade import sistema
         sistema(painel).vincular(self)
+
+    def navegar_tubulacoes(self,indices,aproximar):
+        ids=[int(self.tabela.item(i.row(),1).text()) for i in indices]
+        self.estado.setText(self.painel.mapa.localizar_elementos(ids,aproximar=aproximar))
+
+    def navegar_rota(self,indice,aproximar):
+        r=self.rotas_tabela.item(indice.row(),0).data(Qt.UserRole)
+        ids=[*r.get('tubulacoes',[]),*r.get('dispositivos',[])]
+        if not ids:
+            d=r['destino']
+            ids=[d['id'] if isinstance(d,dict) else d[0] if isinstance(d,(list,tuple)) else d]
+        self.estado.setText(self.painel.mapa.localizar_elementos(ids,aproximar=aproximar))
+
+    def acoes_rota(self,indice):
+        r=self.rotas_tabela.item(indice.row(),0).data(Qt.UserRole)
+        if r.get('alternativa'):
+            return [('Acrescentar a rota alternativa',self.adicionar_alternativa)]
+        if 'tubulacoes' not in r:
+            return [('Criar local de investigação no destino',self.local_interrupcao)]
+        return ()
 
     def preencher(self,vs):
         self.vinculos=vs;self.tabela.setRowCount(len(vs))

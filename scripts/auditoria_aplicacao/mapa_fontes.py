@@ -48,10 +48,10 @@ def ler_destaque(fonte, filtro, ids, campos, cancelar, limite=500):
 class MapaFontes(QObject):
     mensagem = pyqtSignal(str)
 
-    def __init__(self, app, parent):
+    def __init__(self, app, parent, canvas=None):
         super().__init__(parent)
         self.app = app
-        self.canvas = app.iface.mapCanvas() if hasattr(app.iface, 'mapCanvas') else None
+        self.canvas = canvas if app is None else getattr(app.iface,'mapCanvas',lambda:None)()
         self.itens, self.caixas = [], []
         self.camada, self.fonte = None, None
         self.geracao = 0
@@ -84,7 +84,7 @@ class MapaFontes(QObject):
         ids = camada.selectedFeatureIds()
         self.destacar(fonte, ids if ids else None)
 
-    def destacar(self, fonte, ids=None):
+    def destacar(self, fonte, ids=None, aproximar=False):
         if self.app.atividades.em_execucao():
             self.mensagem.emit('Aguarde a atividade atual antes de destacar a fonte.')
             return False
@@ -149,6 +149,8 @@ class MapaFontes(QObject):
             if not wkbs:
                 texto += ' Sem geometria correspondente ao filtro/seleção.'
             self.mensagem.emit(texto)
+            if aproximar and wkbs:
+                self.aproximar()
 
         self.app.atividades.executar_thread(
             'Destacar fonte GIS', fonte['nome'],
@@ -185,8 +187,8 @@ class MapaFontes(QObject):
         self.mensagem.emit(nome + ' · destaque temporário; use Enquadrar para aproximar.')
         return True
 
-    def destacar_investigacao(self, itens, crs, aproximar=False,toda_extensao=False):
-        if self.app.atividades.em_execucao() or not self.canvas:return False
+    def destacar_investigacao(self, itens, crs, aproximar=False,toda_extensao=False,foco=None):
+        if (self.app is not None and self.app.atividades.em_execucao()) or not self.canvas:return False
         self.limpar()
         destino=self.canvas.mapSettings().destinationCrs()
         if not crs.isValid() or not destino.isValid():raise ValueError('Confira o CRS do trabalho e do mapa.')
@@ -198,8 +200,11 @@ class MapaFontes(QObject):
             if g.transform(trans)!=0:raise ValueError('Falha na transformação do destaque.')
             from .relevancia_gis import SIMBOLOS
             categoria=papel.removeprefix('evento_') if papel.startswith('evento_') else None
-            cor=QColor(SIMBOLOS[categoria][0]) if categoria in SIMBOLOS else {'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240),'equipamento':QColor(30,185,130,240)}[papel]
+            cor=QColor(SIMBOLOS[categoria][0]) if categoria in SIMBOLOS else {'tubo':QColor(0,150,210,230),'evento':QColor(235,120,20,240),'local':QColor(180,70,210,240),'equipamento':QColor(30,185,130,240),'vinculo':QColor(80,140,170,230)}[papel]
             b=QgsRubberBand(self.canvas,g.type());b.setColor(cor);b.setFillColor(QColor(0,0,0,0));b.setWidth(4 if papel=='tubo' else 3)
+            if papel=='vinculo':
+                from qgis.PyQt.QtCore import Qt
+                b.setLineStyle(Qt.DashLine)
             icones={'REVISAR':QgsRubberBand.ICON_CROSS,'INCONSISTENCIA_IDENTIFICADA':QgsRubberBand.ICON_DIAMOND,'INDETERMINADA':QgsRubberBand.ICON_BOX}
             b.setIcon(icones.get(categoria,QgsRubberBand.ICON_BOX if papel in ('local','equipamento') else QgsRubberBand.ICON_CIRCLE));b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
             self.itens.append(b);self.caixas.append(g.boundingBox())
@@ -218,6 +223,8 @@ class MapaFontes(QObject):
                 if max(caixa.width(),caixa.height())>janela:
                     caixa=local
                     self.mensagem.emit('Aproximação focada nas ocorrências. Tubulações extensas continuam destacadas; use Ver toda a extensão para enquadrá-las integralmente.')
+            if foco is not None and not foco.isEmpty():
+                caixa=foco.boundingBox()
             # O CRS dos trabalhos é métrico validado; mínimo de 30 m antes da margem.
             centro=caixa.center();w=max(30,caixa.width());h=max(30,caixa.height())
             caixa=QgsRectangle(centro.x()-w/2,centro.y()-h/2,centro.x()+w/2,centro.y()+h/2);caixa.scale(1.15)

@@ -22,6 +22,10 @@ class TabelaConsulta(QWidget):
             self.tabela.setColumnWidth(i,160)
         self.busca.textChanged.connect(self.filtrar);self.tabela.itemDoubleClicked.connect(self.exibir_celula)
         menu.aboutToShow.connect(self.sincronizar_colunas)
+    def vincular_mapa(self,navegar,acoes=None,limpar=None,navegar_varios=None):
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        self.tabela.itemDoubleClicked.disconnect(self.exibir_celula)
+        navegar_registros(self.tabela,navegar,acoes,limpar,navegar_varios)
     def sincronizar_colunas(self):
         for c,a in enumerate(self.colunas.menu().actions()):
             a.blockSignals(True);a.setChecked(not self.tabela.isColumnHidden(c));a.blockSignals(False)

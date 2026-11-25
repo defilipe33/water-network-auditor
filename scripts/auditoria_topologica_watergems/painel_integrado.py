@@ -22,6 +22,14 @@ class PainelIntegrado(PainelInspecao):
         b=QPushButton('Investigar componentes (isolados, pequenos e extensos)…');b.clicked.connect(self.abrir_componentes)
         self.layout().insertWidget(2,b)
 
+    def _navegar_inspecao(self,tipo,uid,aproximar):
+        if tipo!='wg':
+            return super()._navegar_inspecao(tipo,uid,aproximar)
+        crs=QgsCoordinateReferenceSystem(self.dossie['contexto']['parametros']['crs'])
+        g=(self.pacote.get('geometrias') or {}).get(uid)
+        if not self._mapa_inspecao.destacar_investigacao([('equipamento',g)],crs,aproximar):
+            self.aviso.setText('Geometria WaterGEMS indisponível para o elemento.')
+
     def atualizar(self):
         super().atualizar()
         uid=self.locais.currentData()
@@ -93,6 +101,12 @@ class DialogComponentes(QDialog):
         self.arvore=QTreeWidget();self.arvore.setHeaderLabels(['Elemento','ID / Label','Informações','Chave']);l.addWidget(self.arvore,1)
         from auditoria_fronteiras.tabelas_consulta import TabelaConsulta
         self.membros_tabela=TabelaConsulta(['Tipo','ID GIS da auditoria','Camada GIS','Label WG','DomainElementID','Componente','Vínculo','Diagnóstico','Chave GIS de correspondência'])
+        from auditoria_aplicacao.navegacao_cartografica import navegar_registros
+        self.membros_tabela.vincular_mapa(lambda i,a:self.painel._navegar_inspecao(
+            'wg',i.siblingAtColumn(4).data(Qt.UserRole),a),limpar=self.painel._mapa_inspecao.limpar)
+        navegar_registros(self.arvore,lambda i,a:self.painel._navegar_inspecao('wg',i.siblingAtColumn(0).data(Qt.UserRole),a),
+                          limpar=self.painel._mapa_inspecao.limpar,
+                          elegivel=lambda i:isinstance(i.siblingAtColumn(0).data(Qt.UserRole),int))
         self.tabs_dados=QTabWidget();l.removeWidget(self.arvore);l.addWidget(self.tabs_dados,1)
         self.tabs_dados.addTab(self.membros_tabela,'Membros em colunas');self.tabs_dados.addTab(self.arvore,'Evidências completas')
         for i,w in enumerate((220,200,350,100)):self.arvore.setColumnWidth(i,w)
@@ -102,6 +116,7 @@ class DialogComponentes(QDialog):
         self.arvore.itemSelectionChanged.connect(self.selecionar);self.preencher()
         from auditoria_fronteiras.ui_comum import adaptar_janela
         adaptar_janela(self)
+        self.finished.connect(lambda _:self.painel._mapa_inspecao.limpar())
 
     def preencher(self):
         r=self.painel.pacote['resultado'];pot=self.modo.currentText()!='ESTRUTURAL'
