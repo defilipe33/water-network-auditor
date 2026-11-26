@@ -7,12 +7,13 @@ import sqlite3
 
 from qgis.PyQt.QtCore import QAbstractListModel, QModelIndex, Qt
 from qgis.PyQt.QtWidgets import (QAbstractItemView, QComboBox, QFileDialog, QHBoxLayout, QInputDialog,
-                                QLineEdit, QListView, QListWidget, QListWidgetItem, QScrollArea, QVBoxLayout, QWidget)
+                                QLineEdit, QListView, QScrollArea, QVBoxLayout, QWidget)
 from qgis.core import QgsCoordinateReferenceSystem
 
 from . import corredores_gis as motor, persistencia_grafo_gis as pg
 from .corredores_agrupados_ui import CorredoresAgrupadosUI
 from .blocos_gis_ui import BlocosGISUI
+from .cadastro_exportavel_ui import CadastroExportavelUI
 from .macro_origem_ui import MacroOrigemUI, CATEGORIAS as CATEGORIAS_MACRO
 from .mapa_topologia_gis import IndiceSelecao, escolher, fracao_clicada, _ponto, _transformar
 from .modelo_gis import descrever, identificar, revisoes
@@ -40,6 +41,23 @@ MUDANCAS={
     'DESTINO_FONTES':'Fontes do destino','ALTERNATIVA':'Caminho alternativo','TRAJETO':'Trajeto principal',
     'ORIGEM_CONSIDERADA':'Origem considerada','CONEXAO_APLICADA':'Conexão aplicada na hipótese',
 }
+DETALHES_MACRO={'MACRO_DETALHES','MACRO_SEGMENTOS','MACRO_NOS','MACRO_CONEXOES'}
+MODOS={
+    'INTEGRAL':('Visão macro integral do abastecimento',
+                {k:n for k,n in CATEGORIAS_MACRO if k not in DETALHES_MACRO}),
+    'PERCURSOS':('Percursos até destinos específicos',
+                 dict(DESTINOS='Destinos', ROTAS='Trajetos origem–destino', AGRUPADOS='Corredores agrupados',
+                      REDUNDANCIA='Alternativas verificadas', CORREDOR='Corredores por tubulação',
+                      ZONAS='Dependências por zona', PASSAGEM='Redes de passagem',
+                      LOCAL='Distribuição local observada', COMPARAR='Diferenças entre análises')),
+    'CRITICIDADE':('Criticidade e interrupções',
+                   dict(CRITICA='Ligações críticas', TUBOS='Todas as tubulações', PONTES='Pipes com segmentos-ponte',
+                        ARTICULACOES='Nós de articulação', BLOCOS='Blocos topológicos detalhados',
+                        LIGACOES_BLOCOS='Ligações entre blocos detalhados', INDETERMINADA='Função indeterminada',
+                        COMPONENTES='Componentes após interrupção', INTERROMPIDOS='Destinos após interrupção',
+                        REMANESCENTES='Rotas após interrupção', COMPARAR='Diferenças entre análises',
+                        **{k:n for k,n in CATEGORIAS_MACRO if k in DETALHES_MACRO})),
+}
 
 
 class ListaDestinos(QAbstractListModel):
@@ -65,7 +83,7 @@ class ListaDestinos(QAbstractListModel):
         self.endResetModel()
 
 
-class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOrigemUI):
+class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOrigemUI,CadastroExportavelUI):
     def __init__(self,central):
         super().__init__(central)
         self.central=central;self.app=central.app
@@ -76,26 +94,51 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         w=QWidget();self.setWidget(w);self.setWidgetResizable(True)
         v=QVBoxLayout(w)
         botao(v,'‹ Investigar minha rede',central.mudar_area)
-        v.addWidget(aviso('Redes estruturantes GIS'))
+        v.addWidget(aviso('Redes estruturantes e blocos de abastecimento'))
         self.status=aviso();v.addWidget(self.status)
         v.addWidget(aviso('Os resultados descrevem conectividade topológica sob a hipótese escolhida.'))
-        self.config_b,cfg=expansivel(v,'Execução, fontes e destinos')
+        self.config_b,cfg=expansivel(v,'Análise de conectividade, origens e áreas')
         self.config_b.setChecked(True)
         form=formulario(cfg)
-        self.execucoes=QComboBox();form.addRow('Execução topológica',self.execucoes)
+        self.execucoes=QComboBox()
+        self.execucoes.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.execucoes.setMinimumContentsLength(15)
+        form.addRow('Análise de conectividade de referência',self.execucoes)
         self.execucoes.activated.connect(self.escolher_execucao)
         self.identidade=aviso();cfg.addWidget(self.identidade)
-        self.conferir_b=botao(cfg,'Conferir dados atuais das fontes',self.conferir_fontes)
-        self.nome=QLineEdit('Redes estruturantes');form.addRow('Nome do trabalho',self.nome)
-        self.origens=QListWidget();self.origens.setMaximumHeight(100);cfg.addWidget(self.origens)
-        _,alvos=expansivel(cfg,'Destinos e zonas')
+        self.ir_conectividade_b=botao(cfg,'Executar análise de conectividade',
+                                     lambda:central.abrir_conectividade(para_estrutura=True))
+        self.conferir_b=botao(cfg,'Verificar se o cadastro GIS mudou',self.conferir_fontes)
+        self.conferir_b.setToolTip('Compara as fontes disponíveis com as assinaturas da análise escolhida.')
+        self.relatorio_fontes_b,fontes_cfg=expansivel(cfg,'Detalhes da conferência das fontes')
+        self.relatorio_fontes=aviso()
+        fontes_cfg.addWidget(self.relatorio_fontes)
+        self.relatorio_fontes_b.hide()
+        self.nome=QLineEdit('Redes estruturantes');form.addRow('Nome da análise estrutural',self.nome)
+        self.abrir_salva_b=botao(cfg,'Abrir análise estrutural salva',
+            lambda:central.abrir_analises_projeto('ESTRUTURA_GIS'))
+        self.montar_escopo_estrutural(cfg)
+        self.modalidade=QComboBox()
+        for k,(nome,_) in MODOS.items():self.modalidade.addItem(nome,k)
+        v.addWidget(self.modalidade)
+        self.configuracoes={}
+        for k in MODOS:
+            w_modo=QWidget()
+            v.addWidget(w_modo)
+            lay=QVBoxLayout(w_modo);lay.setContentsMargins(0,0,0,0)
+            self.configuracoes[k]=w_modo
+            if k=='INTEGRAL':self.montar_macro_integral(lay)
+            elif k=='PERCURSOS':percursos=lay
+            else:critica=lay
+        _,alvos=expansivel(percursos,'Destinos e pontos de interesse')
+        alvos.addWidget(aviso('Destino é um ponto topológico de interesse para investigar caminhos desde as origens. '
+                             'Escolha uma tubulação para associar sua posição ao grafo, ou escolha um nó já resolvido. '
+                             'A visão integral contabiliza a rede mesmo sem destinos específicos.'))
         self.selecao_tipo=QComboBox()
         self.selecao_tipo.addItem('Tubulação', 'PIPE');self.selecao_tipo.addItem('Nó topológico','NO')
-        self.areas=QComboBox()
-        f=formulario(alvos);f.addRow('Escolher no mapa',self.selecao_tipo);f.addRow('Área cadastrada',self.areas)
+        formulario(alvos).addRow('Escolher no mapa',self.selecao_tipo)
         botao(alvos,'Adicionar destinos pelo mapa',lambda:self.selecionar_mapa())
-        botao(alvos,'Escolher uma área no mapa',self.selecionar_area_mapa)
-        botao(alvos,'Adicionar tubulações que intersectam a área',self.adicionar_area)
+        botao(alvos,'Adicionar destinos das áreas selecionadas',self.adicionar_area)
         self.lista_destinos=QListView()
         self.modelo_destinos=ListaDestinos(self)
         self.lista_destinos.setModel(self.modelo_destinos)
@@ -105,29 +148,18 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         navegar_registros(self.lista_destinos,self.localizar_destino,
                           lambda _: [('Remover os destinos selecionados',self.remover_destinos)],
                           limpar=central.mapa.limpar)
-        botao(alvos,'Vincular destinos selecionados à área e salvar revisão',self.associar)
-        botao(alvos,'Recuperar revisão dos destinos da área…',self.recuperar_associacao)
+        botao(alvos,'Salvar pontos de interesse da área',self.associar)
+        botao(alvos,'Recuperar configuração anterior dos pontos de interesse',self.recuperar_associacao)
+        alvos.addWidget(aviso('O histórico destes pontos guarda associações declaradas a uma área GIS.'))
         botao(alvos,'Limpar destinos · analisar toda a rede',self.limpar_destinos)
-        cfg.addWidget(aviso('Sem destinos, os cortes consideram a rede inteira. Cada cálculo salva um trabalho nesta execução.'))
-        self.montar_macro_integral(v)
-        _,diagnosticos=expansivel(v,'Análises estruturais detalhadas')
-        self.montar_configuracao_macro(diagnosticos)
-        self.montar_blocos(diagnosticos)
-        self.executar_b=botao(diagnosticos,'Calcular análise por Pipe',self.calcular)
+        self.montar_configuracao_macro(percursos)
+        self.montar_blocos(critica)
+        self.executar_b=botao(critica,'Calcular criticidade por Pipe',self.calcular)
         ferramentas=QHBoxLayout();v.addLayout(ferramentas)
         self.camadas_b=botao(ferramentas,'Mostrar camadas',self.mostrar_camadas)
-        self.comparar_b=botao(ferramentas,'Comparar trabalhos…',self.comparar)
+        self.comparar_b=botao(ferramentas,'Comparar análises…',self.comparar)
         self.resumo=aviso();v.addWidget(self.resumo)
         self.categoria=QComboBox()
-        for k,n in [('CRITICA','Ligações críticas'),('TUBOS','Todas as tubulações'),('CORREDOR','Corredores por tubulação'),
-                    ('ROTAS','Trajetos origem–destino'),('REDUNDANCIA','Redundância verificada'),('ZONAS','Dependências por zona'),
-                    ('PASSAGEM','Redes de passagem'),('LOCAL','Distribuição local observada'),
-                    ('INDETERMINADA','Função indeterminada'),('DESTINOS','Destinos'),('PONTES','Pipes com segmentos-ponte'),
-                    ('ARTICULACOES','Nós de articulação'),('COMPONENTES','Componentes após interrupção'),
-                    ('INTERROMPIDOS','Destinos após interrupção'),('REMANESCENTES','Rotas após interrupção'),
-                    ('COMPARAR','Diferenças entre trabalhos'),('AGRUPADOS','Corredores agrupados'),
-                    ('BLOCOS','Blocos de abastecimento'),('LIGACOES_BLOCOS','Ligações entre blocos'),*CATEGORIAS_MACRO]:
-            self.categoria.addItem(n,k)
         self.categoria.currentIndexChanged.connect(self.mudar_categoria)
         v.addWidget(self.categoria)
         self.montar_resultados_macro(v)
@@ -149,10 +181,35 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         self.testar_b=botao(ens,'Simular retirada',self.testar)
         self.salvar_teste_b=botao(ens,'Salvar resultado da interrupção',self.salvar_teste)
         self.resumo_teste=aviso();ens.addWidget(self.resumo_teste)
-        _,exp=expansivel(v,'Exportações')
+        self.montar_exportacao_modelagem(v)
+        _,exp=expansivel(v,'Exportar resultados da investigação')
         self.exportar_gpkg_b=botao(exp,'GeoPackage e tabelas…',lambda:self.exportar('GPKG'))
         self.exportar_shp_b=botao(exp,'Shapefile e tabelas…',lambda:self.exportar('ESRI Shapefile'))
-        self.atualizar_tabela()
+        self.exportar_tabela_b=botao(exp,'Tabela de resultados · CSV…',self.exportar_tabela)
+        self.modalidade.currentIndexChanged.connect(self._alternar_modalidade)
+        self._alternar_modalidade()
+
+    def _alternar_modalidade(self,*_):
+        modo=self.modalidade.currentData()
+        for k,w in self.configuracoes.items():w.setVisible(k==modo)
+        for w in (self.ensaio_b,self.comparar_b):w.setVisible(modo=='CRITICIDADE')
+        if modo!='CRITICIDADE':self.ensaio_b.setChecked(False)
+        if modo!='INTEGRAL':self.mapa_integral.restaurar()
+        atual=self.categoria.currentData()
+        self.categoria.blockSignals(True)
+        self.categoria.clear()
+        for k,n in MODOS[modo][1].items():
+            if k not in DETALHES_MACRO or self.macro_integral:self.categoria.addItem(n,k)
+        self.categoria.setCurrentIndex(max(0,self.categoria.findData(atual)))
+        self.categoria.blockSignals(False)
+        self.mudar_categoria()
+
+    def exibir_categoria(self,categoria):
+        if categoria and self.categoria.findData(categoria)<0:
+            modo=next((k for k,(_,entradas) in MODOS.items() if categoria in entradas),None)
+            if modo:self.modalidade.setCurrentIndex(self.modalidade.findData(modo))
+        i=self.categoria.findData(categoria)
+        if i>=0:self.categoria.setCurrentIndex(i)
 
     def _projeto(self):
         return self.central.projetos.atual()
@@ -177,24 +234,29 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
             self.carregar_blocos(None)
             self.carregar_macro_integral(None)
             self.origem_integral.clear();self.origens_integral.clear();self.area_integral.clear()
-            self.identidade.clear();self.resumo.clear();self.origens.clear();self.areas.clear()
+            self.identidade.clear();self.resumo.clear();self.areas.clear()
             self.mostrar_destinos();self.atualizar_tabela()
         self.listar_execucoes()
         if foto is not None and (self.foto or {}).get('uuid')!=foto['uuid']:
             self.carregar_foto(foto)
         elif self.foto is not None:self.descrever_foto()
-        elif self.execucoes.count()>1:self.status.setText('Escolha uma execução topológica persistida.')
-        else:self.status.setText('Execute e salve uma análise em Analisar conectividade para começar.')
+        elif self.execucoes.count()>1:self.status.setText('Selecione uma análise de conectividade de referência.')
+        else:self.status.setText('Para investigar redes estruturantes, primeiro é necessário executar e salvar uma análise de conectividade.')
+        self.ir_conectividade_b.setVisible(self.execucoes.count()<=1)
 
     def listar_execucoes(self):
-        regs={r['uuid']:r for r in self.central._registros if r['tipo']=='TOPOLOGIA_GIS'}
+        regs=[r for r in self.central.registros_projeto() if r['tipo']=='TOPOLOGIA_GIS']
         atual=(self.foto or {}).get('uuid')
         self.execucoes.clear()
         self.execucoes.addItem('Selecionar…',None)
-        for r in reversed(self._projeto()['bases']):
-            if r['tipo']!='TOPOLOGIA_GIS':continue
-            nome=regs.get(r['uuid'],{}).get('nome',r.get('nome',Path(r['base']).stem))
-            self.execucoes.addItem(f"{nome} · {r['uuid'][:8]}",r)
+        for r in regs:
+            nome=r['nome']
+            hip=r.get('hipotese_nome') or 'Hipótese temporária'
+            rev=(r.get('hipotese_rev') or '')[:8]
+            data=(r.get('data') or '')[:19].replace('T',' ')
+            rotulo=' · '.join(x for x in (nome,hip,'rev. '+rev if rev else '',data,r['uuid'][:8]) if x)
+            self.execucoes.addItem(rotulo,r)
+            self.execucoes.setItemData(self.execucoes.count()-1,rotulo,Qt.ToolTipRole)
             if atual==r['uuid']:self.execucoes.setCurrentIndex(self.execucoes.count()-1)
 
     def escolher_execucao(self,*_):
@@ -206,7 +268,10 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
 
     def carregar_foto(self,foto,manter_resultado=False):
         if foto['projeto_uid']!=self._projeto()['uuid']:raise ValueError('A execução pertence a outro projeto.')
+        areas=dict(area=self.areas.currentData(),areas=sorted(self.escopo_areas() or ())) if (
+            self.foto and self.foto['uuid']==foto['uuid']) else None
         self.foto=foto;self._indice.clear()
+        self.relatorio_fontes_b.setChecked(False);self.relatorio_fontes_b.hide()
         self._destinos={};self._associacoes={};self._retiradas=set()
         if not manter_resultado:
             self.dados=None;self.diferencas=[];self.interrupcao=None
@@ -223,17 +288,13 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
                 if u in self.originais:self.pontos_parte.setdefault(u,[]).append((pos,n['uid']))
         self.nomes={}
         validas=set(foto['origens_validas'])
-        self.origens.clear()
         for r in foto['participantes']:
             u=r['uuid']
             if r['tipo']!='ORIGEM' or u not in validas:continue
             nome=r.get('nome') or r.get('categoria') or u[:10];self.nomes[u]=nome
-            item=QListWidgetItem(nome+' · '+pg.SITUACOES.get(r['situacao'],r['situacao']))
-            item.setData(Qt.UserRole,u);item.setCheckState(Qt.Checked);self.origens.addItem(item)
-        self.areas.clear();self.areas.addItem('Escolher área…',None)
         self.areas_foto={a['uid']:a for a in foto.get('areas',[])}
-        for a in self.areas_foto.values():self.areas.addItem(str(a.get('label') or a.get('id') or a['uid'][:10]),a['uid'])
         self.origens_da_fotografia_integral()
+        if areas:self.recuperar_areas_escopo(areas)
         self.selecao_corte.setText('Escolha as tubulações que ficarão indisponíveis.')
         self.mostrar_destinos()
         if not manter_resultado:self.atualizar_tabela()
@@ -265,27 +326,59 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         if not self.foto or self.central.ocupado():return
         from qgis.core import QgsProject
         from .entradas_grafo_gis import ler, preparar
-        from .hipoteses_gis import assinatura_inventario
+        from .hipoteses_gis import assinatura_inventario, assinaturas_fontes
+        from .modelo_gis import assinatura_confere
+        from collections import Counter
         foto=self.foto
         modelos=revisoes(self._projeto())
-        modelo=next((r for r in modelos if r['uuid']==foto.get('modelo_rev')),None)
+        modelo=next((r for r in modelos if r['uuid']==foto.get('modelo_rev')),{})
         assinatura=foto.get('assinatura_inventario')
-        if not modelo or not assinatura:
-            self.status.setText('Esta fotografia não possui a referência necessária à conferência de conteúdo.');return
-        ids={f['uid'] for f in foto['fontes']}
+        anteriores={f['uid']:f for f in modelo.get('fontes',())}
+        atuais={f['uid']:f for f in next(reversed(modelos),{}).get('fontes',())}
+        esperadas=foto.get('assinaturas_fontes')
+        camadas=self.central.modelo_gis.camadas()
+        contexto=QgsProject.instance().transformContext()
         def conferir():
-            prep=preparar([f for f in modelo['fontes'] if f['uid'] in ids],self.central.modelo_gis.camadas(),
-                          foto['crs'],QgsProject.instance().transformContext(),unidades=foto.get('unidades'))
-            def pronto(ok):
-                self.status.setText('Conteúdo das fontes corresponde à fotografia.'
-                                    if ok else 'Conteúdo das fontes mudou. Gere nova execução para analisar os dados atuais.')
-            self.tarefa('Conferindo conteúdo das fontes',
-                        lambda p,e:assinatura_inventario(ler(prep,p,e))==assinatura,pronto)
+            pendencias={}
+            prontas=[]
+            for f in foto['fontes']:
+                u=f['uid']
+                fonte=anteriores.get(u)
+                atual=atuais.get(u)
+                c=identificar(fonte,camadas) if fonte else None
+                if not c or not c.crs().isValid():pendencias[u]='Indisponível'
+                elif not assinatura_confere(fonte,descrever(c)) or c.isModified() or (
+                    atual and any(atual[k]!=fonte[k] for k in ('filtro','campos_mapeados','classificacao'))):
+                    pendencias[u]='Modificada'
+                elif not atual:pendencias[u]='Retirada da configuração atual'
+                else:prontas.append(fonte)
+            prep=preparar(prontas,camadas,foto['crs'],contexto,unidades=foto.get('unidades'),
+                          exigir_rede=False) if prontas else None
+            def verificar(p,e):
+                rs=dict(pendencias)
+                if prep:
+                    inv=ler(prep,p,e)
+                    ids=[f['uid'] for f in prontas]
+                    if esperadas is not None:
+                        obtidas=assinaturas_fontes(inv,ids)
+                        rs.update({u:'Correspondente' if esperadas.get(u)==obtidas[u] else 'Modificada' for u in ids})
+                    else:
+                        global_ok=not pendencias and assinatura and assinatura_inventario(inv)==assinatura
+                        rs.update(dict.fromkeys(ids,'Correspondente' if global_ok else 'Conferência por fonte inconclusiva'))
+                return rs
+            def pronto(rs):
+                c=Counter(rs.values())
+                instante=datetime.now(timezone.utc).strftime('%d/%m/%Y %H:%M:%S UTC')
+                resumo=f"{len(rs)} fontes verificadas em {instante} · {c['Correspondente']} correspondentes · " \
+                       f"{c['Modificada']} modificadas · {c['Indisponível']} indisponíveis."
+                if c['Correspondente']!=len(rs):resumo+=' Consulte as pendências antes de reaproveitar a fotografia.'
+                self.status.setText(resumo)
+                self.relatorio_fontes.setText(resumo+'\n'+'\n'.join(
+                    f"{f['nome']} · {rs[f['uid']]}" for f in foto['fontes']))
+                self.relatorio_fontes_b.show()
+                self.relatorio_fontes_b.setChecked(True)
+            self.tarefa('Verificando mudanças no cadastro GIS',verificar,pronto)
         self._com_erro(conferir)
-
-    def fontes_marcadas(self):
-        return [i.data(Qt.UserRole) for i in (self.origens.item(n) for n in range(self.origens.count()))
-                if i.checkState()==Qt.Checked]
 
     def _complementos(self,criar=False):
         return self.central._pagina_conectividade()._base_complementos(criar)
@@ -315,12 +408,12 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         self._destinos.clear();self._associacoes.clear();self.mostrar_destinos()
 
     def adicionar_area(self):
-        zona=self.areas.currentData()
-        if not zona or not self.foto:
-            self.status.setText('Escolha uma área cadastrada da execução selecionada.');return
+        zonas=self.escopo_areas()
+        if not zonas or not self.foto:
+            self.status.setText('Escolha uma ou mais áreas cadastradas da análise selecionada.');return
         novos=0
         for t in self.foto['tubos']:
-            if zona in t.get('zonas_uids',()):
+            for zona in zonas.intersection(t.get('zonas_uids',())):
                 d=motor.novo_destino('PIPE',t['uid'],zona=zona,modo='ESPACIAL',
                                     nome=str(t.get('label') or t.get('id') or t['uid'][:8]))
                 if d['uid'] not in self._destinos:
@@ -331,8 +424,8 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
     def associar(self):
         zona=self.areas.currentData()
         selecao=[i.data(Qt.UserRole) for i in self.lista_destinos.selectedIndexes()]
-        if not zona or not selecao:
-            self.status.setText('Escolha uma área e selecione na lista os destinos que deseja declarar.');return
+        if zona not in self.areas_foto or not selecao:
+            self.status.setText('Escolha uma única área e selecione os pontos que deseja declarar.');return
         def salvar():
             base=self._complementos(True)
             ds=[motor.novo_destino(d['tipo'],d['ref'],no=d['no'],zona=zona,nome=d['nome'])
@@ -357,8 +450,8 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
 
     def recuperar_associacao(self):
         zona=self.areas.currentData()
-        if not zona or not self.foto:
-            self.status.setText('Escolha uma área da execução.');return
+        if not self.foto or zona not in self.areas_foto:
+            self.status.setText('Escolha uma única área da análise de referência.');return
         def buscar():
             rs=[r for r in pg.revisoes(self._complementos(),self.projeto_uid)
                 if r['tipo']=='DESTINO_ZONA' and r['zona']==zona and r['topologia_uid']==self.foto['uuid']]
@@ -440,11 +533,13 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
             self.status.setText('Abra uma execução de conectividade GIS.');return
         self.cancelar_captura(reabrir=False)
         foto=self.foto
-        fontes=self.fontes_marcadas()
+        fontes=self._com_erro(self.fontes_marcadas)
+        if fontes is None:return
         ds=[d for d in self._destinos.values() if d['modo']!='AUTOMATICO']
         assocs=list(self._associacoes.values());nome=self.nome.text().strip() or 'Redes estruturantes'
         pasta=self._pasta_resultados()
         opcoes=self.configuracao_macro() if agrupado else None
+        if opcoes and self.escopo_areas() is not None:opcoes['areas']=sorted(self.escopo_areas())
         detalhe=self.detalhe_blocos.currentData()
         if blocos:
             from .agrupamento_corredores_gis import parametros as macro
@@ -508,12 +603,13 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         self._destinos={r['uid']:r for r in d['destinos']}
         self._associacoes={r['zona']:r for r in d['associacoes']}
         self.mostrar_destinos()
-        for i in range(self.origens.count()):
-            item=self.origens.item(i);item.setCheckState(Qt.Checked if item.data(Qt.UserRole) in d['fontes'] else Qt.Unchecked)
-        self.nome.setText(d['nome'])
+        self.recuperar_origens_escopo(d['fontes'])
+        self.nome.setText(self.central.nome_analise('ESTRUTURA_GIS',d['uuid'],d['nome']))
         self.carregar_macro(d)
         self.carregar_blocos(d)
         self.carregar_macro_integral(d)
+        modo='INTEGRAL' if self.macro_integral else 'PERCURSOS' if self.macro and 'blocos' not in d else 'CRITICIDADE'
+        self.modalidade.setCurrentIndex(self.modalidade.findData(modo))
         crit=sum('CRITICA' in t['funcoes'] for t in d['tubulacoes'])
         incid=sum(t['estado']=='INDETERMINADA_LIMITE' for t in d['tubulacoes'])
         self.resumo.setText(f"{len(d['tubulacoes'])} Pipes · {crit} ligações críticas · {len(d['rotas'])} trajetos · "
@@ -541,7 +637,9 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         if self.macro_integral:
             self.resumo.clear()
             tabela='MACRO_CORREDORES' if self.macro_integral['origens'] else 'MACRO_DETALHES'
-            self.categoria.setCurrentIndex(self.categoria.findData(tabela))
+            self.exibir_categoria(tabela)
+            if tabela=='MACRO_DETALHES':
+                self.resumo.setText('Alcance indeterminado sem origens. Consulte os blocos topológicos detalhados.')
         self.atualizar_tabela()
 
     def limpar_retiradas(self):
@@ -604,7 +702,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         def pronto(resultado):
             anterior,self.diferencas=resultado
             self.anterior_geo=GeometriasEstrutura(anterior)
-            self.categoria.setCurrentIndex(self.categoria.findData('COMPARAR'));self.atualizar_tabela()
+            self.exibir_categoria('COMPARAR');self.atualizar_tabela()
             self.status.setText(f"Comparação de {anterior['nome']} com {d['nome']} · {len(self.diferencas)} mudanças.")
         self.tarefa('Comparando investigações estruturais',trabalho,pronto)
 
@@ -620,14 +718,38 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
 
     def exportar(self,formato):
         if not self.dados or self.central.ocupado():return
-        if self.macro_integral:
-            self.exportar_integral(None,'REDE',formato);return
         pasta=QFileDialog.getExistingDirectory(self,'Pasta de exportação')
         if pasta:
             d=self.dados
             if self.interrupcao:d=dict(d,interrupcao=self.interrupcao)
             self.tarefa('Exportando investigação',lambda p,e:exportar(d,pasta,formato,p,e),
                          lambda caminho:self.status.setText('Exportado em '+str(caminho)))
+
+    def exportar_tabela(self):
+        if not self.dados or not self._linhas or self.central.ocupado():return
+        pasta=QFileDialog.getExistingDirectory(self,'Pasta da tabela de resultados')
+        if not pasta:return
+        identidade=self.dados['uuid'][:8]
+        tipo=self.categoria.currentData().lower()
+        destino=Path(pasta)/f'{tipo}_{identidade}_{uuid4().hex[:8]}.csv'
+        titulos=self.tabela._titulos
+        linhas=self._linhas
+        def salvar(cancelar,_):
+            import csv
+            from tempfile import TemporaryDirectory
+            from auditoria_fronteiras.modelos import verificar_cancelamento
+            with TemporaryDirectory(dir=pasta) as temp:
+                arquivo=Path(temp)/destino.name
+                with arquivo.open('w',encoding='utf-8-sig',newline='') as arq:
+                    csv_=csv.writer(arq)
+                    csv_.writerow(('UUID',*titulos))
+                    for r,valores in linhas:
+                        verificar_cancelamento(cancelar)
+                        csv_.writerow((r['uid'],*valores))
+                verificar_cancelamento(cancelar)
+                arquivo.rename(destino)
+            return destino
+        self.tarefa('Exportando a tabela filtrada',salvar,lambda p:self.status.setText('Tabela exportada em '+str(p)))
 
     def _nomes(self,ids):
         return ', '.join(self.nomes.get(u,u[:8]) for u in ids) or '—'
@@ -689,12 +811,15 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
         base='' if self.dados else 'Execute ou abra uma investigação estrutural.'
         acao_disponivel(self.executar_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         acao_disponivel(self.calcular_integral_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
+        acao_disponivel(self.previa_cadastro_b,'' if self.foto else 'Selecione uma análise de conectividade.')
+        acao_disponivel(self.exportar_tabela_b,'' if self._linhas else 'A tabela não possui registros para exportar.')
         acao_disponivel(self.executar_macro_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         acao_disponivel(self.calcular_blocos_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         for b in (self.mostrar_blocos_b,self.exportar_blocos_b):
             acao_disponivel(b,'' if (self.dados or {}).get('blocos') else 'Calcule ou abra um trabalho com blocos.')
         acao_disponivel(self.conferir_b,'' if self.foto else 'Selecione uma execução de conectividade GIS.')
         for b in (self.camadas_b,self.exportar_gpkg_b,self.exportar_shp_b):acao_disponivel(b,base)
+        for b in (self.exportar_gpkg_b,self.exportar_shp_b):b.setVisible(not bool(self.macro_integral))
         legado='Consulte as análises estruturais detalhadas para usar esta ferramenta.' if self.macro_integral else ''
         acao_disponivel(self.comparar_b,base or legado or ('' if self._comparaveis() else 'Salve outra investigação estrutural no projeto.'))
         acao_disponivel(self.testar_b,base or legado or ('' if self._retiradas else 'Escolha uma ou mais tubulações.'))

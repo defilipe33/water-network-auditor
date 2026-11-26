@@ -337,5 +337,6 @@ class Interface(unittest.TestCase):
         g.translate(0,3)
         self.assertTrue(camada.dataProvider().changeGeometryValues({f.id():g}))
         p.conferir_fontes();self.f.f.aguardar()
-        self.assertIn('Conteúdo das fontes mudou',p.status.text())
+        self.assertIn('1 modificadas',p.status.text())
+        self.assertIn('Modificada',p.relatorio_fontes.text())
         self.assertEqual(p.foto['assinatura_inventario'],self.f.t.dados['assinatura_inventario'])

@@ -247,7 +247,7 @@ class MapaTopologiaGIS:
             elif r['tipo']=='CONEXAO':
                 cand=candidatas.get(r.get('candidato'))
                 if g is None and cand and resultado:
-                    g=geometria(cand['wkb'])
+                    g=geometria(cand.get('wkb'))
                 if ativo and cand:representadas.add(cand['uid'])
                 gs=[g] if g is not None else pontos
                 for ponto in gs:

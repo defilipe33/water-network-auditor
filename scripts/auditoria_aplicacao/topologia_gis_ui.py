@@ -73,13 +73,16 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.setWidget(w)
         v=QVBoxLayout(w)
         botao(v,'‹ Investigar minha rede',self.voltar)
+        self.retorno_estrutura_b=botao(v,'‹ Escolher análise para redes estruturantes',
+                                      lambda:self.central.abrir_estrutura())
+        self.retorno_estrutura_b.hide()
         self.status=aviso('Topologia GIS · conectividade estrutural')
         v.addWidget(self.status)
         self.config_b, cfg=expansivel(v,'Configuração da análise')
         self.config_b.setChecked(True)
         self.nome=QLineEdit('Conectividade GIS')
         f=formulario(cfg)
-        f.addRow('Nome do trabalho',self.nome)
+        f.addRow('Nome da análise de conectividade',self.nome)
         self.crs=QgsProjectionSelectionWidget()
         f.addRow('CRS projetado em metros',self.crs)
         self.tolerancia=QDoubleSpinBox()
@@ -171,7 +174,6 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.executar_b.setObjectName('Principal')
         self.resumo=aviso()
         v.addWidget(self.resumo)
-        self.estrutura_b=botao(v,'Redes estruturantes',lambda:self.central.abrir_estrutura(foto=self.dados))
         self.categoria=QComboBox()
         self.categoria.currentIndexChanged.connect(self.mudar_resultados)
         self.ordem=QComboBox()
@@ -261,8 +263,6 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             (self.nova_hip_b,redes,'Grava uma hipótese independente com os parâmetros atuais.'),
             (self.reexecutar_b,redes,'Escolha entre execução temporária, nova revisão ou nova hipótese.'),
             (self.comparar_b,outra,'Compara dois resultados imutáveis e localiza suas diferenças.'),
-            (self.estrutura_b,'' if self.dados else 'Execute ou abra uma análise de conectividade.',
-             'Investiga a função das tubulações nesta execução topológica.'),
             (self.consultar_mapa_b,mapa,'Identifica o registro representado pelo elemento clicado.'),
             (self.revisar_mapa_b,mapa or ('' if tem_conexao else 'Nenhuma conexão representada no mapa.'),'Abre a revisão da conexão selecionada.'),
             (self.destacar_b,falta_resultado,'Realça as geometrias relacionadas.'),
@@ -663,6 +663,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                     raise ValueError('O conteúdo das fontes mudou desde a revisão salva. Restaure as fontes ou crie nova revisão.')
                 d=executar(prep,contexto,parametros,participantes,parar,etapa,inventario=inventario)
                 d['assinatura_inventario']=assinatura
+                d['assinaturas_fontes']=hg.assinaturas_fontes(inventario,(f['uid'] for f in d['fontes']))
                 etapa(0,'Gravando execução verificada')
                 pg.salvar_execucao(destino,d,parar)
                 return d
@@ -711,13 +712,14 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.componentes_tubo={t:g for g in d['componentes'] for t in g['tubos']}
         self.comps_origens={r['uuid']:r for r in d['participantes'] if r['tipo']=='ORIGEM'}
         if restaurar_configuracao:
+            self._rascunho_restaurado=None
             hip=d.get('hipotese')
             self._hip_ativa=hip if hip and hip.get('formato')==hg.FORMATO else None
             if self._hip_ativa:
                 modelo=next((r for r in revisoes(self._projeto()) if r['uuid']==hip['configuracao']['modelo_rev']),None)
                 if modelo is not None:self._listar_redes(modelo)
             self._pinos={r['uuid']:r for r in d['participantes']}
-            self.nome.setText(d['nome'])
+            self.nome.setText(self.central.nome_analise('TOPOLOGIA_GIS',d['uuid'],d['nome']))
             self.crs.setCrs(QgsCoordinateReferenceSystem(d['crs']))
             self.tolerancia.setValue(d['parametros']['tolerancia'])
             self.limite.setValue(d['parametros']['limite_mm'])
@@ -737,6 +739,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self.listar_categorias()
         self._resultados_por_uid={r['uid']:r for r in [*d['componentes'],*d['diagnosticos']]}
         self.preencher_conexoes({**self.registros,**self._pinos},set(self._selecionados()))
+        if self.revisao_seq_b.isChecked():self._abrir_revisao_seq(True)
         self.mostrar_contexto()
         self.agendar_mapa()
 

@@ -27,6 +27,15 @@ def assinatura_inventario(inventario):
     return digest([sorted((r['uid'],sorted(r['fontes'])) for r in grupo) for grupo in inventario[:4]])
 
 
+def assinaturas_fontes(inventario,ids):
+    itens={u:[] for u in ids}
+    for grupo in inventario[:4]:
+        for r in grupo:
+            for u in r['fontes']:
+                if u in itens:itens[u].append(r['uid'])
+    return {u:digest(sorted(rs)) for u,rs in itens.items()}
+
+
 def dados_hipotese(nome, projeto, config, participantes, assinatura):
     return dict(formato=FORMATO, nome=nome, projeto_uid=projeto, configuracao=config,
                 selecionados=[r['uuid'] for r in participantes],

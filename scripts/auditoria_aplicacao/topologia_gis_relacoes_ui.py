@@ -3,13 +3,14 @@
 from qgis.PyQt.QtCore import Qt
 from collections import Counter
 
-from qgis.PyQt.QtWidgets import QComboBox, QDialog, QHBoxLayout, QInputDialog, QLineEdit, QMessageBox, QVBoxLayout
+from qgis.PyQt.QtWidgets import QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QInputDialog, QLineEdit, QMessageBox, QVBoxLayout
 
 from . import persistencia_grafo_gis as pg
 from .mapa_topologia_gis import pontos_portas
 from .tabelas_topologia_gis import ACOMPANHAMENTO, TabelaRelacoes
 from .modelo_gis_ui import aviso, botao, expansivel
 from .navegacao_cartografica import navegar_registros
+from .revisao_sequencial_gis import RevisaoSequencialGIS
 
 
 CANDIDATAS = ('CONEXAO_T', 'CRUZAMENTO', 'EXTREMIDADES_PROXIMAS')
@@ -21,12 +22,13 @@ TIPOS_CONEXAO = {
 }
 
 
-class RelacoesGIS:
+class RelacoesGIS(RevisaoSequencialGIS):
     def iniciar_tabela_conexoes(self, layout):
         self.conexoes_b, secao = expansivel(layout,'Conexões e continuidade da rede')
         self.filtro_conexoes = QComboBox()
         secao.addWidget(self.filtro_conexoes)
         self.conexoes_lista = TabelaRelacoes()
+        self.conexoes_lista.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.conexoes_lista.colunas(('Considerar / nome','Categoria','Interpretação','Acompanhamento','Pontos','Revisão'))
         self.conexoes_lista.setMaximumHeight(200)
         self.conexoes_lista.itemChanged.connect(self.alterou_participacao)
@@ -46,6 +48,8 @@ class RelacoesGIS:
         self.conexao_info = aviso()
         secao.addWidget(self.conexao_info)
         botao(secao,'Revisar conexão selecionada…',self.revisar_conexao_tabela)
+        self.montar_revisao_sequencial(secao)
+        secao.addWidget(aviso('Uma conexão direta declara uma ligação. Uma tubulação de interligação cria um Pipe complementar.'))
         self.adicionar_conexao_b = botao(secao,'Adicionar conexão entre tubulações…',lambda:self.editar('CONEXAO'))
         botao(secao,'Criar tubulação de interligação…',self.abrir_editor_proposta)
 

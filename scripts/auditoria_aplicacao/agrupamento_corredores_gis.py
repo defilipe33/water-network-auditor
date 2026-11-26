@@ -15,22 +15,25 @@ FUNCOES = {
 }
 
 
-def parametros(modo='MANUAL', maximo=24, minimo_m=0):
-    if modo not in ('MANUAL', 'AUTOMATICO') or not 1 <= maximo <= 200:
+def parametros(modo='MANUAL', maximo=24, minimo_m=0, areas=None):
+    if modo not in ('MANUAL', 'AUTOMATICO', 'COMBINADO') or not 1 <= maximo <= 200:
         raise ValueError('Escolha o modo e um máximo entre 1 e 200 destinos.')
     if not isfinite(minimo_m) or minimo_m < 0:
         raise ValueError('A distância mínima deve ser finita e não negativa.')
-    return dict(modo=modo, maximo=maximo, minimo_m=minimo_m)
+    r=dict(modo=modo, maximo=maximo, minimo_m=minimo_m)
+    if areas is not None:r['areas']=sorted(set(areas))
+    return r
 
 
-def perifericos(rede, busca, opcoes, cancelar=None):
+def perifericos(rede, busca, opcoes, cancelar=None, *, excluir=(), elegiveis_area=None):
     """Uma amostra de folhas da floresta por ramo e faixa de distância."""
     dist, pais, _ = busca
     if not pais:
         return [], dict(folhas=0, elegiveis=0, grupos=0, faixa_m=0)
     filhos = Counter(pai for pai, _ in pais.values())
     folhas = [u for u in pais if u not in filhos]
-    elegiveis = {u for u in folhas if dist[u] >= opcoes['minimo_m']}
+    candidatos=folhas if elegiveis_area is None else set(pais).intersection(elegiveis_area)
+    elegiveis = {u for u in candidatos if u not in excluir and dist[u] >= opcoes['minimo_m']}
     faixa = max(1e-6, max(dist[u] for u in pais) / max(3, min(12, opcoes['maximo'])))
     ordem = sorted(pais, key=lambda u: (dist[u], rede.uids[u]))
     ancoras, anteriores, raiz, grupos = {}, {}, {}, {}

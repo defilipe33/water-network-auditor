@@ -70,6 +70,8 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         menu.addAction('Abrir projeto (.wna)…', self.abrir_projeto)
         menu.addAction('Salvar projeto',self.salvar_projeto)
         menu.addAction('Salvar projeto como…',self.salvar_projeto_como)
+        menu.addAction('Continuar último trabalho',self.continuar_trabalho)
+        menu.addAction('Abrir análise salva',self.abrir_analises_projeto)
         menu.addAction('Organizar projeto existente…', self.organizar_existente)
         menu.addAction('Mostrar localização do projeto',self.mostrar_localizacao)
         menu.addAction('Abrir pasta do projeto',self.abrir_pasta_projeto)
@@ -95,9 +97,16 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.contexto_curto = aviso()
         self.contexto_curto.setProperty("papel", "secundario")
         v.addWidget(self.contexto_curto)
+        self.escolhas_projeto=QWidget()
+        escolhas=QVBoxLayout(self.escolhas_projeto);escolhas.setContentsMargins(0,0,0,0)
         self.ultimo_trabalho_info=aviso()
-        v.addWidget(self.ultimo_trabalho_info)
-        self.continuar_trabalho_b=acao(v,'Continuar último trabalho',self.continuar_trabalho,True)
+        escolhas.addWidget(self.ultimo_trabalho_info)
+        self.continuar_trabalho_b=acao(escolhas,'Continuar último trabalho',self.continuar_trabalho,True)
+        acao(escolhas,'Abrir análise salva',self.abrir_analises_projeto)
+        acao(escolhas,'Iniciar nova investigação',self.nova_investigacao)
+        v.addWidget(self.escolhas_projeto)
+        self.escolhas_projeto.hide()
+        self._uid_escolhas=None
         self.cenarios = QComboBox()
         self.cenarios.setMinimumContentsLength(10)
         self.cenarios.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -120,28 +129,28 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.quadro = QuadroModelo(self)
         self.paginas.addWidget(self.quadro)
         self.investigar, iv = self.pagina()
-        iv.addWidget(aviso('O que posso investigar?'))
+        iv.addWidget(aviso('Investigar minha rede'))
         self.objetivo = QComboBox()
-        for texto in ['Verificar modelo', 'Redes estruturantes', 'Zonas e fronteiras',
-                      'Interferências', 'Intervenções']:
-            self.objetivo.addItem(texto)
+        for codigo,texto in [
+            ('verificar','Verificar travessias e limites'),
+            ('conectividade','Analisar conectividade'),
+            ('estrutura','Redes estruturantes e blocos de abastecimento'),
+            ('integrada','Investigação integrada GIS–WaterGEMS'),
+            ('interferencias','Examinar interferências GIS'),
+            ('topologia','Consultar topologia WaterGEMS'),
+            ('ilhas','Ilhas sem origem · WaterGEMS'),
+            ('corredores','Corredores · WaterGEMS'),
+        ]:
+            self.objetivo.addItem(texto,codigo)
+        self.objetivo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
+        self.objetivo.setMinimumContentsLength(14)
         iv.addWidget(self.objetivo)
         self.objetivo.currentIndexChanged.connect(self.atualizar_objetivo)
         self.descricao = aviso()
         iv.addWidget(self.descricao)
         self.executar_objetivo = acao(iv, 'Abrir análise', self.iniciar_objetivo, True)
-        acao(iv, 'Analisar conectividade', self.abrir_conectividade)
-        acao(iv,'Abrir análise de conectividade salva…',lambda:self.listar_execucoes_salvas())
-        self.continuar_investigacao = acao(iv, 'Continuar investigação aberta', lambda: self.acionar('continuar'))
-        self.investigacao_mais = QPushButton('Outras ações deste contexto')
-        self.menu_investigar = QMenu(self.investigacao_mais)
-        for nome, chave in [('Consulta topológica', 'topologia'), ('Ilhas sem origem', 'ilhas'),
-                             ('Auditoria GIS', 'gis'), ('Associar GIS e WaterGEMS', 'integrar'),
-                             ('Corredores sobre topologia WaterGEMS', 'corredores')]:
-            self.menu_investigar.addAction(nome, lambda checked=False, c=chave: self.acionar(c))
-        self.investigacao_mais.setMenu(self.menu_investigar)
-        iv.addWidget(self.investigacao_mais)
-        iv.addWidget(aviso('Zonas topológicas e isolamento por válvulas estão no roadmap.'))
+        self.continuar_investigacao=acao(iv,'Abrir investigação integrada GIS–WaterGEMS…',lambda:self.acionar('continuar'))
+        self.preparar_integrada=acao(iv,'Associar GIS e WaterGEMS',lambda:self.acionar('integrar'))
         iv.addStretch()
         self.trabalhos, tv = self.pagina()
         tv.addWidget(aviso('Quais trabalhos já realizei?'))
@@ -170,7 +179,11 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         tv.addWidget(self.trabalhos_lista)
         self.trabalho_detalhes = aviso()
         tv.addWidget(self.trabalho_detalhes)
-        self.abrir_trabalho_b = acao(tv, 'Abrir trabalho', self.abrir_trabalho, True)
+        self.abrir_trabalho_b = acao(tv, 'Abrir análise selecionada', self.abrir_trabalho, True)
+        self.hip_trabalho=QComboBox()
+        self.hip_trabalho.addItem('Todas as hipóteses',None)
+        self.hip_trabalho.activated.connect(self._filtrar_hipotese_trabalhos)
+        tv.insertWidget(3,self.hip_trabalho)
         self.localizar_trabalho_b = acao(tv,'Localizar arquivo do trabalho…',self.relocalizar_trabalho)
         self.localizar_trabalho_b.hide()
         self.trabalhos_menu_b = QPushButton('Histórico, conjuntos e exportações')
@@ -270,6 +283,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.salvar_estado_atual()
         self.paginas.setCurrentWidget({'preparar': self.quadro, 'investigar': self.investigar,
                                        'trabalhos': self.trabalhos}[codigo])
+        self.escolhas_projeto.hide()
         self.settings.setValue('ambiente/area', codigo)
         if codigo == 'trabalhos':
             if not self.projetos.atual():self.garantir_catalogo()
@@ -383,8 +397,8 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
 
     def preparar_avisos(self):
         if not self.ocupado():
-            self.continuar_investigacao.setText('Continuar investigação aberta' if self.app.painel_atual()
-                                                else 'Abrir investigação persistida…')
+            self.continuar_investigacao.setText('Continuar investigação integrada GIS–WaterGEMS' if self.app.painel_atual()
+                                                else 'Abrir investigação integrada GIS–WaterGEMS…')
 
     def atualizar_cenarios(self):
         f = self._fatos
@@ -492,16 +506,18 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.mudar_area()
         self.atualizar()
         self.atualizar_continuacao()
+        self.escolhas_projeto.show()
         if avisos:self.receber_mapa('\n'.join(avisos))
         self.enriquecer_lista()
 
-    def abrir_conectividade(self, checked=False, origens=False):
+    def abrir_conectividade(self, checked=False, origens=False, para_estrutura=False):
         if self.ocupado() or not self.app.resolver() or not self.modelo_gis.resolver():
             return False
         if not self.projetos.atual():
             self.receber_mapa('Crie ou abra um projeto para analisar sua rede.')
             return False
         pagina=self._pagina_conectividade()
+        pagina.retorno_estrutura_b.setVisible(para_estrutura)
         pagina.abrir(origens)
         self.area.setCurrentIndex(self.area.findData('investigar'))
         self.paginas.setCurrentWidget(pagina)
@@ -522,10 +538,6 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         if not p:
             self.receber_mapa('Crie ou abra um projeto para analisar redes estruturantes.')
             return False
-        topologia=self.__dict__.get('conectividade_gis')
-        if foto is None and not recuperar and topologia is not None:
-            d=topologia.dados
-            if d and d.get('projeto_uid')==p['uuid']:foto=d
         pagina=self.__dict__.get('estrutura_gis')
         if pagina is None:
             from .estrutura_gis_ui import EstruturaGIS
@@ -578,26 +590,31 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.mapa_info.hide()
 
     def atualizar_objetivo(self):
-        textos = [
-            ('Auditoria geométrica de travessias em setores, zonas de VRP, zonas de booster e outros limites cadastrados.', 'Verificar travessias e limites'),
-            ('Investigue corredores, ligações críticas e dependências sobre uma execução de conectividade GIS.', 'Abrir redes estruturantes'),
-            ('Auditoria GIS de travessias entre redes e limites. Não exige WaterGEMS. Zonas topológicas são futuras.', 'Investigar fronteiras GIS'),
-            ('Examinar travessias e dispositivos próximos nas camadas GIS. Comparação topológica com WaterGEMS é adicional.', 'Examinar interferências GIS'),
-            ('Propostas existentes pertencem à investigação integrada aberta. Planejamento sobre topologia GIS independente é futuro.', 'Consultar propostas existentes'),
-        ]
-        descricao, acao_ = textos[self.objetivo.currentIndex()]
-        self.descricao.setText(descricao)
-        self.executar_objetivo.setText(acao_)
+        codigo=self.objetivo.currentData()
+        textos={
+            'verificar':'Auditoria geométrica de travessias em setores, zonas e outros limites GIS.',
+            'conectividade':'Monte a fotografia da conectividade GIS e revise ligações candidatas.',
+            'estrutura':'Selecione uma análise de conectividade salva para estudar corredores, blocos e criticidade.',
+            'integrada':'Consulte ocorrências, decisões e propostas da investigação integrada.',
+            'interferencias':'Examine travessias e dispositivos próximos nas camadas GIS.',
+        }
+        self.descricao.setText(textos.get(codigo,'Use a topologia WaterGEMS disponível no projeto.'))
+        self.executar_objetivo.setVisible(codigo!='integrada')
+        self.continuar_investigacao.setVisible(codigo=='integrada')
+        self.preparar_integrada.setVisible(codigo=='integrada')
 
     def iniciar_objetivo(self):
         self.limpar_mapa()
-        i = self.objetivo.currentIndex()
-        if i == 4:
-            self.historico_aberto()
-        elif i in (0, 2, 3):
-            self.abrir_analise_gis({0: 'verificar', 2: 'fronteiras', 3: 'interferencias'}[i])
-        else:
+        self.escolhas_projeto.hide()
+        codigo=self.objetivo.currentData()
+        if codigo in ('verificar','interferencias'):
+            self.abrir_analise_gis(codigo)
+        elif codigo=='conectividade':
+            self.abrir_conectividade()
+        elif codigo=='estrutura':
             self.abrir_estrutura()
+        else:
+            self.acionar('continuar' if codigo=='integrada' else codigo)
 
     def abrir_analise_gis(self, objetivo):
         if self.ocupado() or not self.modelo_gis.resolver(): return False
@@ -644,7 +661,15 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         hip=self._filtro_hipotese_uid
         visual=self.estados_de_visualizacao()
         linhas=[]
-        for r in self.registros_projeto():
+        registros=self.registros_projeto()
+        hipoteses={r['hipotese_uid']:r.get('hipotese_nome') or r['hipotese_uid'][:8]
+                   for r in registros if r.get('hipotese_uid')}
+        self.hip_trabalho.clear()
+        self.hip_trabalho.addItem('Todas as hipóteses',None)
+        for u,n in sorted(hipoteses.items(),key=lambda x:(x[1].casefold(),x[0])):
+            self.hip_trabalho.addItem(f'{n} · {u[:8]}',u)
+        self.hip_trabalho.setCurrentIndex(max(0,self.hip_trabalho.findData(hip)))
+        for r in registros:
             if tipo and r['tipo']!=tipo:continue
             if hip and r.get('hipotese_uid')!=hip:continue
             if termo not in ' '.join(str(r.get(k,'')) for k in ('nome','modelo_uid','hipotese_nome','base','uuid')).casefold():
@@ -690,7 +715,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             detalhes=f"\nHipótese {hip} · revisão {(r.get('hipotese_rev') or '—')[:8]}" if hip else ''
             if r.get('componentes') is not None:
                 detalhes+=f"\n{r['componentes']} componentes · {r.get('origens') or 0} fontes · {r.get('conexoes') or 0} conexões"
-            self.trabalho_detalhes.setText(r['nome'] + '\n' + dispo + detalhes +'\n'+r['base']+
+            self.trabalho_detalhes.setText(r['nome'] + ' · ' +r['uuid'][:8]+'\n' + dispo + detalhes +'\n'+r['base']+
                                           ('\nCenário ' + str(cenario) if cenario is not None else ''))
         else:
             self.trabalho_detalhes.setText('Selecione um trabalho do projeto. Use o catálogo para adicionar ou recuperar arquivos.')
@@ -699,15 +724,22 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         item=self.trabalhos_lista.currentItem()
         return item.data(Qt.UserRole) if item else None
 
+    def _filtrar_hipotese_trabalhos(self,*_):
+        self._filtro_hipotese_uid=self.hip_trabalho.currentData()
+        self.listar_trabalhos()
+
     def menu_trabalho(self,i):
         item=self.trabalhos_lista.item(i.row(),0)
         r=item.data(Qt.UserRole)
-        opcoes=[('Abrir trabalho',lambda:self.abrir_trabalho(registro=r)),
+        opcoes=[('Abrir análise',lambda:self.abrir_trabalho(registro=r)),
                 ('Abrir pasta do arquivo',lambda:self.abrir_pasta_local(Path(r['base']).parent)),
                 ('Localizar arquivo…',self.relocalizar_trabalho),
                 ('Histórico e dependências',lambda:self.historico_trabalho(r))]
         if r['tipo'] in tp.TABELAS:
             opcoes.append(('Abrir para comparar…',lambda:self.abrir_trabalho(registro=r,comparar=True)))
+            opcoes.append(('Consultar parâmetros…',lambda:self.parametros_analise(r),
+                           '' if r['disponivel'] else 'O arquivo da análise está indisponível.'))
+        opcoes.append(('Renomear análise…',lambda:self.renomear_analise(r)))
         return opcoes
 
     def relocalizar_trabalho(self):

@@ -21,7 +21,7 @@ EQUIPAMENTOS = ORIGENS | {'PRV', 'TCV', 'FCV', 'PBV', 'PUMP', 'BOOSTER',
                         'AIR_VALVE', 'HYDRANT', 'REGISTRO', 'DISPOSITIVO'}
 
 
-def preparar(fontes, camadas, crs, contexto, redes=None, unidades=None):
+def preparar(fontes, camadas, crs, contexto, redes=None, unidades=None, *, exigir_rede=True, inventario_completo=False):
     destino = crs_processamento(Parametros(crs=crs))
     omitir = []
     preparadas = []
@@ -34,19 +34,24 @@ def preparar(fontes, camadas, crs, contexto, redes=None, unidades=None):
             continue
         camada = identificar(f, camadas)
         if camada is None or not camada.crs().isValid():
-            if categoria == 'PIPE':
+            if categoria == 'PIPE' and not inventario_completo:
                 raise ValueError(f"Rede selecionada indisponível ou sem CRS: {f['nome']}. Confira o Modelo GIS.")
             omitir.append(f"{f['nome']}: contexto indisponível ou sem CRS.")
             continue
         atual = descrever(camada)
         if not assinatura_confere(f,atual):
-            if categoria == 'PIPE':
+            if categoria == 'PIPE' and not inventario_completo:
                 raise ValueError(f"Rede alterada: {f['nome']}. Atualize a fonte no Modelo GIS.")
             omitir.append(f"{f['nome']}: fonte alterada. Atualize o Modelo GIS.")
             continue
-        expressao(f['filtro'], atual['campos'])
-        preparadas.append((deepcopy(f), QgsVectorLayerFeatureSource(camada), camada.crs()))
-    if not any(f['categoria']=='PIPE' for f,_,_ in preparadas):
+        fonte=deepcopy(f)
+        if inventario_completo and categoria=='PIPE':
+            fonte['filtro']=''
+        if inventario_completo and camada.subsetString():
+            omitir.append(f"{f['nome']}: subconjunto do provedor limita o universo visível.")
+        expressao(fonte['filtro'], atual['campos'])
+        preparadas.append((fonte, QgsVectorLayerFeatureSource(camada), camada.crs()))
+    if exigir_rede and not any(f['categoria']=='PIPE' for f,_,_ in preparadas):
         raise ValueError('Cadastre e selecione ao menos uma fonte de tubulações.')
     return preparadas, destino, QgsCoordinateTransformContext(contexto), dict(unidades or {}), omitir
 
@@ -61,7 +66,7 @@ def _numero(valor, fator):
         return None
 
 
-def ler(preparacao, cancelar=None, etapa=lambda *_:None):
+def ler(preparacao, cancelar=None, etapa=lambda *_:None, *, cadastro=None):
     fontes, destino, contexto, unidades, avisos = preparacao
     tubos, junctions, equipamentos, areas = [], [], [], []
     inventarios = dict(PIPE=tubos, JUNCTION=junctions, EQUIPAMENTO=equipamentos, AREA=areas)
@@ -80,8 +85,12 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None):
         for f in snapshot.getFeatures(req):
             verificar_cancelamento(cancelar)
             geom = f.geometry()
+            if cadastro is not None:
+                contagem=cadastro.setdefault(fonte['uid'],dict(lidas=0,descartes=[]))
+                contagem['lidas']+=1
             if geom.isEmpty() or not geom.isGeosValid():
                 descartadas += 1
+                if cadastro is not None:contagem['descartes'].append(dict(fid=f.id(),motivo='Geometria inválida ou vazia'))
                 continue
             atributos = {campo.name():valor_python(f[campo.name()]) for campo in snapshot.fields()}
             bruto = bytes(geom.asWkb()).hex()
@@ -98,6 +107,7 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None):
             for i,g in enumerate(geom.asGeometryCollection() if geom.isMultipart() and categoria in ('PIPE','JUNCTION') else [geom]):
                 if categoria=='PIPE' and g.length()<=0:
                     descartadas += 1
+                    if cadastro is not None:contagem['descartes'].append(dict(fid=f.id(),motivo='Parte sem comprimento',parte=i))
                     continue
                 uid = digest([categoria, feicao, i])
                 if uid in existentes:
@@ -114,6 +124,7 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None):
                             material=atributos.get(mapeamento.get('material')),
                             setor_operacional=atributos.get(mapeamento.get('setor_operacional')),
                             extensao=[caixa.xMinimum(),caixa.yMinimum(),caixa.xMaximum(),caixa.yMaximum()])
+                if cadastro is not None:item['atributos_originais']=atributos
                 existentes[uid] = item
                 inventario.append(item)
         if descartadas:

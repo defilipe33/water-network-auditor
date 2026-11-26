@@ -57,6 +57,8 @@ class VisualProjetoUI:
             tipo='ESTRUTURA_GIS';d=pagina.dados;uid=d['uuid']
             item=pagina.registro()
             visual=dict(categoria=pagina.categoria.currentData(),filtro=pagina.filtro.text(),
+                        modalidade=pagina.modalidade.currentData(),area=pagina.areas.currentData(),
+                        areas=sorted(pagina.escopo_areas() or ()),
                         coluna=pagina._ordem,selecionado=item['uid'] if item else None,
                         comparacao=pagina.anterior_geo.d['uuid'] if pagina.diferencas
                         and getattr(pagina,'anterior_geo',None) else None)
@@ -151,6 +153,8 @@ class VisualProjetoUI:
                     pagina.paginar(pos//200)
                     pagina.resultados.setCurrentCell(pos%200,0)
             elif tipo=='ESTRUTURA_GIS':
+                if 'modalidade' in v:self._restaurar_widget(pagina.modalidade,v['modalidade'])
+                if 'area' in v:pagina.recuperar_areas_escopo(v)
                 if pagina.macro_integral:
                     pagina.recuperar_estado_macro_integral(v.get('macro_integral', {}))
                 if pagina.macro:
@@ -168,7 +172,7 @@ class VisualProjetoUI:
                         i.setCheckState(Qt.Checked if i.data(Qt.UserRole) in areas else Qt.Unchecked)
                 categoria=v.get('categoria')
                 if categoria!='COMPARAR':
-                    self._restaurar_widget(pagina.categoria,categoria)
+                    pagina.exibir_categoria(categoria)
                 pagina.filtro.setText(v.get('filtro',''))
                 pagina._ordem=self._ordem_validada(v.get('coluna'),len(pagina.dados_tabela()[1]))
                 self._indicador(pagina.tabela,pagina._ordem)

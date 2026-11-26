@@ -163,7 +163,38 @@ class GestaoProjetosUI:
         self.app.atividades.executar_thread('Verificar referência do trabalho',p['nome'],conferir,pronto,self.receber_mapa)
 
     def registros_projeto(self):
-        return tp.registros(self.projetos.atual(),self._registros,self._extras_trabalhos)
+        rs=tp.registros(self.projetos.atual(),self._registros,self._extras_trabalhos)
+        visual=self.estados_de_visualizacao()
+        return [dict(r,nome=self.nome_analise(r['tipo'],r['uuid'],r['nome'],visual)) for r in rs]
+
+    def nome_analise(self,tipo,uid,nome,visual=None):
+        if visual is None:visual=self.estados_de_visualizacao()
+        return visual.get(f'{tipo}:{uid}',{}).get('nome_consulta') or nome
+
+    def renomear_analise(self,r):
+        p=self.projetos.atual()
+        if not p or self.ocupado() or not self.projetos.contem(r['tipo'],r['uuid']):return
+        nome,ok=QInputDialog.getText(self,'Renomear análise salva','Nome de apresentação',text=r['nome'])
+        if ok and nome.strip():
+            self._guardar_visual(p,r['tipo'],r['uuid'],visual={'nome_consulta':nome.strip()})
+            self.listar_trabalhos()
+
+    def parametros_analise(self,r):
+        import json
+        from . import persistencia_grafo_gis as pg
+        p=self.projetos.atual()
+        uid=p['uuid']
+        abrir=pg.carregar if r['tipo']=='TOPOLOGIA_GIS' else pg.carregar_estrutura
+        def consultar(*_):
+            d=abrir(r['base'],r['uuid'],uid)
+            return dict(parametros=d.get('parametros',{}),origens=d.get('fontes') if r['tipo']=='ESTRUTURA_GIS'
+                        else d.get('origens_validas'),hipotese=(d.get('hipotese') or {}).get('nome'),
+                        configuracao=d.get('configuracao'))
+        def pronto(d):
+            from qgis.PyQt.QtCore import QTimer
+            QTimer.singleShot(0,lambda:QMessageBox.information(
+                self,r['nome'],json.dumps(d,ensure_ascii=False,indent=2)))
+        self.app.atividades.executar_thread('Consultar parâmetros',p['nome'],consultar,pronto,self.receber_mapa)
 
     def ultimo_trabalho(self):
         p=self.projetos.atual()
@@ -172,6 +203,10 @@ class GestaoProjetosUI:
         return next(iter(self.registros_projeto()),None) if p else None
 
     def atualizar_continuacao(self):
+        uid=(self.projetos.atual() or {}).get('uuid')
+        if uid!=self._uid_escolhas:
+            self._uid_escolhas=uid
+            self.escolhas_projeto.setVisible(bool(uid))
         r=self.ultimo_trabalho()
         acao_disponivel(self.continuar_trabalho_b,'' if r else 'Salve pelo menos um trabalho no projeto.')
         if r:
@@ -182,7 +217,17 @@ class GestaoProjetosUI:
 
     def continuar_trabalho(self):
         if r:=self.ultimo_trabalho():
-            self.abrir_trabalho(registro=r,cartografar=True)
+            if self.abrir_trabalho(registro=r,cartografar=True):
+                self.escolhas_projeto.hide()
+
+    def abrir_analises_projeto(self,tipo=None):
+        if isinstance(tipo,str):self.tipo_trabalho.setCurrentIndex(self.tipo_trabalho.findData(tipo))
+        self.area.setCurrentIndex(self.area.findData('trabalhos'))
+        self.mudar_area()
+
+    def nova_investigacao(self):
+        self.area.setCurrentIndex(self.area.findData('investigar'))
+        self.mudar_area()
 
     def listar_execucoes_salvas(self,hipotese_uid=None):
         if not self.projetos.atual():return

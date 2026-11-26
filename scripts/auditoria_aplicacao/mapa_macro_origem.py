@@ -34,44 +34,50 @@ def _cores_blocos(blocos):
     return cores
 
 
-def plano(foto,m,modo,blocos,cor=PADRAO,uniforme=True,alvo=None):
+def plano(foto,m,modo,blocos,cor=PADRAO,uniforme=True,alvo=None,espessuras=None,*,papeis=False):
     """Cada segmento possui uma única classe de representação por vista."""
     visiveis={i for b in blocos for i in b['segmentos']}
     por_cor={i:c for c in m['corredores'] for i in c['segmentos']}
     saida=[]
+    estilos=dict(contexto=.20,bloco=.36,corredor=1.,destaque=1.4)
+    estilos.update(espessuras or {})
+    def adicionar(nome,cor,largura,segmentos,prioridade=1):
+        r=(nome,cor,str(largura),segmentos)
+        saida.append((*r,prioridade) if papeis else r)
     if modo=='INFLUENCIA':
         for u,ids in influencia(foto,m).items():
             rotulo=dict(EMPATE='Empate',TRANSICAO='Transição entre origens',SEM_ACESSO='Sem origem alcançável',
                         INDETERMINADO='Alcance indeterminado').get(u)
-            saida.append((rotulo or 'Origem '+u[:8],_cor(u) if rotulo is None else '#a1a5a7','0.52',ids))
+            adicionar(rotulo or 'Origem '+u[:8],_cor(u) if rotulo is None else '#a1a5a7','0.52',ids)
         return saida
     if modo=='COMPARACAO':
         for fs,ids in sorted(acessos_comparados(m).items()):
             rotulo='Compartilhado' if len(fs)>1 else 'Origem '+fs[0][:8] if fs else 'Fora da seleção'
-            saida.append((rotulo,'#567991' if len(fs)>1 else _cor(fs[0]) if fs else '#a5a9ad','0.68' if fs else '0.18',ids))
+            adicionar(rotulo,'#567991' if len(fs)>1 else _cor(fs[0]) if fs else '#a5a9ad','0.68' if fs else '0.18',ids)
         return saida
     if modo in ('BLOCO','CORREDOR'):
-        if alvo:saida.append((alvo['nome'],cor,'1.05',alvo['segmentos']))
+        if alvo:adicionar(alvo['nome'],cor,estilos['destaque'],alvo['segmentos'],2)
         return saida
     if modo=='COMPLETA':
         fundo=set(range(len(foto['arestas'])))-visiveis
-        if fundo:saida.append(('Rede de contexto','#9da3aa','0.20',sorted(fundo)))
+        if fundo:adicionar('Rede de contexto','#9da3aa',estilos['contexto'],sorted(fundo),0)
     if modo in ('BLOCOS','AMBOS','COMPLETA'):
         cores=_cores_blocos(m['blocos'])
         for b in blocos:
             ids=b['segmentos'] if modo=='BLOCOS' else [i for i in b['segmentos'] if i not in por_cor]
-            if ids:saida.append((b['nome'],cores[b['uid']],'0.46' if modo=='BLOCOS' else '0.36',ids))
+            if ids:adicionar(b['nome'],cores[b['uid']],estilos['bloco'],ids)
     if modo!='BLOCOS':
         for c in m['corredores']:
             ids=[i for i in c['segmentos'] if i in visiveis]
-            if ids:saida.append(('Corredores de referência' if uniforme else c['nome'],cor if uniforme else _cor(c['uid']),'0.84',ids))
+            if ids:adicionar('Corredores de referência' if uniforme else c['nome'],cor if uniforme else _cor(c['uid']),
+                             estilos['corredor'],ids,2)
     return saida
 
 
 def preparar(geo,plano_,origens,cancelar=None):
     linhas=[]
     faltantes=[]
-    for nome,cor,largura,segmentos in plano_:
+    for nome,cor,largura,segmentos,prioridade in plano_:
         geometrias=[]
         for i in segmentos:
             verificar_cancelamento(cancelar)
@@ -79,7 +85,7 @@ def preparar(geo,plano_,origens,cancelar=None):
             if g and not g.isEmpty():geometrias.append(g)
             else:faltantes.append(i)
         if geometrias:
-            linhas.append((nome,cor,largura,bytes(QgsGeometry.collectGeometry(geometrias).asWkb())))
+            linhas.append((nome,cor,largura,bytes(QgsGeometry.collectGeometry(geometrias).asWkb()),prioridade))
     pontos=[]
     por_porta=None
     for u,referencia in origens.items():
@@ -162,17 +168,19 @@ class MapaMacroOrigem:
         linhas,pontos,_=dados
         self._suspender(sobrepostas)
         for nome,tipo,registros in ((LINHAS,'MultiLineString',linhas),
-                                    (ORIGENS,'MultiPoint',[(n,'#1b6d70','4.0',g) for n,g in pontos])):
+                                    (ORIGENS,'MultiPoint',[(n,'#1b6d70','4.0',g,0) for n,g in pontos])):
             c=self._camada(nome,tipo,crs,uid)
             prov=c.dataProvider()
             prov.truncate()
             categorias={}
             fs=[]
-            for rotulo,cor,largura,wkb in registros:
-                chave=rotulo+'|'+cor
+            for rotulo,cor,largura,wkb,prioridade in registros:
+                chave=f'{rotulo}|{cor}|{largura}|{prioridade}'
                 if chave not in categorias:
                     s=(QgsLineSymbol.createSimple(dict(line_color=cor,line_width=largura)) if nome==LINHAS else
                        QgsMarkerSymbol.createSimple(dict(name='triangle',color=cor,outline_color='#ffffff',size=largura)))
+                    if nome==LINHAS:
+                        s.symbolLayer(0).setRenderingPass(prioridade)
                     categorias[chave]=QgsRendererCategory(chave,s,rotulo)
                 g=QgsGeometry()
                 g.fromWkb(wkb)
@@ -183,7 +191,9 @@ class MapaMacroOrigem:
                 fs.append(f)
             if fs and not prov.addFeatures(fs)[0]:
                 raise OSError('A camada temporária da visão macro não pôde ser publicada.')
-            c.setRenderer(QgsCategorizedSymbolRenderer('Classe',list(categorias.values())))
+            renderer=QgsCategorizedSymbolRenderer('Classe',list(categorias.values()))
+            renderer.setUsingSymbolLevels(nome==LINHAS)
+            c.setRenderer(renderer)
             c.setOpacity(1.)
             c.updateExtents()
             c.triggerRepaint()

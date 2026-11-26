@@ -31,11 +31,12 @@ class CorredoresAgrupadosUI:
         self.modo_macro = QComboBox()
         self.modo_macro.addItem('Regiões distantes · selecionar automaticamente', 'AUTOMATICO')
         self.modo_macro.addItem('Destinos selecionados no mapa ou associados a zonas', 'MANUAL')
+        self.modo_macro.addItem('Combinar destinos manuais e automáticos', 'COMBINADO')
         campos.addRow('Destinos', self.modo_macro)
         self.max_macro = QSpinBox()
         self.max_macro.setRange(1,200)
         self.max_macro.setValue(24)
-        campos.addRow('Máximo de destinos automáticos', self.max_macro)
+        campos.addRow('Limite de destinos no modo automático ou combinado', self.max_macro)
         self.dist_macro = QDoubleSpinBox()
         self.dist_macro.setRange(0,10_000_000)
         self.dist_macro.setSuffix(' m')
@@ -49,7 +50,7 @@ class CorredoresAgrupadosUI:
         self.agrupar_salvo_b.hide()
 
     def mudar_modo_macro(self):
-        usar = self.modo_macro.currentData()=='AUTOMATICO'
+        usar = self.modo_macro.currentData()!='MANUAL'
         self.max_macro.setEnabled(usar)
         self.dist_macro.setEnabled(usar)
 

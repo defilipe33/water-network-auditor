@@ -264,13 +264,24 @@ def analisar(foto,origens=None,destinos=(),*,nome='Redes estruturantes',associac
     if agrupamento is not None:
         from . import agrupamento_corredores_gis as macro
         agrupamento=macro.parametros(**agrupamento)
-        if agrupamento['modo']=='AUTOMATICO':
+        if agrupamento['modo'] in ('AUTOMATICO','COMBINADO'):
             etapa(0,'Selecionando destinos periféricos pelo grafo')
             busca=_buscar(rede,rede.origens,cancelar)
-            selecao,amostra=macro.perifericos(rede,busca,agrupamento,cancelar)
-            destinos=[dict(novo_destino('NO',no,modo='AUTOMATICO',nome='Nó periférico '+no[:8]),
-                           distancia_origem_m=distancia) for no,distancia in selecao]
-            associacoes=()
+            automatico=agrupamento['modo']=='AUTOMATICO'
+            manuais=[] if automatico else list(destinos)
+            teto=agrupamento['maximo']-len(manuais)
+            if teto<0:raise ValueError('Eleve o limite de destinos para preservar os pontos manuais escolhidos.')
+            fixos={u for _,u in rede.destinos(manuais).values()}
+            areas_alvo=agrupamento.get('areas')
+            elegiveis=None
+            if areas_alvo is not None:
+                ids=set(areas_alvo)
+                elegiveis={u for parte,t in rede.tubos.items() if ids.intersection(t.get('zonas_uids',()))
+                           for u in rede.nos_parte.get(parte,())}
+            selecao,amostra=macro.perifericos(rede,busca,agrupamento,cancelar,excluir=fixos,elegiveis_area=elegiveis)
+            destinos=manuais+[dict(novo_destino('NO',no,modo='AUTOMATICO',nome='Nó periférico '+no[:8]),
+                                    distancia_origem_m=distancia) for no,distancia in selecao[:teto]]
+            if automatico:associacoes=()
     destinos=rede.destinos(destinos)
     zonas={a['uid']:a for a in foto.get('areas',[])}
     if any(d.get('zona') and d['zona'] not in zonas for d,_ in destinos.values()):

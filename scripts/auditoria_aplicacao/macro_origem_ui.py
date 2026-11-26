@@ -41,14 +41,6 @@ class MacroOrigemUI:
         self._isolado_integral = None
         self._painel_integral, v = expansivel(layout, 'Visão macro do abastecimento por origem')
         self._painel_integral.setChecked(True)
-        form = formulario(v)
-        self.origem_integral = QComboBox()
-        form.addRow('Origem de abastecimento', self.origem_integral)
-        self.origens_integral = QListWidget()
-        self.origens_integral.setMaximumHeight(92)
-        self.origens_integral.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        v.addWidget(self.origens_integral)
-        self.origem_integral.currentIndexChanged.connect(self._mostrar_escolha_origens)
         self._opcoes_integral, opcoes = expansivel(v, 'Critérios de agrupamento')
         self.minimo_integral = QDoubleSpinBox()
         self.minimo_integral.setRange(.01, 10000000)
@@ -66,9 +58,6 @@ class MacroOrigemUI:
         for k, n in VISTAS:
             self.visao_integral.addItem(n, k)
         f.addRow('Apresentação do mapa', self.visao_integral)
-        self.area_integral = QComboBox()
-        f.addRow('Área GIS de interesse', self.area_integral)
-        self.area_integral.activated.connect(self._alterar_area_integral)
         self.referencia_integral = QComboBox()
         f.addRow('Percursos de referência', self.referencia_integral)
         self.referencia_integral.activated.connect(self._alterar_area_integral)
@@ -81,8 +70,46 @@ class MacroOrigemUI:
         self.uniforme_integral.setChecked(True)
         r.addWidget(self.uniforme_integral)
         botao(r, 'Escolher cor dos corredores…', self._escolher_cor_integral)
+        self.espessura_integral={}
+        _,esp=expansivel(r,'Espessuras de linha')
+        campos=formulario(esp)
+        for k,rotulo,ini in (('contexto','Rede de contexto',.20),('bloco','Blocos no mapa combinado',.36),
+                             ('corredor','Corredores',1.),('destaque','Corredor selecionado',1.40)):
+            spin=QDoubleSpinBox()
+            spin.setRange(.05,8.)
+            spin.setValue(ini)
+            spin.setSuffix(' mm')
+            campos.addRow(rotulo,spin)
+            self.espessura_integral[k]=spin
         botao(r, 'Mostrar no QGIS', self.mostrar_mapa_integral)
         botao(r, 'Restaurar visibilidade das camadas', self.restaurar_mapa_integral)
+        self._montar_arvore_integral(r)
+
+    def montar_escopo_estrutural(self,v):
+        form = formulario(v)
+        self.origem_integral = QComboBox()
+        self.origem_integral.setToolTip('Várias origens analisa o alcance conjunto. Comparar duas origens mantém também um percurso de referência para cada fonte.')
+        form.addRow('Modo de seleção das origens', self.origem_integral)
+        self.origens_integral = QListWidget()
+        self.origens_integral.setMaximumHeight(92)
+        self.origens_integral.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        v.addWidget(self.origens_integral)
+        self.origem_unica=QComboBox()
+        v.addWidget(self.origem_unica)
+        self.origem_integral.currentIndexChanged.connect(self._mostrar_escolha_origens)
+        self.areas=self.area_integral=QComboBox()
+        form.addRow('Áreas GIS de interesse',self.areas)
+        self.areas_integral=QListWidget()
+        self.areas_integral.setMaximumHeight(100)
+        self.areas_integral.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        v.addWidget(self.areas_integral)
+        self.areas.currentIndexChanged.connect(self._mostrar_escolha_areas)
+        self.areas_integral.itemSelectionChanged.connect(self._alterar_area_integral)
+        botao(v,'Escolher uma área no mapa',self.selecionar_area_mapa)
+        self._mostrar_escolha_origens()
+        self._mostrar_escolha_areas()
+
+    def _montar_arvore_integral(self,r):
         self.arvore_integral = QTreeWidget()
         self.arvore_integral.setHeaderHidden(True)
         self.arvore_integral.setUniformRowHeights(True)
@@ -99,7 +126,6 @@ class MacroOrigemUI:
         menu = QMenu(self.acoes_integral)
         menu.addAction('Mostrar caminho até a área selecionada',
                        lambda: self.localizar_macro_integral(self._alvo_area_integral(), True, True))
-        menu.addAction('Exportar rede alcançável…', lambda: self.exportar_integral(None, 'REDE'))
         menu.addAction('Exportar corredores apresentados…', lambda: self.exportar_integral(None, 'CORREDORES'))
         menu.addAction('Exportar vários blocos…', self._exportar_blocos_integral)
         menu.addAction('Exportar área selecionada…', lambda: self.exportar_integral(self._alvo_area_integral(), 'AREA'))
@@ -113,40 +139,81 @@ class MacroOrigemUI:
             self.mapa_integral.restaurar()
 
     def _mostrar_escolha_origens(self, *_):
-        self.origens_integral.setVisible(self.origem_integral.currentData() in ('SUBCONJUNTO', 'COMPARAR'))
+        modo=self.origem_integral.currentData()
+        self.origens_integral.setVisible(modo in ('SUBCONJUNTO', 'COMPARAR'))
+        self.origem_unica.setVisible(modo=='UMA')
+
+    def _mostrar_escolha_areas(self,*_):
+        self.areas_integral.setVisible(self.area_integral.currentData()=='@MULTIPLAS')
+        self._alterar_area_integral()
 
     def origens_da_fotografia_integral(self):
         self.origem_integral.clear()
         self.origens_integral.clear()
+        self.origem_unica.clear()
         self.origem_integral.addItem('Todas as origens habilitadas', 'TODAS')
+        self.origem_integral.addItem('Uma origem', 'UMA')
         self.origem_integral.addItem('Escolher várias origens', 'SUBCONJUNTO')
         self.origem_integral.addItem('Comparar duas origens', 'COMPARAR')
         self.origem_integral.addItem('Sem origens · diagnóstico estrutural', 'NENHUMA')
         for u, n in self.nomes.items():
-            self.origem_integral.addItem(n, ('ORIGEM', u))
+            self.origem_unica.addItem(n,u)
             item = QListWidgetItem(n)
             item.setData(Qt.UserRole, u)
             self.origens_integral.addItem(item)
+        self.area_integral.blockSignals(True)
+        self.areas_integral.blockSignals(True)
         self.area_integral.clear()
-        self.area_integral.addItem('Todas as áreas', None)
+        self.area_integral.addItem('Sem restrição espacial',None)
+        self.area_integral.addItem('Todas as áreas cadastradas','@TODAS')
+        self.area_integral.addItem('Escolher várias áreas','@MULTIPLAS')
+        self.areas_integral.clear()
         for u in self.areas_foto:
-            self.area_integral.addItem(self._nome_area(u), u)
+            nome=self._nome_area(u)
+            self.area_integral.addItem(nome,u)
+            item=QListWidgetItem(nome)
+            item.setData(Qt.UserRole,u)
+            self.areas_integral.addItem(item)
+        self.areas_integral.blockSignals(False)
+        self.area_integral.blockSignals(False)
+        self.areas_integral.hide()
         self._mostrar_escolha_origens()
+
+    def escopo_areas(self):
+        u=self.area_integral.currentData()
+        if u=='@TODAS':return set(self.areas_foto)
+        if u=='@MULTIPLAS':return {i.data(Qt.UserRole) for i in self.areas_integral.selectedItems()}
+        return {u} if u else None
+
+    def fontes_marcadas(self):
+        modo=self.origem_integral.currentData()
+        if modo=='TODAS':return list(self.nomes)
+        if modo=='NENHUMA':return []
+        if modo=='UMA':
+            u=self.origem_unica.currentData()
+            if u:return [u]
+            raise ValueError('Selecione uma origem da análise de conectividade.')
+        ids=[i.data(Qt.UserRole) for i in self.origens_integral.selectedItems()]
+        if modo=='COMPARAR' and len(ids)!=2:
+            raise ValueError('Selecione duas origens para comparar.')
+        if not ids:raise ValueError('Selecione as origens que deseja considerar.')
+        return ids
+
+    def recuperar_origens_escopo(self,ids,comparar=False):
+        modo=('COMPARAR' if comparar else 'UMA' if len(ids)==1 else 'TODAS' if ids and set(ids)==set(self.nomes)
+              else 'SUBCONJUNTO' if ids else 'NENHUMA')
+        self.origem_integral.setCurrentIndex(max(0,self.origem_integral.findData(modo)))
+        if len(ids)==1:self.origem_unica.setCurrentIndex(self.origem_unica.findData(ids[0]))
+        for i in range(self.origens_integral.count()):
+            item=self.origens_integral.item(i)
+            item.setSelected(item.data(Qt.UserRole) in ids)
 
     def calcular_macro_integral(self):
         if not self.foto or self.central.ocupado():
             return
         modo = self.origem_integral.currentData()
-        ids = None
-        if isinstance(modo, (tuple, list)):
-            ids = [modo[1]]
-        elif modo in ('SUBCONJUNTO', 'COMPARAR'):
-            ids = [i.data(Qt.UserRole) for i in self.origens_integral.selectedItems()]
-            if not ids or (modo == 'COMPARAR' and len(ids) != 2):
-                self.status.setText('Selecione duas origens para comparar.' if modo == 'COMPARAR' else 'Selecione as origens.')
-                return
-        elif modo == 'NENHUMA':
-            ids = []
+        ids=self._com_erro(self.fontes_marcadas)
+        if ids is None:return
         foto, pasta = self.foto, self._pasta_resultados()
         criterios = dict(minimo_m=self.minimo_integral.value(), orientar_areas=self.orientar_integral.isChecked(),
                          comparar=modo == 'COMPARAR')
@@ -160,7 +227,8 @@ class MacroOrigemUI:
         if anterior:
             self.central.ao_abrir_trabalho(self.reabrir(anterior), self, anterior, cartografar=True)
             return
-        nome = 'Visão macro · ' + self._nomes(escopo)
+        nome = self.nome.text().strip()
+        if not nome or nome=='Redes estruturantes':nome='Visão macro · '+self._nomes(escopo)
         def calcular(p, e):
             m = motor.analisar(foto, ids, **criterios, cancelar=p, etapa=e)
             return self._gravar(pasta, motor.trabalho(foto, m, nome), p, e)
@@ -192,12 +260,7 @@ class MacroOrigemUI:
         self.minimo_integral.setValue(m['parametros']['minimo_m'])
         self.orientar_integral.setChecked(m['parametros']['orientar_areas'])
         ids = m['origens']
-        modo = ('COMPARAR' if m['parametros']['comparar'] else ('ORIGEM', ids[0]) if len(ids) == 1
-                else 'TODAS' if set(ids) == set(self.nomes) else 'SUBCONJUNTO' if ids else 'NENHUMA')
-        self.origem_integral.setCurrentIndex(max(0, self.origem_integral.findData(modo)))
-        for i in range(self.origens_integral.count()):
-            item = self.origens_integral.item(i)
-            item.setSelected(item.data(Qt.UserRole) in ids)
+        self.recuperar_origens_escopo(ids,m['parametros']['comparar'])
         for u in m.get('referencias_por_origem', {}):
             self.referencia_integral.addItem(self._nomes([u]), u)
         for tabela, lista in (('MACRO_CORREDORES', m['corredores']), ('MACRO_BLOCOS', m['blocos']),
@@ -227,22 +290,27 @@ class MacroOrigemUI:
 
     def _blocos_integral(self):
         m = self.macro_integral
-        a = self.area_integral.currentData()
+        a = self.escopo_areas()
         u = self.referencia_integral.currentData()
         return [b for b in m['blocos'] if (not u or u in b['origens'])
-                and (not a or a in b['areas'] or a in b['areas_declaradas'])]
+                and (a is None or a.intersection((*b['areas'],*b['areas_declaradas'])))]
 
     def _alterar_area_integral(self, *_):
-        if self.macro_integral:
+        if getattr(self,'macro_integral',None):
             self.atualizar_tabela()
             self.central.agendar_estado_visual()
 
     def _alvo_area_integral(self):
-        return self._grupos_macro.get(('MACRO_AREAS', self.area_integral.currentData()))
+        ids=self.escopo_areas()
+        if ids is None:return None
+        rs=[r for (tipo,u),r in self._grupos_macro.items() if tipo=='MACRO_AREAS' and u in ids]
+        if not rs:return None
+        if len(rs)==1:return rs[0]
+        return dict(uid='@AREAS',nome='Áreas selecionadas',segmentos=sorted({i for r in rs for i in r['segmentos']}))
 
     def _nivel_origem(self, *_):
         cats = ('MACRO_CORREDORES', 'MACRO_BLOCOS', 'MACRO_DETALHES')
-        self.categoria.setCurrentIndex(self.categoria.findData(cats[self.nivel_integral.currentIndex()]))
+        self.exibir_categoria(cats[self.nivel_integral.currentIndex()])
         self.central.agendar_estado_visual()
 
     def _construir_arvore_integral(self):
@@ -391,7 +459,8 @@ class MacroOrigemUI:
             except (ValueError, RuntimeError):
                 origens[u] = None
         def calcular(p, _):
-            mapa = plano(d['foto'], self._macro_de_referencia(m, origem), modo, blocos, cor, uniforme, alvo)
+            mapa = plano(d['foto'], self._macro_de_referencia(m, origem), modo, blocos, cor, uniforme, alvo, espessuras,
+                         papeis=True)
             return preparar(geo, mapa, origens, p)
         def pronto(resultado):
             if self.dados is not d or self.central.paginas.currentWidget() is not self:
@@ -403,7 +472,7 @@ class MacroOrigemUI:
             if aproximar:
                 from qgis.core import QgsGeometry
                 geometrias = []
-                for _, _, _, wkb in resultado[0]:
+                for _, _, _, wkb, _ in resultado[0]:
                     g = QgsGeometry()
                     g.fromWkb(wkb)
                     geometrias.append(('tubo', g))
@@ -414,6 +483,7 @@ class MacroOrigemUI:
             self.central.agendar_estado_visual()
             if ao_mostrar:QTimer.singleShot(0, ao_mostrar)
         cor, uniforme = self._cor_integral, self.uniforme_integral.isChecked()
+        espessuras={k:w.value() for k,w in self.espessura_integral.items()}
         self._tarefa_cartografica('Preparando mapa da visão macro', calcular, pronto)
 
     def localizar_macro_integral(self, r, aproximar, percurso=False):
@@ -457,6 +527,11 @@ class MacroOrigemUI:
                 return
             itens, total, visiveis, areas = resultado
             exibido = self.central.mapa.destacar_investigacao(itens, geo.crs, aproximar, toda_extensao=True)
+            if exibido and itens and itens[0][0]=='tubo':
+                from qgis.PyQt.QtWidgets import QApplication
+                tela=QApplication.screenAt(self.mapToGlobal(self.rect().center())) or QApplication.primaryScreen()
+                self.central.mapa.itens[0].setWidth(max(1,round(self.espessura_integral['destaque'].value()
+                                                              *tela.logicalDotsPerInch()/25.4)))
             self.mapa_integral.atenuar(bool(exibido))
             alvo = next((tab for tab, u in self._grupos_macro if u == r['uid']), None)
             if alvo:
@@ -597,8 +672,11 @@ class MacroOrigemUI:
         incluir = False
         if formato is None:
             d_opcoes = QDialog(self)
-            d_opcoes.setWindowTitle('Exportar visão macro')
+            d_opcoes.setWindowTitle('Exportar dados GIS para modelagem')
             v = QVBoxLayout(d_opcoes)
+            hip=(d.get('hipotese') or {}).get('nome','Hipótese temporária')
+            v.addWidget(aviso(f"{tipo.title()} · {hip} · {len(set(segmentos))} segmentos na seleção. "
+                              'A conferência de continuidade será gravada em validacao.json.'))
             f = QComboBox()
             for rotulo, k in (('GeoPackage', 'GPKG'), ('Shapefile', 'ESRI Shapefile'), ('Tabelas CSV', 'CSV')):
                 f.addItem(rotulo, k)
@@ -625,7 +703,9 @@ class MacroOrigemUI:
 
     def estado_macro_integral(self):
         return dict(cor=self._cor_integral, uniforme=self.uniforme_integral.isChecked(), vista=self.visao_integral.currentData(),
-                    area=self.area_integral.currentData(), referencia=self.referencia_integral.currentData(),
+                    area=self.area_integral.currentData(), areas=list(self.escopo_areas() or ()),
+                    espessuras={k:w.value() for k,w in self.espessura_integral.items()},
+                    referencia=self.referencia_integral.currentData(),
                     nivel=self.nivel_integral.currentIndex(), aberto=self._resultado_integral.isChecked(),
                     mapa=self.mapa_integral.ativo(), alvo=self._alvo_integral, isolado=self._isolado_integral)
 
@@ -637,7 +717,21 @@ class MacroOrigemUI:
             i = w.findData(v.get(k))
             if i >= 0:
                 w.setCurrentIndex(i)
+        self.recuperar_areas_escopo(v)
+        for k,w in self.espessura_integral.items():
+            valor=v.get('espessuras',{}).get(k)
+            if isinstance(valor,(float,int)) and w.minimum()<=valor<=w.maximum():w.setValue(valor)
         nivel = v.get('nivel', 0)
         if isinstance(nivel, int) and 0 <= nivel < self.nivel_integral.count():
             self.nivel_integral.setCurrentIndex(nivel)
         self._resultado_integral.setChecked(v.get('aberto', True))
+
+    def recuperar_areas_escopo(self,v):
+        i=self.area_integral.findData(v.get('area'))
+        if i>=0:self.area_integral.setCurrentIndex(i)
+        ids=set(v.get('areas',()))
+        self.areas_integral.blockSignals(True)
+        for j in range(self.areas_integral.count()):
+            item=self.areas_integral.item(j)
+            item.setSelected(item.data(Qt.UserRole) in ids)
+        self.areas_integral.blockSignals(False)
