@@ -224,15 +224,18 @@ class RelacoesGIS(RevisaoSequencialGIS,DuplicatasConexoesUI):
         tipo=QComboBox()
         for texto,decisao,incluir in VEREDITOS:tipo.addItem(texto,(decisao,incluir))
         tipo.addItem('Manter separadas, sem incluir na hipótese',('SEPARADA',False))
+        def indice_veredito(valor):
+            return next((i for i in range(tipo.count()) if tipo.itemData(i)==valor),-1)
         if anterior and escolha is None:
             decisao=anterior.get('decisao')
             escolha_atual=(decisao,anterior['uuid'] in self._selecionados())
-            i=tipo.findData(escolha_atual)
+            i=indice_veredito(escolha_atual)
             if i<0:
                 tipo.addItem(pg.DECISOES[decisao],escolha_atual)
                 i=tipo.count()-1
             tipo.setCurrentIndex(i)
-        elif escolha:tipo.setCurrentIndex(max(0,tipo.findData(escolha)))
+        elif escolha:tipo.setCurrentIndex(max(0,indice_veredito(escolha)))
+        else:tipo.setCurrentIndex(indice_veredito(('INDETERMINADA',False)))
         v.addWidget(tipo)
         nota = QLineEdit((anterior or {}).get('nota',''))
         nota.setPlaceholderText('Observação opcional')
