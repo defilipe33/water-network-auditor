@@ -35,7 +35,7 @@ def copiar(projeto,destino,modo,*,incorporar=False,cancelar=None,etapa=lambda *_
 def _trocar(d,ids):
     if isinstance(d,dict):
         campos={'uuid','projeto_uid','topologia_uid','referencia','analise_uid',
-                'execucao','execucao_uid','estrutura_uid','comparacao'}
+                'execucao','execucao_uid','estrutura_uid','comparacao','automatico_macro'}
         return {k:ids.get(v,v) if isinstance(v,str) and k in campos else _trocar(v,ids) for k,v in d.items()}
     if isinstance(d,list):
         return [_trocar(v,ids) for v in d]

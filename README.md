@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+A pré-release **1.18.1** acrescenta a [visão macro do abastecimento por origem](documentacao/publica/VISAO_MACRO_ORIGEM_1_18_1.md). A análise contabiliza a rede GIS alcançável por inteiro, organiza blocos e corredores de referência e permite exportar seleções com seus Pipes e Junctions.
+
 A pré-release **1.18.0** acrescenta [salvamento explícito, revisão de conexões, traçados propostos e blocos GIS](documentacao/publica/EDICAO_TOPOLOGICA_1_18_0.md). O projeto preserva hipóteses e rascunhos, e a análise de blocos usa a fotografia de uma execução de conectividade.
 
 A pré-release **1.17.2** melhora a [continuidade dos projetos `.wna`](documentacao/publica/CONTINUIDADE_PROJETOS.md). Organize projetos antigos, consulte execuções por hipótese e retome trabalhos salvos com seus filtros, seleção e mapa.

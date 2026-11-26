@@ -12,7 +12,7 @@ from auditoria_fronteiras.modelos import verificar_cancelamento
 from .investigacao_gis import geometria
 
 
-def preparar(foto,cancelar=None):
+def preparar(foto,cancelar=None,*,indices=None):
     crs = QgsCoordinateReferenceSystem(foto['crs'])
     from auditoria_fronteiras import Parametros
     from auditoria_fronteiras.entradas import crs_processamento
@@ -28,7 +28,8 @@ def preparar(foto,cancelar=None):
             if uid!='J' and 0<p<1:
                 divisoes.setdefault(uid,[]).append((p,n['uid']))
     saida, ids, problemas = [], set(), []
-    for e in foto['arestas']:
+    arestas=foto['arestas'] if indices is None else (foto['arestas'][i] for i in indices)
+    for e in arestas:
         verificar_cancelamento(cancelar)
         u = e['tubo']
         if u not in tubos or e['a'] not in nos or e['b'] not in nos:
@@ -56,6 +57,10 @@ def preparar(foto,cancelar=None):
             material=t.get('material'),fontes=t.get('fontes',[]),proposta=t.get('proposta_uid'),
             natureza='PROPOSTA' if t.get('proposta_uid') else 'DIVISAO_VIRTUAL' if u in divisoes else 'CADASTRO',
             wkb=bytes(g.asWkb())))
+    if indices is not None:
+        usados={r[k] for r in saida for k in ('no_a','no_b')}
+        partes={r['parte'] for r in saida}
+        return saida,[n for u,n in nos.items() if u in usados],{u:v for u,v in divisoes.items() if u in partes},problemas
     return saida,list(nos.values()),divisoes,problemas
 
 

@@ -17,7 +17,7 @@ ROTULOS = {
 TABELAS = {'TOPOLOGIA_GIS': 'TG_EXECUCAO', 'ESTRUTURA_GIS': 'TG_ESTRUTURA'}
 CAMPOS = ('uuid','tipo','base','nome','data','versao','situacao','projeto_uid','hipotese_uid',
           'hipotese_nome','hipotese_rev','topologia_uid','referencia','componentes','origens',
-          'conexoes','corredores','eventos','locais','cenario','modelo_uid','modelo_rev')
+          'conexoes','corredores','eventos','locais','cenario','modelo_uid','modelo_rev','macro_assinatura')
 
 
 def chave(r):
@@ -31,12 +31,16 @@ def referencia(r):
 def resumo_gis(d):
     foto = d.get('foto', d)
     hip = foto.get('hipotese') or {}
-    return dict(hipotese_uid=hip.get('uuid'), hipotese_nome=hip.get('nome'), hipotese_rev=hip.get('rev'),
+    r = dict(hipotese_uid=hip.get('uuid'), hipotese_nome=hip.get('nome'), hipotese_rev=hip.get('rev'),
                 modelo_rev=foto.get('modelo_rev'), topologia_uid=d.get('topologia_uid'),
                 referencia=d.get('referencia'), componentes=len(foto.get('componentes', ())),
                 origens=len(d.get('fontes', ())) if 'foto' in d else len(foto.get('origens_validas', ())),
                 conexoes=sum(r.get('tipo')=='CONEXAO' for r in foto.get('participantes', ())),
-                corredores=len(d.get('agrupamento', {}).get('corredores', ())))
+                corredores=len(d.get('macro_origem', d.get('agrupamento', {})).get('corredores', ())))
+    if (macro:=d.get('macro_origem')) and not d.get('automatico_macro'):
+        from .macro_origem_gis import assinatura
+        r['macro_assinatura']=assinatura(macro['origens'],macro['parametros'])
+    return r
 
 
 def resumo_legado(con, tabela, uid):

@@ -131,7 +131,7 @@ def _fonte(busca,cache,no,cancelar):
     return origem
 
 
-def _intersecoes(foto,cancelar):
+def _intersecoes(foto,cancelar,*,segmentos=None,medir=False):
     from qgis.core import QgsGeometry
     from .grafo_gis import _indexar
     from .investigacao_gis import geometria
@@ -140,8 +140,10 @@ def _intersecoes(foto,cancelar):
     indice = _indexar([g for _,g in areas])
     tubos = {r['uid']:r for r in foto['tubos']}
     saida={}
-    for i,e in enumerate(foto['arestas']):
+    if segmentos is None:segmentos=range(len(foto['arestas']))
+    for i in segmentos:
         verificar_cancelamento(cancelar)
+        e=foto['arestas'][i]
         g=geometria(tubos[e['tubo']].get('wkb'))
         if not g:continue
         a,b=e['inicio'],e['fim']
@@ -149,8 +151,11 @@ def _intersecoes(foto,cancelar):
             m=g.length()
             g=QgsGeometry(g.constGet().curveSubstring(m*a,m*b))
         # A seleção de área é independente da alcançabilidade no grafo.
-        ids=[areas[j][0] for j in indice.intersects(g.boundingBox()) if g.intersects(areas[j][1])]
-        if ids:saida[i]=ids
+        ids=[j for j in indice.intersects(g.boundingBox()) if g.intersects(areas[j][1])]
+        if ids and medir:
+            ms={areas[j][0]:m for j in ids if (m:=g.intersection(areas[j][1]).length())>1e-8}
+            if ms:saida[i]=ms
+        elif ids:saida[i]=[areas[j][0] for j in ids]
     return saida
 
 

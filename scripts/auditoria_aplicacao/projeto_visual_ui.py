@@ -64,6 +64,8 @@ class VisualProjetoUI:
                 visual.update(nivel=pagina.nivel_macro.currentData(),fonte=pagina.fonte_macro.currentData(),
                               funcao=pagina.visao_macro.currentData(),ramais=pagina.ramais_macro.isChecked(),
                               arvore=pagina.macro_b.isChecked(),alvo_macro=pagina._alvo_macro)
+            if pagina.macro_integral:
+                visual['macro_integral']=pagina.estado_macro_integral()
             if d.get('blocos'):
                 visual['blocos']=dict(fonte=pagina.fonte_blocos.currentData(),
                     corredor=pagina.corredor_blocos.currentData(),indisponivel=pagina.fonte_indisponivel.currentData(),
@@ -149,6 +151,8 @@ class VisualProjetoUI:
                     pagina.paginar(pos//200)
                     pagina.resultados.setCurrentCell(pos%200,0)
             elif tipo=='ESTRUTURA_GIS':
+                if pagina.macro_integral:
+                    pagina.recuperar_estado_macro_integral(v.get('macro_integral', {}))
                 if pagina.macro:
                     for k,w in [('nivel',pagina.nivel_macro),('fonte',pagina.fonte_macro),('funcao',pagina.visao_macro)]:
                         if k in v:self._restaurar_widget(w,v[k])
@@ -178,6 +182,19 @@ class VisualProjetoUI:
                     if k in CONTROLES_GIS:self._restaurar_widget(getattr(pagina,k),valor)
                 pagina.listar(v.get('selecionado'))
                 self._restaurar_widget(pagina.alvo,v.get('evento'))
+        if tipo=='ESTRUTURA_GIS' and pagina.macro_integral:
+            integral=v.get('macro_integral', {})
+            alvo=integral.get('alvo')
+            registro=pagina._grupos_macro.get(tuple(alvo[:2])) if isinstance(alvo,list) and len(alvo)==3 else None
+            if integral.get('mapa') or cartografar:
+                pagina.mostrar_mapa_integral(aproximar=aproximar and registro is None,
+                                             isolado=integral.get('isolado'),
+                                             ao_mostrar=lambda:pagina.localizar_macro_integral(registro, aproximar, alvo[2])
+                                             if registro else None)
+            elif registro and v.get('destaque'):
+                pagina.localizar_macro_integral(registro, aproximar, alvo[2])
+            if not aproximar:self._restaurar_extensao(v)
+            return
         if cartografar or v.get('destaque'):
             if tipo=='ESTRUTURA_GIS':
                 alvo=v.get('alvo_macro')

@@ -795,5 +795,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         for chave in ('conectividade_gis','estrutura_gis'):
             pagina=self.__dict__.get(chave)
             if pagina is not None:pagina.cancelar_captura()
+        estrutura=self.__dict__.get('estrutura_gis')
+        if estrutura is not None:estrutura.mapa_integral.restaurar()
         self.limpar_mapa()
         super().closeEvent(event)
