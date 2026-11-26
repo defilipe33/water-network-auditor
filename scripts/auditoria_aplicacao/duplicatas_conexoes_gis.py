@@ -15,6 +15,7 @@ ROTULOS={
     'EXATA':'Duplicata exata','PROVAVEL':'Provável duplicata','CONFLITO':'Decisões conflitantes',
     'LOCAL':'Registros distintos na mesma localização','REVISAO':'Revisões da mesma relação',
     'VINCULO':'Candidata e sua revisão declarada',
+    'RELACIONADA_T':'Cruzamento representado também por conexão em T',
 }
 
 
@@ -60,6 +61,8 @@ def auditar(candidatas,relacoes,tubos,tolerancia=.20,cancelar=None,*,historico=(
     atuais={r['uuid']:r for r in relacoes if r.get('tipo')=='CONEXAO'}
     elegiveis=[r for r in atuais.values() if not r.get('excluido') and not r.get('substituida_por')]
     registros=[*elegiveis,*(r for r in candidatas if r.get('tipo') in CATEGORIAS)]
+    relacao_t={r['uid']:r['prioridade_cruzamento']['referencia_t'] for r in registros
+               if r.get('prioridade_cruzamento',{}).get('referencia_t')}
     ids={u for r in registros for u,_ in r.get('portas',())}
     geometrias={}
     for u in ids:
@@ -91,7 +94,8 @@ def auditar(candidatas,relacoes,tubos,tolerancia=.20,cancelar=None,*,historico=(
         if par in vistos:return
         vistos.add(par)
         a,b=recs[i],recs[j]
-        tipo=_classificar(a,b,tolerancia)
+        tipo=('RELACIONADA_T' if relacao_t.get(a['uid'])==b['uid'] or relacao_t.get(b['uid'])==a['uid']
+              else _classificar(a,b,tolerancia))
         if not tipo:return
         registros=[a['r'],b['r']]
         uids=sorted((a['uid'],b['uid']))
@@ -113,7 +117,7 @@ def auditar(candidatas,relacoes,tubos,tolerancia=.20,cancelar=None,*,historico=(
     for u,n in quant.items():
         if n>1 and u in atuais:
             saida.append(dict(uid=digest(['revisoes',u]),tipo='REVISAO',registros=[atuais[u]],principal=u,revisoes=n))
-    ordem={k:i for i,k in enumerate(('CONFLITO','EXATA','PROVAVEL','LOCAL','VINCULO','REVISAO'))}
+    ordem={k:i for i,k in enumerate(('CONFLITO','EXATA','PROVAVEL','RELACIONADA_T','LOCAL','VINCULO','REVISAO'))}
     return sorted(saida,key=lambda r:(ordem[r['tipo']],r['uid'])),pendentes
 
 

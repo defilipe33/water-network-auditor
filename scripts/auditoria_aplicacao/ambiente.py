@@ -135,6 +135,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             ('verificar','Verificar travessias e limites'),
             ('conectividade','Analisar conectividade'),
             ('estrutura','Redes estruturantes e blocos de abastecimento'),
+            ('modelbuilder','Exportar modelo para WaterGEMS'),
             ('integrada','Investigação integrada GIS–WaterGEMS'),
             ('interferencias','Examinar interferências GIS'),
             ('topologia','Consultar topologia WaterGEMS'),
@@ -595,6 +596,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             'verificar':'Auditoria geométrica de travessias em setores, zonas e outros limites GIS.',
             'conectividade':'Monte a fotografia da conectividade GIS e revise ligações candidatas.',
             'estrutura':'Selecione uma análise de conectividade salva para estudar corredores, blocos e criticidade.',
+            'modelbuilder':'Escolha a execução de conectividade e prepare o cadastro para importar ou atualizar no ModelBuilder.',
             'integrada':'Consulte ocorrências, decisões e propostas da investigação integrada.',
             'interferencias':'Examine travessias e dispositivos próximos nas camadas GIS.',
         }
@@ -613,6 +615,8 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             self.abrir_conectividade()
         elif codigo=='estrutura':
             self.abrir_estrutura()
+        elif codigo=='modelbuilder':
+            if self.abrir_estrutura():self.estrutura_gis.mostrar_comandos_modelbuilder()
         else:
             self.acionar('continuar' if codigo=='integrada' else codigo)
 

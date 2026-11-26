@@ -23,13 +23,19 @@ REGRAS={
 
 class CadastroExportavelUI:
     def montar_exportacao_modelagem(self,layout):
-        _,v=expansivel(layout,'Exportar dados GIS para modelagem')
+        self.exportacoes_modelagem_b,v=expansivel(layout,'Exportar dados GIS para modelagem')
         v.addWidget(aviso('Prepare os Pipes e Junctions para conferência. O cadastro completo inclui redes isoladas e fontes fora da análise de referência.'))
         self.previa_cadastro_b=botao(v,'Prévia do cadastro completo…',lambda:self.prever_cadastro_completo())
+        botao(v,'Exportar modelo para WaterGEMS…',lambda:self.prever_cadastro_completo(abrir_modelbuilder=True))
+        botao(v,'Exportações ModelBuilder e conferência…',self.abrir_historico_modelbuilder)
         botao(v,'Exportar rede alcançável da visão macro…',lambda:self.exportar_integral(None,'REDE'))
         botao(layout,'Conjuntos para WaterGEMS…',lambda:self.prever_cadastro_completo(abrir_catalogo=True))
 
-    def prever_cadastro_completo(self,*,abrir_catalogo=False,preselecao=None):
+    def mostrar_comandos_modelbuilder(self):
+        self.exportacoes_modelagem_b.setChecked(True)
+        self.ensureWidgetVisible(self.execucoes if not self.foto else self.exportacoes_modelagem_b)
+
+    def prever_cadastro_completo(self,*,abrir_catalogo=False,preselecao=None,abrir_modelbuilder=False):
         if not self.foto or self.central.ocupado():
             self.status.setText('Abra uma execução de conectividade e aguarde a atividade atual.')
             return
@@ -43,7 +49,13 @@ class CadastroExportavelUI:
                                       rotulos,i,False)
         if not ok:return
         regra=chaves[rotulos.index(rotulo)]
-        atual=next(reversed(revisoes(p)),{})
+        modelos=revisoes(p)
+        atual=next(reversed(modelos),{})
+        if abrir_modelbuilder:
+            atual=next((r for r in modelos if r['uuid']==foto.get('modelo_rev')),None)
+            if atual is None:
+                self.status.setText('A revisão do Modelo GIS usada pela execução não está disponível.')
+                return
         fontes=atual.get('fontes',())
         if not any(f['categoria']=='PIPE' for f in fontes):
             self.status.setText('Inclua fontes de tubulação no Modelo GIS antes de gerar a prévia.')
@@ -62,7 +74,7 @@ class CadastroExportavelUI:
                     u=f['uid']
                     if u in presentes:
                         detalhes.setdefault(u,dict(lidas=0,descartes=[])).update(nome=f['nome'],situacao='LIDA')
-                    elif f['categoria']=='PIPE':
+                    elif abrir_modelbuilder or f['categoria']=='PIPE':
                         detalhes[u]=dict(nome=f['nome'],situacao='INDISPONIVEL')
                 previa=cadastro.preparar(foto,inv,modo_atividade=regra,atividades=estado.get('atividades'),
                                          contagem=detalhes,origens=origens,cancelar=cancelar)
@@ -70,12 +82,23 @@ class CadastroExportavelUI:
                 return previa
             def mostrar(previa):
                 if self._projeto()['uuid']!=p['uuid'] or self.foto is not foto:return
-                if abrir_catalogo:
+                if abrir_modelbuilder:
+                    from .modelbuilder_ui import AssistenteModelBuilder
+                    self._dialogo_modelbuilder=AssistenteModelBuilder(self,previa)
+                    self._dialogo_modelbuilder.open()
+                elif abrir_catalogo:
                     self._abrir_catalogo_conjuntos(previa,estado,preselecao)
                 else:
                     self._mostrar_previa_cadastro(previa,estado,p)
             self._tarefa_cartografica('Preparando inventário cadastral e derivados',conferir,mostrar)
         self._com_erro(iniciar)
+
+    def abrir_historico_modelbuilder(self):
+        from .modelbuilder_ui import HistoricoModelBuilder
+        def mostrar():
+            self._historico_modelbuilder=HistoricoModelBuilder(self)
+            self._historico_modelbuilder.open()
+        self._com_erro(mostrar)
 
     def _abrir_catalogo_conjuntos(self,previa,estado,preselecao=None,parent=None):
         dlg=CatalogoConjuntos(self,previa,estado,preselecao,parent)

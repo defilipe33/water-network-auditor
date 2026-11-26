@@ -199,6 +199,7 @@ def _conexoes_geometricas(tubos, linhas, extremos, indice_extremos, ancoras, ind
                                                   parte, comprimento_m=parte.length()))
                 elif parte.type() == 0:
                     a, b = _fracao(linha, parte), _fracao(linhas[j], parte)
+                    # Pontas no interior de outro Pipe já são representadas pelo detector em T.
                     if a is not None and b is not None:
                         candidatos.append(_candidato('CRUZAMENTO', [(tubos[i]['uid'], a), (tubos[j]['uid'], b)], parte))
     return candidatos
@@ -272,4 +273,15 @@ def construir(tubos, junctions=(), *, tolerancia=.20, estrategia='COMBINAR',
                                            indice_ancora, tolerancia, cancelar))
     etapa(0, 'Aplicando as relações selecionadas e verificando componentes')
     from .diagnosticos_grafo_gis import concluir
-    return concluir(tubos, linhas, topologia, candidatos, conexoes, origens, limite_mm, cancelar)
+    resultado = concluir(tubos, linhas, topologia, candidatos, conexoes, origens, limite_mm, cancelar)
+    from .prioridade_cruzamentos import classificar
+    for r in resultado['diagnosticos']:
+        if r['tipo'] == 'CRUZAMENTO':
+            break
+    else:
+        return resultado
+    prioridade = classificar(resultado, cancelar=cancelar, tolerancia=tolerancia)
+    for r in resultado['diagnosticos']:
+        if r['uid'] in prioridade:
+            r['prioridade_cruzamento'] = prioridade[r['uid']]
+    return resultado

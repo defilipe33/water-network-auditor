@@ -24,6 +24,7 @@ from .tabelas_topologia_gis import TabelaRelacoes, TabelaGIS, ACOMPANHAMENTO, ES
 from .topologia_gis_hipoteses_ui import HipotesesGIS
 from .topologia_gis_mapa_ui import MapaGIS
 from .topologia_gis_relacoes_ui import RelacoesGIS, CANDIDATAS
+from . import prioridade_cruzamentos as cruzamentos
 from .navegacao_cartografica import acao_disponivel, navegar_registros
 
 
@@ -184,6 +185,23 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         f3=formulario(v)
         f3.addRow('Categoria',self.categoria)
         f3.addRow('Ordenar',self.ordem)
+        self.filtro_cruzamentos=QComboBox()
+        for k,nome in cruzamentos.FILTROS.items():
+            self.filtro_cruzamentos.addItem(nome,k)
+        self.filtro_cruzamentos.currentIndexChanged.connect(self.mudar_resultados)
+        self.limiar_cruzamentos=QDoubleSpinBox()
+        self.limiar_cruzamentos.setRange(0,100)
+        self.limiar_cruzamentos.setDecimals(3)
+        self.limiar_cruzamentos.setSuffix(' m')
+        self.limiar_cruzamentos.setToolTip('Distância ao longo do Pipe. Altera a prioridade sem recalcular ou modificar a hipótese.')
+        self.limiar_cruzamentos.setKeyboardTracking(False)
+        self.limiar_cruzamentos.valueChanged.connect(self.reclassificar_cruzamentos)
+        f3.addRow('Revisão de cruzamentos',self.filtro_cruzamentos)
+        f3.addRow('Distância à extremidade',self.limiar_cruzamentos)
+        self._campos_cruzamentos=(self.filtro_cruzamentos,self.limiar_cruzamentos,
+                                 f3.labelForField(self.filtro_cruzamentos),f3.labelForField(self.limiar_cruzamentos))
+        for campo in self._campos_cruzamentos:campo.hide()
+        self._prioridade_cruzamentos={}
         self.busca=QLineEdit()
         self.busca.setPlaceholderText('Filtrar por ID, situação, setor ou zona')
         self.busca.editingFinished.connect(self.mudar_resultados)
@@ -479,6 +497,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             tabela.blockSignals(estado)
             self.status.setText('Recupere o complemento antes de incluí-lo em outra hipótese.')
         self._resultado_historico=False
+        if self.categoria.currentData()=='CRUZAMENTO':self.mudar_resultados(preservar=True)
         self.detalhar_relacao()
         self.detalhar_conexao()
         self._indicar_rascunho()
@@ -705,6 +724,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         if d['projeto_uid']!=self.uid_projeto or d['projeto_uid']!=self._projeto()['uuid']:
             raise ValueError('O projeto ativo mudou durante a abertura.')
         self.dados=d
+        self.limiar_cruzamentos.blockSignals(True)
+        self.limiar_cruzamentos.setValue(d['parametros']['tolerancia'])
+        self.limiar_cruzamentos.blockSignals(False)
+        self._prioridade_cruzamentos=cruzamentos.classificar(d)
         self._comparadas=None
         self.comparacao.hide()
         self._resultado_historico=True
@@ -799,7 +822,19 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             atuais=self._por_candidata.get(r['uid'],())
             if len(atuais)>1:return 'Múltiplas interpretações'
             if atuais:return ACOMPANHAMENTO.get(atuais[0].get('acompanhamento'),'Pendente')
+            if r.get('tipo')=='CRUZAMENTO' and r['uid'] not in self._decisoes_resultado:
+                return ('Não revisado · baixa prioridade' if self._prioridade_cruzamentos.get(r['uid'],{}).get('nivel')=='BAIXA'
+                        else 'Não revisado')
         return ACOMPANHAMENTO.get(self._decisoes_resultado.get(r['uid'],{}).get('acompanhamento'),'Pendente')
+
+    def reclassificar_cruzamentos(self,limite):
+        if self.dados:
+            self._prioridade_cruzamentos=cruzamentos.classificar(self.dados,limite)
+            self.mudar_resultados(preservar=True)
+
+    def cruzamento_revisado(self,r):
+        return bool(self._por_candidata.get(r['uid']) or self._vereditos_foto.get(r['uid']) or
+                    r.get('situacao') in ('CONFIRMADA','SEPARADA','INDETERMINADA'))
 
     def _acompanhamento_foto(self,r):
         anterior=getattr(self,'_vereditos_foto',{}).get(r['uid'],{})
@@ -815,6 +850,9 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         cols=('ID','Tubulação que termina' if categoria=='CONEXAO_T' else 'Tubulação A',
                 'Tubulação receptora' if categoria=='CONEXAO_T' else 'Tubulação B',
                 'Distância (m)','Componentes','Interpretação atual','Acompanhamento atual')
+        if categoria=='CRUZAMENTO':
+            return (*cols,'Acompanhamento na fotografia','Prioridade','Motivo','Extremidade (m)','Acesso às origens',
+                    'Participação no rascunho')
         return (*cols,'Acompanhamento na fotografia') if categoria in CANDIDATAS else cols
 
     def _valores(self,r):
@@ -840,6 +878,13 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         vals=(r['uid'][:8],self._rotulo_tubo(a) if a else None,self._rotulo_tubo(b) if b else None,
                 r.get('distancia_m'),', '.join(u[:8] for u in componentes),
                 self._interpretacao_atual(r),situacao)
+        if categoria=='CRUZAMENTO':
+            p=self._prioridade_cruzamentos.get(r['uid'],{})
+            rel=self._veredito_atual(r)
+            acesso=' · '.join(f'{u[:8]}: {ESTADO_COMPONENTE[s]}' for u,s in p.get('acessos',{}).items())
+            return (*vals,self._acompanhamento_foto(r),cruzamentos.ROTULOS.get(p.get('nivel')),p.get('motivo'),
+                    p.get('extremidade_m'),acesso,
+                    'Incluída' if rel and rel['uuid'] in self._participacao_resultados else 'Fora')
         return (*vals,self._acompanhamento_foto(r)) if categoria in CANDIDATAS else vals
 
     def ordenar_resultados(self,coluna):
@@ -854,6 +899,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         anterior=self._selecionado() if preservar else None
         self._pagina=0
         categoria=self.categoria.currentData()
+        for campo in self._campos_cruzamentos:campo.setVisible(categoria=='CRUZAMENTO')
+        self._participacao_resultados=set(self._selecionados()) if categoria=='CRUZAMENTO' else set()
         if categoria!=getattr(self,'_ultima_categoria',None):
             self._ultima_categoria=categoria
             self._ordem_coluna=None
@@ -873,6 +920,11 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
             }
             if categoria=='REDE_PRINCIPAL':
                 self._prioridade={r['uid']:i+1 for i,r in enumerate(sorted(candidatos,key=chaves['Prioridade']))}
+            if categoria=='CRUZAMENTO':
+                filtro=self.filtro_cruzamentos.currentData()
+                candidatos=[r for r in candidatos if cruzamentos.atende(self._prioridade_cruzamentos.get(r['uid']),filtro,
+                                                                         self.cruzamento_revisado(r))]
+                chaves['Prioridade']=lambda r:(cruzamentos.ORDEM.get(self._prioridade_cruzamentos.get(r['uid'],{}).get('nivel'),3),r['uid'])
             termo=self.busca.text().strip().casefold()
             if termo:
                 candidatos=[r for r in candidatos if termo in ' '.join((r['uid'],self._acompanhamento(r),
@@ -883,6 +935,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                 coluna,desc=self._ordem_coluna
                 def chave(r):
                     v=self._valores(r)[coluna]
+                    if categoria=='CRUZAMENTO' and coluna==8:
+                        return (False,cruzamentos.ORDEM.get(self._prioridade_cruzamentos.get(r['uid'],{}).get('nivel'),3))
                     return (v is None, str(v).casefold() if isinstance(v,str) or v is None else v)
                 self._lista_resultados.sort(key=chave,reverse=desc)
         else:self._lista_resultados=[]
@@ -916,6 +970,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         if indice<0:return False
         self.busca.clear()
         self.categoria.setCurrentIndex(indice)
+        if categoria=='CRUZAMENTO':
+            self.filtro_cruzamentos.setCurrentIndex(self.filtro_cruzamentos.findData('TODOS'))
         self.mudar_resultados()
         pos=next((i for i,r in enumerate(self._lista_resultados) if r['uid']==uid),None)
         if pos is None:return False
@@ -960,6 +1016,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         if r.get('tipo') in CANDIDATAS:
             partes.append('Componentes envolvidos: '+', '.join(u[:8] for u in r.get('componentes',[])))
             partes.append('Interpretação: '+self._interpretacao_atual(r))
+        if (p:=self._prioridade_cruzamentos.get(r['uid'])):
+            partes.append(f"Prioridade {cruzamentos.ROTULOS[p['nivel']].lower()} · {p['motivo']}")
         if r['tubos']:
             partes.append('Tubulações: '+', '.join(str(self.tubos[t].get('id') or t[:8]) for t in r['tubos'][:12]))
         if r.get('motivo') or r.get('criterio'):partes.append(r.get('motivo') or r['criterio'])
@@ -1002,6 +1060,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                 motivo=str(erro)
             motivo=motivo or ('' if r.get('portas') else 'A candidata não possui pontos de conexão confiáveis.')
             acoes.append(('Conferir conexão…',lambda:self.conferir_conexao(r),motivo))
+            if (p:=self._prioridade_cruzamentos.get(r['uid'])) and p['referencia_t']:
+                acoes.append(('Abrir conexão em T relacionada',lambda:self.selecionar_resultado_uid(p['referencia_t'],'CONEXAO_T')))
             acoes.extend((rotulo+'…',lambda d=d,incluir=incluir:self.conferir_conexao(r,(d,incluir)),motivo)
                 for rotulo,d,incluir in [('Confirmar e incluir','CONFIRMADA',True),
                     ('Confirmar sem incluir','CONFIRMADA',False),

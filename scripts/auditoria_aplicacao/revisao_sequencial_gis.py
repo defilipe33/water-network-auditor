@@ -9,6 +9,7 @@ from .investigacao_gis import geometria
 from . import estado_projeto as estado
 from .modelo_gis_ui import aviso, botao, expansivel, formulario
 from .navegacao_cartografica import acao_disponivel
+from . import prioridade_cruzamentos as cruzamentos
 
 
 CATEGORIAS=('CONEXAO_T','EXTREMIDADES_PROXIMAS','CRUZAMENTO')
@@ -43,12 +44,17 @@ class RevisaoSequencialGIS:
         for k,n in zip(CATEGORIAS,('Conexões em T','Extremidades próximas','Cruzamentos ambíguos')):
             self.seq_tipo.addItem(n,k)
         f.addRow('Categoria',self.seq_tipo)
+        self.seq_cruzamentos=QComboBox()
+        for k,nome in cruzamentos.FILTROS.items():self.seq_cruzamentos.addItem(nome,k)
+        f.addRow('Cruzamentos incluídos',self.seq_cruzamentos)
         self.seq_componente=QComboBox()
         self.seq_area=QComboBox()
         f.addRow('Componente',self.seq_componente)
         f.addRow('Área GIS',self.seq_area)
         self.seq_pendentes=QCheckBox('Somente pendentes ou indeterminadas')
         self.seq_pendentes.setChecked(True)
+        self.seq_cruzamentos.currentIndexChanged.connect(lambda *_:
+            self.seq_pendentes.setChecked(False) if self.seq_cruzamentos.currentData()=='REVISADOS' else None)
         self.seq_selecao=QCheckBox('Somente candidatas selecionadas nas tabelas')
         v.addWidget(self.seq_pendentes)
         v.addWidget(self.seq_selecao)
@@ -129,6 +135,13 @@ class RevisaoSequencialGIS:
             entradas=set(grupo['tubos']) if grupo else None,area=area,
             acompanhamento_pendente={u for u,rs in self._por_candidata.items() if len(rs)==1
                                       and rs[0].get('acompanhamento') in ('PENDENTE','EM_ANALISE','NECESSITA_CONFIRMACAO')})
+        filtro=self.seq_cruzamentos.currentData()
+        self._fila_conexoes=[u for u in self._fila_conexoes
+            if self._candidatas_tabela[u]['tipo']!='CRUZAMENTO' or (
+                cruzamentos.atende(self._prioridade_cruzamentos.get(u),filtro,
+                                    self.cruzamento_revisado(self._candidatas_tabela[u]))
+                and not (filtro=='PRIORITARIOS' and self.seq_pendentes.isChecked()
+                         and self.cruzamento_revisado(self._candidatas_tabela[u])))]
         self._posicao_conexoes=0
         self._rascunho_seq=None
         self.seq_ultima_decisao.clear()

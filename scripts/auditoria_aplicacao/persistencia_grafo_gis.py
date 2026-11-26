@@ -126,7 +126,8 @@ def vigentes(caminho, projeto_uid):
 
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *, referencia=None):
-    if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME','CONJUNTO_WG'):
+    if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME','CONJUNTO_WG',
+                    'MODELBUILDER_PERFIL','MODELBUILDER_EXPORTACAO'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO','PIPE') and dados.get('situacao') not in SITUACOES:
@@ -147,6 +148,12 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *
     if tipo=='CONJUNTO_WG':
         from .conjuntos_modelagem import validar
         validar(dados,projeto_uid)
+    if tipo=='MODELBUILDER_PERFIL':
+        from .modelbuilder_gis import validar_perfil
+        validar_perfil(dados)
+    if tipo=='MODELBUILDER_EXPORTACAO' and (dados.get('projeto_uid')!=projeto_uid or not dados.get('topologia_uid')
+                                           or not dados.get('pasta') or not dados.get('assinatura')):
+        raise ValueError('Informe a execução, o pacote e sua assinatura.')
     if dados.get('excluido') and not complemento_editavel(dict(dados,tipo=tipo)):
         raise ValueError('Somente elementos complementares podem ser excluídos.')
     uid, rev=uid or uuid4().hex,uuid4().hex

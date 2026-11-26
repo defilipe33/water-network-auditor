@@ -152,7 +152,7 @@ def selecionar(previa,chaves,*,tipo='TODOS',estado='TODOS',incluir_nos=False,atr
     return ids
 
 
-def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,cancelar=None):
+def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,escopo=None,cancelar=None):
     m=previa['manifesto']
     por_id=indice(previa)
     hip,rev=_hip(m)
@@ -176,9 +176,11 @@ def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,cancelar=None
                 original_uid=e.get('original'),id_gis=e.get('gis_id'),parte_uid=e.get('parte'),
                 inicio=e.get('inicio'),fim=e.get('fim'),conexao_uid=(s.get('criterio') or {}).get('conexao')))
     if somente_conjuntos and not catalogo:raise ValueError('Escolha ao menos um conjunto para preparar.')
-    selecionados=set(principais) if somente_conjuntos else set(por_id)
+    selecionados=(set(principais) if somente_conjuntos else set(por_id)) if escopo is None else set(escopo)
+    if selecionados-por_id.keys():raise ValueError('O escopo contém elementos ausentes do cadastro exportável.')
     # Junctions necessárias à geometria exportável permanecem disponíveis como contexto.
     selecionados.update(('JUNCTION',por_id[t,u][k]) for t,u in list(selecionados) if t=='PIPE' for k in ('no_a','no_b'))
+    if principais.keys()-selecionados:raise ValueError('Um conjunto selecionado possui membros fora do escopo de exportação.')
     pipes,nos,rotulos=([],[],set())
     for (t,u),r in por_id.items():
         verificar_cancelamento(cancelar)

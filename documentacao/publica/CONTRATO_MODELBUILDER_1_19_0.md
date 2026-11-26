@@ -1,5 +1,7 @@
 # Contrato de preparação GIS para o ModelBuilder
 
+O assistente, a ficha de mapeamento, a evidência pós-importação e os limites por versão estão no [guia da versão 1.19.0](MODELBUILDER_E_CRUZAMENTOS_1_19_0.md).
+
 ## Escopos e integridade
 
 | Escopo | Origem | Regra |

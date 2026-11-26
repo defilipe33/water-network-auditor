@@ -29,7 +29,7 @@ def _csv(saida, nome, colunas, linhas, cancelar):
                         for k, v in r.items() if k in colunas})
 
 
-def _vetor(saida, formato, nome, tipo, campos, linhas, crs, cancelar, ds=None):
+def _vetor(saida, formato, nome, tipo, campos, linhas, crs, cancelar, ds=None, *, reais=REAIS):
     from osgeo import ogr
 
     shp = formato == 'ESRI Shapefile'
@@ -45,7 +45,7 @@ def _vetor(saida, formato, nome, tipo, campos, linhas, crs, cancelar, ds=None):
             raise OSError('Falha ao criar a camada ' + nome)
         nomes = campos if shp else {k: k for k in campos}
         for k, campo in nomes.items():
-            if camada.CreateField(ogr.FieldDefn(campo, ogr.OFTReal if k in REAIS else ogr.OFTString)) != 0:
+            if camada.CreateField(ogr.FieldDefn(campo, ogr.OFTReal if k in reais else ogr.OFTString)) != 0:
                 raise OSError('Falha ao criar o campo ' + campo)
         if not shp and camada.StartTransaction() != 0:
             raise OSError('Falha ao iniciar a transação de exportação.')
@@ -55,7 +55,7 @@ def _vetor(saida, formato, nome, tipo, campos, linhas, crs, cancelar, ds=None):
             for k, campo in nomes.items():
                 v = r.get(k)
                 if v is not None:
-                    f.SetField(campo, v if k in REAIS else str(v))
+                    f.SetField(campo, v if k in reais else str(v))
             g = ogr.CreateGeometryFromWkb(r['wkb']) if nome == 'pipes' else ogr.Geometry(ogr.wkbPoint)
             if nome != 'pipes':
                 g.AddPoint_2D(*r['xy'])

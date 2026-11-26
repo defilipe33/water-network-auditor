@@ -28,8 +28,48 @@ def copiar(projeto,destino,modo,*,incorporar=False,cancelar=None,etapa=lambda *_
     def preparar(novo,pasta):
         if modo=='INDEPENDENTE':
             _independente(novo,pasta,cancelar,etapa)
+        else:
+            _copiar_pacotes_modelbuilder(projeto,pasta,cancelar,etapa)
         _copiar_fontes(novo,pasta,cancelar,etapa,apenas_internas=not incorporar)
     return organizar(projeto,destino,True,cancelar,etapa,extras,preparar_copia=preparar)
+
+
+def _copiar_pacotes_modelbuilder(projeto,pasta,cancelar,etapa):
+    from .modelbuilder_gis import ler_pacote
+    arq=projeto.get('arquivo_complementos')
+    manifesto=projeto.get('manifesto_wna')
+    if not arq or not manifesto or not Path(arq).is_file():
+        return
+    raiz=Path(manifesto).parent.resolve()
+    formatos={'.shp','.shx','.dbf','.prj','.cpg','.gpkg','.csv','.json','.txt'}
+    arquivos={'MODELBUILDER.json','validacao.json','operacoes_topologicas.json','cadastro_modelagem.gpkg',
+              'inventario_cadastral.csv','IMPORTAR_NO_MODELBUILDER.txt','CRIAR_SELECTION_SETS.txt',
+              'MODELO_CONFERENCIA_WATERGEMS.csv','INDICE_QUERIES.csv','reconciliacao.json','correspondencias.gpkg'}
+    prefixos=('WNA_', 'MINUTA_ATIVIDADE_', 'pipes.', 'junctions.', 'reservoirs.', 'tanks.')
+    for r in pg.revisoes(arq,projeto['uuid'],tipo='MODELBUILDER_EXPORTACAO'):
+        verificar_cancelamento(cancelar)
+        if not r.get('relativo'):
+            continue
+        pacote=(raiz/r['pasta']).resolve()
+        if not pacote.is_relative_to(raiz) or not pacote.is_dir():
+            continue
+        m,_=ler_pacote(pacote)
+        if m['projeto']!=projeto['uuid'] or m['assinatura_csv']!=r['assinatura']:
+            raise ValueError('O pacote ModelBuilder não corresponde à referência arquivada.')
+        etapa(0,'Copiando pacote ModelBuilder confirmado')
+        subs=[pacote,*[d for d in pacote.iterdir() if d.is_dir() and
+                       (d.name=='MINUTAS_QUERIES' or d.name.startswith('Conferencia_'))]]
+        for f in (f for d in subs for f in d.iterdir() if d.resolve().is_relative_to(pacote) and not d.is_symlink()):
+            verificar_cancelamento(cancelar)
+            if not f.is_file() or f.is_symlink() or not f.resolve().is_relative_to(pacote) or f.suffix.lower() not in formatos:
+                continue
+            if f.name not in arquivos and not f.name.startswith(prefixos) and not (
+                    f.parent.name=='MINUTAS_QUERIES' and f.suffix.lower()=='.txt'):
+                continue
+            alvo=pasta/f.relative_to(raiz)
+            alvo.parent.mkdir(parents=True,exist_ok=True)
+            if not alvo.exists():
+                shutil.copyfile(f,alvo)
 
 
 def _trocar(d,ids):

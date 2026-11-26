@@ -13,8 +13,9 @@ from auditoria_fronteiras.entradas import digest
 from auditoria_fronteiras.modelos import verificar_cancelamento
 from .dependencias_gis import RedeGIS
 from . import conjuntos_modelagem as conjuntos
-from .exportar_macro_origem import NOS, PIPES, _csv, _vetor
+from .exportar_macro_origem import NOS, PIPES, REAIS, _csv, _vetor
 from .topologia_derivada import preparar as materializar
+from .publicar_pasta_gis import publicar
 
 
 VERSAO=1
@@ -138,6 +139,7 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
                    hipotese=foto.get('hipotese'),crs=foto['crs'],unidades={'comprimento':'m','diametro':'mm'},
                    origens=foto['origens_validas'] if origens is None else origens,
                    regra_atividade=modo_atividade,contagens=cobertura,fontes=contagem or {},avisos=avisos,
+                   atividades_explicitas=atividades,
                    pendencias=pendencias,divisoes=divisoes,
                    lacunas=bool(avisos or pendencias or cobertura['originais_materializados']!=cobertura['pipes_originais']))
     eq_topologia={r['uid']:r for r in foto.get('equipamentos',())}
@@ -150,20 +152,41 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
     return previa
 
 
-def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=(),somente_conjuntos=False):
+def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=(),somente_conjuntos=False,
+             modelbuilder=None,escopo=None):
     from osgeo import ogr, osr
 
-    if formato not in ('GPKG','ESRI Shapefile'):raise ValueError('Escolha GeoPackage ou Shapefile.')
+    if formato not in ('GPKG','ESRI Shapefile') and not (modelbuilder and formato=='CSV'):
+        raise ValueError('Escolha GeoPackage ou Shapefile.')
     m=dict(previa['manifesto'])
     crs=osr.SpatialReference()
     if crs.SetFromUserInput(m['crs'])!=0:raise ValueError('CRS de exportação inválido.')
     pipes,nos,catalogo,associacoes=conjuntos.preparar_exportacao(
-        previa,selecoes,somente_conjuntos=somente_conjuntos,cancelar=cancelar)
+        previa,selecoes,somente_conjuntos=somente_conjuntos,escopo=escopo,cancelar=cancelar)
     pipe_campos={**PIPE_CAMPOS,**conjuntos.CAMPOS}
     no_campos={**NOS,**conjuntos.CAMPOS}
+    pontos={'junctions':nos}
+    reais=REAIS
+    if modelbuilder:
+        from . import modelbuilder_gis as mb
+        etapa(0,'Conferindo integridade e referências Start e Stop Node')
+        pipes,tipos,esperado,pendencias,manifesto_mb=mb.preparar(previa,pipes,nos,associacoes,modelbuilder,cancelar)
+        pontos={nome:tipos[tipo] for nome,tipo in (('junctions','JUNCTION'),('reservoirs','RESERVOIR'),('tanks','TANK'))
+                if tipos[tipo] or tipo=='JUNCTION'}
+        pipe_campos.update(mb.CAMPOS_PIPE)
+        no_campos.update(mb.CAMPOS_NO)
+        reais=REAIS | mb.CAMPOS_REAIS
+        if formato=='CSV':
+            from .investigacao_gis import geometria
+            pipe_campos['mb_wkt']='MB_WKT'
+            for r in pipes:
+                verificar_cancelamento(cancelar)
+                r['mb_wkt']=geometria(r['wkb'].hex()).asWkt()
     m.update(esquema_wna=conjuntos.VERSAO,conjuntos=len(catalogo),associacoes=len(associacoes),
              exportacao='SELECOES' if somente_conjuntos else 'CADASTRO_COMPLETO',
              elementos_exportados={'PIPE':len(pipes),'JUNCTION':len(nos)})
+    if modelbuilder:
+        m.update(exportacao=modelbuilder['escopo'],elementos_exportados=manifesto_mb['quantidades'])
     destino=Path(pasta)/('Cadastro_modelagem_'+m['execucao'][:8]+'_'+uuid4().hex[:8])
     etapa(0,'Gravando cadastro, derivados e tabelas de procedência')
     with TemporaryDirectory(prefix='.cadastro_',dir=pasta) as arq:
@@ -173,8 +196,10 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
         ds=None
         try:
             if formato=='GPKG':ds=ogr.GetDriverByName(formato).CreateDataSource(str(gpkg))
-            _vetor(saida,formato,'pipes',ogr.wkbLineString,pipe_campos,pipes,crs,cancelar,ds)
-            _vetor(saida,formato,'junctions',ogr.wkbPoint,no_campos,nos,crs,cancelar,ds)
+            if formato!='CSV':
+                _vetor(saida,formato,'pipes',ogr.wkbLineString,pipe_campos,pipes,crs,cancelar,ds,reais=reais)
+                for nome,linhas in pontos.items():
+                    _vetor(saida,formato,nome,ogr.wkbPoint,no_campos,linhas,crs,cancelar,ds,reais=reais)
         finally:
             if ds is not None:ds.Destroy()
         tabelas={
@@ -203,7 +228,8 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
                                     (r.get('uid',r.get('uuid')),json.dumps(r,ensure_ascii=False)))
                 _tabela_associacoes(con,catalogo,associacoes,cancelar)
         _csv(saida,'pipes',(*pipe_campos,'fontes','componente'),pipes,cancelar)
-        _csv(saida,'junctions',(*no_campos,'xy','portas'),nos,cancelar)
+        for nome,linhas in pontos.items():
+            _csv(saida,nome,(*no_campos,'xy','portas','equipamento_uid'),linhas,cancelar)
         _csv(saida,'inventario_cadastral',('uid','feicao','id','label','categoria','fontes','camada','atributos_originais'),
              tabelas['inventario_cadastral'],cancelar)
         (saida/'operacoes_topologicas.json').write_text(json.dumps(tabelas['operacoes_topologicas'],ensure_ascii=False),encoding='utf-8')
@@ -212,11 +238,24 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
         if catalogo:
             m['consultas']='MINUTAS_CONDICIONADAS_A_CORRESPONDENCIA_E_VALIDACAO_NO_WATERGEMS'
             _consultas(saida,catalogo,associacoes,cancelar)
+        if modelbuilder:
+            if modelbuilder['perfil']['modo']=='ATUALIZAR':
+                from .modelbuilder_conferencia import plano_atualizacao
+                if not modelbuilder.get('componentes_anteriores'):
+                    raise ValueError('Confira o pacote de referência para preparar a atualização.')
+                plano=plano_atualizacao(modelbuilder['componentes_anteriores'],esperado,cancelar,
+                                        observado=modelbuilder.get('observado',()))
+                _csv(saida,'WNA_PLANO_ATUALIZACAO',('acao','uid','tipo','novos_segmentos','id_modelo','label_modelo',
+                    'situacao_destino'),plano,cancelar)
+                manifesto_mb.update(atualizacao='PREVIA_EXIGE_CONFERENCIA_DO_MODELO_DESTINO',
+                                    referencia_anterior=modelbuilder.get('referencia_anterior'))
+            mb.arquivos(saida,esperado,pendencias,manifesto_mb,_csv,cancelar)
+            _csv(saida,'WNA_EQUIPAMENTOS_INVENTARIO',('uid','categoria','id','label','wkb','declaracoes','atributos_originais'),
+                 previa['equipamentos'],cancelar)
         if formato=='ESRI Shapefile':
-            m=dict(m,dicionario_shp={'pipes':pipe_campos,'junctions':no_campos})
+            m=dict(m,dicionario_shp={'pipes':pipe_campos,**{k:no_campos for k in pontos}})
         (saida/'validacao.json').write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8')
-        verificar_cancelamento(cancelar)
-        saida.rename(destino)
+        publicar(saida,destino,cancelar)
     return destino
 
 
