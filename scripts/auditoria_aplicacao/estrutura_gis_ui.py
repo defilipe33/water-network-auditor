@@ -928,6 +928,7 @@ class EstruturaGIS(QScrollArea,MapaGIS,CorredoresAgrupadosUI,BlocosGISUI,MacroOr
             return self.menu_corredor(r)
         if self._tipo_linha=='BLOCOS':
             acoes=[('Exportar este bloco…',lambda:self.exportar_blocos(r)),
+                    ('Criar conjunto para WaterGEMS…',lambda:self.criar_conjunto_do_resultado(r,'BLOCOS')),
                     ('Destacar percurso de referência',lambda:self.localizar_linha(indice,True,'referencia'),
                      '' if (r.get('referencia') or {}).get('segmentos') else 'Percurso sem trechos detalhados.')]
             for u in r.get('alternativas',[])[:10]:

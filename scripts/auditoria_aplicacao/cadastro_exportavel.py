@@ -12,6 +12,7 @@ from uuid import uuid4
 from auditoria_fronteiras.entradas import digest
 from auditoria_fronteiras.modelos import verificar_cancelamento
 from .dependencias_gis import RedeGIS
+from . import conjuntos_modelagem as conjuntos
 from .exportar_macro_origem import NOS, PIPES, _csv, _vetor
 from .topologia_derivada import preparar as materializar
 
@@ -110,6 +111,13 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
         p=j['geom'].asPoint()
         u=digest(['junction-cadastral-nao-analisada',j['uid']])
         no_por_uid[u]=dict(uid=u,xy=[p.x(),p.y()],portas=[['J',j['uid']]],natureza='JUNCTION_CADASTRADA')
+    junctions_cadastrais={j['uid']:j for j in junctions}
+    for n in no_por_uid.values():
+        verificar_cancelamento(cancelar)
+        refs={p[1] for p in n['portas'] if p[0]=='J'}
+        if len(refs)==1 and (j:=junctions_cadastrais.get(next(iter(refs)))):
+            n.update(original=j['feicao'],gis_id=j.get('id'),label=j.get('label'),camada=j.get('camada'),
+                     procedencia='GIS_ORIGINAL',situacao='EXISTENTE_CADASTRADO')
     participantes=[dict(r,resultado=resolucoes.get(r['uuid'],'CONSIDERADO'))
                    for r in foto.get('participantes',()) if r['tipo'] in ('CONEXAO','PIPE','ORIGEM')]
     metr=dict(Counter(r['atividade'] for r in pipes))
@@ -136,18 +144,26 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
     eqs=[dict(r,declaracoes=eq_topologia.get(r['uid'],{}).get('declaracoes',[]),
               participacao='INCLUIDO' if r['uid'] in eq_topologia else 'NAO_INCLUIDO',
               atividade='A_DEFINIR',procedencia='GIS_ORIGINAL') for r in equipamentos]
-    return dict(pipes=pipes,nos=list(no_por_uid.values()),cadastro=cadastro,operacoes=participantes,
+    previa=dict(pipes=pipes,nos=list(no_por_uid.values()),cadastro=cadastro,operacoes=participantes,
                 equipamentos=eqs,manifesto=manifesto)
+    manifesto['assinatura_topologia_exportavel']=conjuntos.assinatura(previa)
+    return previa
 
 
-def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None):
+def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=(),somente_conjuntos=False):
     from osgeo import ogr, osr
 
     if formato not in ('GPKG','ESRI Shapefile'):raise ValueError('Escolha GeoPackage ou Shapefile.')
-    m=previa['manifesto']
+    m=dict(previa['manifesto'])
     crs=osr.SpatialReference()
     if crs.SetFromUserInput(m['crs'])!=0:raise ValueError('CRS de exportação inválido.')
-    pipes,nos=previa['pipes'],previa['nos']
+    pipes,nos,catalogo,associacoes=conjuntos.preparar_exportacao(
+        previa,selecoes,somente_conjuntos=somente_conjuntos,cancelar=cancelar)
+    pipe_campos={**PIPE_CAMPOS,**conjuntos.CAMPOS}
+    no_campos={**NOS,**conjuntos.CAMPOS}
+    m.update(esquema_wna=conjuntos.VERSAO,conjuntos=len(catalogo),associacoes=len(associacoes),
+             exportacao='SELECOES' if somente_conjuntos else 'CADASTRO_COMPLETO',
+             elementos_exportados={'PIPE':len(pipes),'JUNCTION':len(nos)})
     destino=Path(pasta)/('Cadastro_modelagem_'+m['execucao'][:8]+'_'+uuid4().hex[:8])
     etapa(0,'Gravando cadastro, derivados e tabelas de procedência')
     with TemporaryDirectory(prefix='.cadastro_',dir=pasta) as arq:
@@ -157,8 +173,8 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None):
         ds=None
         try:
             if formato=='GPKG':ds=ogr.GetDriverByName(formato).CreateDataSource(str(gpkg))
-            _vetor(saida,formato,'pipes',ogr.wkbLineString,PIPE_CAMPOS,pipes,crs,cancelar,ds)
-            _vetor(saida,formato,'junctions',ogr.wkbPoint,NOS,nos,crs,cancelar,ds)
+            _vetor(saida,formato,'pipes',ogr.wkbLineString,pipe_campos,pipes,crs,cancelar,ds)
+            _vetor(saida,formato,'junctions',ogr.wkbPoint,no_campos,nos,crs,cancelar,ds)
         finally:
             if ds is not None:ds.Destroy()
         tabelas={
@@ -169,6 +185,12 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None):
             'equipamentos_inventariados':previa['equipamentos'],
             'validacao': [m],
         }
+        if somente_conjuntos:
+            originais={r['original'] for r in pipes}|{r['WNA_ORIG_UID'] for r in nos}
+            refs={a['conexao_uid'] for a in associacoes if a['conexao_uid']}
+            tabelas['inventario_cadastral']=[r for r in previa['cadastro'] if r['feicao'] in originais or r['uid'] in originais]
+            tabelas['operacoes_topologicas']=[r for r in previa['operacoes'] if r['uuid'] in refs]
+            tabelas['equipamentos_inventariados']=[]
         if formato=='GPKG':
             with closing(sqlite3.connect(gpkg)) as con, con:
                 for nome,rs in tabelas.items():
@@ -179,14 +201,76 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None):
                         verificar_cancelamento(cancelar)
                         con.execute(f'INSERT INTO {nome} (uid,dados_json) VALUES (?,?)',
                                     (r.get('uid',r.get('uuid')),json.dumps(r,ensure_ascii=False)))
-        _csv(saida,'pipes',(*PIPE_CAMPOS,'fontes','componente'),pipes,cancelar)
-        _csv(saida,'junctions',(*NOS,'xy','portas'),nos,cancelar)
+                _tabela_associacoes(con,catalogo,associacoes,cancelar)
+        _csv(saida,'pipes',(*pipe_campos,'fontes','componente'),pipes,cancelar)
+        _csv(saida,'junctions',(*no_campos,'xy','portas'),nos,cancelar)
         _csv(saida,'inventario_cadastral',('uid','feicao','id','label','categoria','fontes','camada','atributos_originais'),
-             previa['cadastro'],cancelar)
-        (saida/'operacoes_topologicas.json').write_text(json.dumps(previa['operacoes'],ensure_ascii=False),encoding='utf-8')
+             tabelas['inventario_cadastral'],cancelar)
+        (saida/'operacoes_topologicas.json').write_text(json.dumps(tabelas['operacoes_topologicas'],ensure_ascii=False),encoding='utf-8')
+        _csv(saida,'WNA_CONJUNTOS',conjuntos.CATALOGO,catalogo,cancelar)
+        _csv(saida,'WNA_ELEMENTO_CONJUNTO',conjuntos.COLUNAS,associacoes,cancelar)
+        if catalogo:
+            m['consultas']='MINUTAS_CONDICIONADAS_A_CORRESPONDENCIA_E_VALIDACAO_NO_WATERGEMS'
+            _consultas(saida,catalogo,associacoes,cancelar)
         if formato=='ESRI Shapefile':
-            m=dict(m,dicionario_shp={'pipes':PIPE_CAMPOS,'junctions':NOS})
+            m=dict(m,dicionario_shp={'pipes':pipe_campos,'junctions':no_campos})
         (saida/'validacao.json').write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8')
         verificar_cancelamento(cancelar)
         saida.rename(destino)
     return destino
+
+
+def _tabela_associacoes(con,catalogo,associacoes,cancelar):
+    for nome,colunas,dados,chave in (
+            ('WNA_CONJUNTOS',conjuntos.CATALOGO,catalogo,('uuid',)),
+            ('WNA_ELEMENTO_CONJUNTO',conjuntos.COLUNAS,associacoes,('tipo_elemento','elemento_uid','conjunto_uid'))):
+        campos=','.join(k+(' REAL' if k in ('inicio','fim') else ' TEXT') for k in colunas)
+        con.execute(f"CREATE TABLE {nome} (fid INTEGER PRIMARY KEY, {campos}, UNIQUE ({','.join(chave)}))")
+        con.execute('INSERT INTO gpkg_contents (table_name,data_type,identifier) VALUES (?,?,?)',
+                    (nome,'attributes',nome))
+        sql=f"INSERT INTO {nome} ({','.join(colunas)}) VALUES ({','.join('?' for _ in colunas)})"
+        for r in dados:
+            verificar_cancelamento(cancelar)
+            con.execute(sql,[json.dumps(v,ensure_ascii=False) if isinstance(v,(dict,list,tuple)) else v
+                             for k in colunas for v in (r.get(k),)])
+    con.execute('CREATE INDEX wna_associacao_conjunto ON WNA_ELEMENTO_CONJUNTO(conjunto_uid)')
+
+
+def _consultas(saida,catalogo,associacoes,cancelar):
+    from collections import defaultdict
+
+    grupos=defaultdict(list)
+    for r in associacoes:
+        grupos[r['conjunto_uid'],r['tipo_elemento']].append(r['elemento_uid'])
+    pasta=saida/'MINUTAS_QUERIES'
+    pasta.mkdir()
+    indice=[]
+    for (uid,tipo),ids in sorted(grupos.items()):
+        nome=next(r['nome'] for r in catalogo if r['uuid']==uid)
+        ids=sorted(ids)
+        for i in range(0,len(ids),100):
+            verificar_cancelamento(cancelar)
+            lote=ids[i:i+100]
+            arquivo=f'{uid}_{tipo}_LOTE_{i//100+1:03d}.txt'
+            expr='WNA_UID IN ('+', '.join("'"+u+"'" for u in lote)+')'
+            (pasta/arquivo).write_text(expr+'\n',encoding='utf-8')
+            indice.append(dict(conjunto_uid=uid,nome=nome,tipo=tipo,arquivo=arquivo,lote=i//100+1,
+                               quantidade=len(lote),total=len(ids),validacao='PENDENTE_NO_MODELO_DE_DESTINO'))
+    _csv(pasta,'INDICE_QUERIES',('conjunto_uid','nome','tipo','arquivo','lote','quantidade','total','validacao'),
+         indice,cancelar)
+    (saida/'CRIAR_SELECTION_SETS.txt').write_text(
+        'Pacote de preparação de Selection Sets\n\n'
+        '1. Abra uma cópia do modelo de destino e confira a execução e a revisão em validacao.json.\n'
+        '2. No ModelBuilder, confira o vínculo unívoco entre os elementos de destino e os registros exportados. '
+        'Crie um User Data Extension de texto WNA_UID por tipo de elemento e mapeie explicitamente o campo. '
+        'A coluna WNA_LABEL é um Label previsto para preparação. Preserve Labels existentes quando houver uma chave confiável.\n'
+        '3. Exporte uma FlexTable de cada tipo. Compare WNA_UID e tipo com WNA_ELEMENTO_CONJUNTO.csv. '
+        'Resolva chaves ausentes, duplicadas, incompatíveis ou ligadas ao elemento errado antes de continuar.\n'
+        '4. No Query Builder, selecione o tipo correspondente e insira o campo pela lista do próprio editor. '
+        'Ajuste a minuta se o editor usar outro identificador. Valide a expressão e confira a quantidade de cada lote.\n'
+        '5. Crie um Selection Set estático com o primeiro lote conferido e use Add to Selection Set para os seguintes, '
+        'quando disponível. Reexecutar uma consulta pode substituir a seleção atual.\n'
+        '6. Confira o total de elementos distintos por tipo e seus WNA_UIDs. Reconstrua as pastas usando a categoria '
+        'e a subpasta do catálogo, se a sua versão permitir.\n\n'
+        'Os arquivos de MINUTAS_QUERIES dependem do campo e da correspondência no modelo de destino.\n'
+        'Referência Bentley KB0059255, KB0015896 e KB0014413.\n',encoding='utf-8')

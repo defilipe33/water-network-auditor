@@ -385,6 +385,7 @@ class CorredoresAgrupadosUI:
             ('Renomear corredor…',lambda:self.renomear_corredor(c)),
             ('Histórico de nomes',lambda:self.historico_corredor(c)),
             ('Exportar corredor selecionado…',lambda:self.exportar_macro('CORREDOR',u)),
+            ('Criar conjunto para WaterGEMS…',lambda:self.criar_conjunto_do_resultado(c,'CORREDORES')),
             ('Exportar percurso completo…',lambda:self.escolher_percurso(c,exportar=True),
              '' if c['percursos'] else 'Sem percurso.'),
         ]

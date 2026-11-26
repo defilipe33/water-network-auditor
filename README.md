@@ -1,6 +1,8 @@
 # Water Network Auditor — GIS & WaterGEMS
 
-A pré-release **1.18.2** reúne as investigações em uma hierarquia, introduz a fila de revisão de conexões e inclui a [prévia do cadastro GIS para modelagem](documentacao/publica/CONSOLIDACAO_1_18_2.md). O inventário da prévia inclui Pipes isolados e fora dos filtros da conectividade.
+A pré-release **1.18.3** integra os vereditos ao acompanhamento, inclui a auditoria de conexões repetidas e adiciona um catálogo de conjuntos materializados para preparar Selection Sets. [Guia da versão 1.18.3](documentacao/publica/CONEXOES_E_CONJUNTOS_1_18_3.md).
+
+A pré-release **1.18.2** reuniu as investigações em uma hierarquia, introduziu a fila de revisão de conexões e incluiu a prévia do cadastro GIS para modelagem. O inventário da prévia inclui Pipes isolados e fora dos filtros da conectividade. [Guia da versão 1.18.2](documentacao/publica/CONSOLIDACAO_1_18_2.md).
 
 A pré-release **1.18.1** acrescenta a [visão macro do abastecimento por origem](documentacao/publica/VISAO_MACRO_ORIGEM_1_18_1.md). A análise contabiliza a rede GIS alcançável por inteiro, organiza blocos e corredores de referência e permite exportar seleções com seus Pipes e Junctions.
 

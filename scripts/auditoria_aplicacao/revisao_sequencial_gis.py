@@ -18,11 +18,13 @@ ACOES=(('Confirmar e incluir','CONFIRMADA',True),
        ('Necessita investigação','INDETERMINADA',False))
 
 
-def selecionar(diagnosticos, decisoes, *, tipo=None, pendentes=False, ids=None, entradas=None, area=None):
+def selecionar(diagnosticos, decisoes, *, tipo=None, pendentes=False, ids=None, entradas=None, area=None,
+               acompanhamento_pendente=()):
     return [r['uid'] for r in diagnosticos
             if r['tipo'] in CATEGORIAS and (not tipo or r['tipo']==tipo)
             and (ids is None or r['uid'] in ids)
-            and (not pendentes or decisoes.get(r['uid']) not in ('CONFIRMADA','SEPARADA'))
+            and (not pendentes or decisoes.get(r['uid']) not in ('CONFIRMADA','SEPARADA')
+                 or r['uid'] in acompanhamento_pendente)
             and (entradas is None or entradas.intersection(r.get('tubos',())))
             and (area is None or ((g:=geometria(r.get('wkb'))) and area.intersects(g)))]
 
@@ -59,9 +61,19 @@ class RevisaoSequencialGIS:
         self.seq_nota=QLineEdit()
         self.seq_nota.setPlaceholderText('Observação opcional para esta decisão')
         v.addWidget(self.seq_nota)
+        self.seq_acompanhamento=QComboBox()
+        from .tabelas_topologia_gis import ACOMPANHAMENTO
+        for k,n in ACOMPANHAMENTO.items():self.seq_acompanhamento.addItem(n,k)
+        formulario(v).addRow('Acompanhamento da decisão',self.seq_acompanhamento)
         self.seq_acoes=[]
         for texto,decisao,incluir in ACOES:
-            self.seq_acoes.append(botao(v,texto,lambda _,d=decisao,i=incluir:self.decidir_sequencia(d,i)))
+            self.seq_acoes.append(botao(v,texto,lambda _,d=decisao,i=incluir:self._propor_veredito_seq(d,i)))
+        self.seq_decisao=aviso()
+        v.addWidget(self.seq_decisao)
+        self.seq_ultima_decisao=aviso()
+        v.addWidget(self.seq_ultima_decisao)
+        self.seq_gravar=botao(v,'Salvar decisão e avançar',self._gravar_veredito_seq)
+        self._proposta_seq=None
         nav=QHBoxLayout()
         v.addLayout(nav)
         self.seq_voltar=botao(nav,'‹ Voltar',lambda:self.mover_revisao(-1))
@@ -114,9 +126,12 @@ class RevisaoSequencialGIS:
             return
         self._fila_conexoes=selecionar(self.dados['diagnosticos'],self._decisoes_seq(),
             tipo=self.seq_tipo.currentData(),pendentes=self.seq_pendentes.isChecked(),ids=ids,
-            entradas=set(grupo['tubos']) if grupo else None,area=area)
+            entradas=set(grupo['tubos']) if grupo else None,area=area,
+            acompanhamento_pendente={u for u,rs in self._por_candidata.items() if len(rs)==1
+                                      and rs[0].get('acompanhamento') in ('PENDENTE','EM_ANALISE','NECESSITA_CONFIRMACAO')})
         self._posicao_conexoes=0
         self._rascunho_seq=None
+        self.seq_ultima_decisao.clear()
         self._com_erro(self._salvar_revisao_seq)
         self._exibir_seq(True)
 
@@ -153,6 +168,10 @@ class RevisaoSequencialGIS:
         antigas=self._por_candidata.get(r['uid'],()) if r else ()
         self.seq_nota.setText(antigas[0].get('nota','') if len(antigas)==1 else '')
         self.seq_nota.setEnabled(bool(r))
+        self.seq_acompanhamento.setEnabled(bool(r))
+        self._proposta_seq=None
+        self.seq_decisao.clear()
+        self.seq_gravar.setEnabled(False)
         for botao_ in self.seq_acoes:
             acao_disponivel(botao_,'' if r and r.get('portas') and len(antigas)<=1 else
                            'A candidata não possui pontos editáveis ou tem múltiplas interpretações.')
@@ -164,13 +183,35 @@ class RevisaoSequencialGIS:
 
     def mover_revisao(self,delta):
         if self.central.ocupado() or self._uid_fila!=(self.dados or {}).get('uuid'):return
+        anterior=self._posicao_conexoes
         self._posicao_conexoes=max(0,min(self._posicao_conexoes+delta,len(self._fila_conexoes)))
-        self._com_erro(self._salvar_revisao_seq)
+        def persistir():
+            self._salvar_revisao_seq()
+            return True
+        if not self._com_erro(persistir):
+            self._posicao_conexoes=anterior
+            self.seq_ultima_decisao.setText(self.seq_ultima_decisao.text()+
+                ' A posição da fila não foi salva. '+self.status.text())
+            return
         self._exibir_seq(True)
 
-    def decidir_sequencia(self,decisao,incluir):
+    def _propor_veredito_seq(self,decisao,incluir):
+        from .topologia_gis_relacoes_ui import acompanhamento_padrao
+        from .persistencia_grafo_gis import DECISOES
+        self._proposta_seq=(decisao,incluir)
+        self.seq_decisao.setText(DECISOES[decisao]+' · '+('marcar no rascunho' if incluir else 'fora do rascunho'))
+        self.seq_acompanhamento.setCurrentIndex(self.seq_acompanhamento.findData(acompanhamento_padrao(decisao)))
+        self.seq_gravar.setEnabled(True)
+
+    def _gravar_veredito_seq(self):
+        if self._proposta_seq:
+            self.decidir_sequencia(*self._proposta_seq,acompanhamento=self.seq_acompanhamento.currentData())
+
+    def decidir_sequencia(self,decisao,incluir,acompanhamento=None):
         r=self._candidata_seq()
         if not r or self._uid_fila!=(self.dados or {}).get('uuid'):return
-        if self.interpretar_candidata(r,decisao,incluir=incluir,nota=self.seq_nota.text().strip()):
-            if self._com_erro(self.guardar_rascunho):self._rascunho_seq=self._rascunho_restaurado
+        if self.interpretar_candidata(r,decisao,incluir=incluir,nota=self.seq_nota.text().strip(),
+                                     acompanhamento=acompanhamento):
+            self._rascunho_seq=self._rascunho_restaurado
+            self.seq_ultima_decisao.setText(self.status.text())
             self.mover_revisao(1)

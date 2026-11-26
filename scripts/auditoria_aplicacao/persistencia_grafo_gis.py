@@ -125,8 +125,8 @@ def vigentes(caminho, projeto_uid):
     return {r['uuid']:r for r in revisoes(caminho,projeto_uid)}
 
 
-def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
-    if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME'):
+def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *, referencia=None):
+    if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME','CONJUNTO_WG'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO','PIPE') and dados.get('situacao') not in SITUACOES:
@@ -144,6 +144,9 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
         raise ValueError('Informe a execução, a zona e os destinos declarados.')
     if tipo=='CORREDOR_NOME' and (not uid or not dados.get('analise_uid') or not str(dados.get('nome','')).strip()):
         raise ValueError('Informe a investigação, a identidade e o nome do corredor.')
+    if tipo=='CONJUNTO_WG':
+        from .conjuntos_modelagem import validar
+        validar(dados,projeto_uid)
     if dados.get('excluido') and not complemento_editavel(dict(dados,tipo=tipo)):
         raise ValueError('Somente elementos complementares podem ser excluídos.')
     uid, rev=uid or uuid4().hex,uuid4().hex
@@ -151,6 +154,12 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None):
         con.execute('PRAGMA foreign_keys=ON')
         con.execute('BEGIN IMMEDIATE')
         _identidade(con,projeto_uid)
+        if referencia:
+            outra_uid,outra_rev=referencia
+            rref=con.execute('SELECT rev FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',
+                             (outra_uid,)).fetchone()
+            if rref!=(outra_rev,):
+                raise ValueError('A revisão da relação principal mudou. Repita a auditoria.')
         r=con.execute('SELECT rev,tipo FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
         if (r[0] if r else None)!=esperada or r and r[1]!=tipo:
             raise ValueError('Revisão alterada por outra sessão. Reabra antes de salvar.')

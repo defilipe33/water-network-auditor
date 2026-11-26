@@ -66,6 +66,10 @@ def _numero(valor, fator):
         return None
 
 
+def marca_feicao(origem, atributos, geom):
+    return digest([origem,atributos,bytes(geom.asWkb()).hex()])
+
+
 def ler(preparacao, cancelar=None, etapa=lambda *_:None, *, cadastro=None):
     fontes, destino, contexto, unidades, avisos = preparacao
     tubos, junctions, equipamentos, areas = [], [], [], []
@@ -93,8 +97,7 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None, *, cadastro=None):
                 if cadastro is not None:contagem['descartes'].append(dict(fid=f.id(),motivo='Geometria inválida ou vazia'))
                 continue
             atributos = {campo.name():valor_python(f[campo.name()]) for campo in snapshot.fields()}
-            bruto = bytes(geom.asWkb()).hex()
-            marca = digest([fonte['origem_estavel'], atributos, bruto])
+            marca = marca_feicao(fonte['origem_estavel'],atributos,geom)
             duplicadas[marca] += 1
             feicao = f'{marca}_{duplicadas[marca]}'
             if trans and geom.transform(trans) != 0:

@@ -224,7 +224,7 @@ class EditarComplemento(QDialog):
                               categoria_candidata=self.candidato.get('tipo') if self.candidato else None)
         if self.antes_salvar is not None:
             try:
-                self.antes_salvar(self.dados)
+                if self.antes_salvar(self.dados) is False:return
             except (ValueError, OSError, RuntimeError, ErroBanco) as erro:
                 self.info.setText(str(erro))
                 return

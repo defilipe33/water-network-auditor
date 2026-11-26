@@ -569,6 +569,9 @@ class MacroOrigemUI:
                   lambda: self._testar_alternativa_integral(r), caminho),
                  ('Exportar seleção…', lambda: self.exportar_integral(r, r.get('tipo', 'AREA')), caminho),
                  ('Exportar percurso completo…', lambda: self.exportar_integral(r, 'CAMINHO'), caminho)]
+        acoes.append(('Criar conjunto para WaterGEMS…',lambda:self.criar_conjunto_do_resultado(r,
+                      'CORREDORES' if r.get('tipo') in ('TRONCO','RAMAL') else
+                      'BLOCOS' if r.get('tipo')=='MACRO' else 'PERSONALIZADOS')))
         if r.get('tipo') in ('TRONCO', 'RAMAL', 'MACRO'):
             tabela = 'MACRO_BLOCOS' if r['tipo'] == 'MACRO' else 'MACRO_CORREDORES'
             acoes.insert(0, ('Mostrar somente este conjunto',

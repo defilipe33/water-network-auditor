@@ -4,10 +4,10 @@ import unittest
 from unittest.mock import patch
 
 import test_grafo_gis as etapa2
-from qgis.PyQt.QtCore import QItemSelectionModel, Qt
+from qgis.PyQt.QtCore import QItemSelectionModel, QTimer, Qt
 from qgis.PyQt.QtGui import QColor, QKeyEvent, QPalette
 from qgis.PyQt.QtTest import QTest
-from qgis.PyQt.QtWidgets import QAbstractItemView, QMenu, QMessageBox, QVBoxLayout, QWidget
+from qgis.PyQt.QtWidgets import QApplication, QAbstractItemView, QComboBox, QMenu, QMessageBox, QPushButton, QVBoxLayout, QWidget
 from qgis.core import QgsProject, QgsRectangle
 from qgis.gui import QgsMapToolPan
 
@@ -250,8 +250,18 @@ class Conectividade(unittest.TestCase):
         self.assertIsNone(t._editor)
         self.assertTrue(self.c.mapa.itens)
         opcoes={a[0]:a[1] for a in t._menu_resultado(indice) if a}
-        opcoes['Confirmar sem incluir']()
+        estados=[]
+        def salvar():
+            dialogo=QApplication.activeModalWidget()
+            if dialogo is None:return
+            estados.extend(c.currentData() for c in dialogo.findChildren(QComboBox))
+            next(b for b in dialogo.findChildren(QPushButton) if b.text()=='Salvar decisão').click()
+        QTimer.singleShot(0,salvar)
+        opcoes['Confirmar sem incluir…']()
+        self.assertEqual(estados,[('CONFIRMADA',False),'VERIFICADO'])
         self.assertIn('fora da hipótese',t.status.text())
+        self.assertEqual(t._acompanhamento(candidata),'Verificado')
+        self.assertEqual(t._acompanhamento_foto(candidata),'Sem revisão na fotografia')
         self.assertEqual(t._selecionados(),[])
         uid=next(r['uuid'] for r in t.registros.values() if r['tipo']=='CONEXAO')
         t._marcar_relacao(uid,True)

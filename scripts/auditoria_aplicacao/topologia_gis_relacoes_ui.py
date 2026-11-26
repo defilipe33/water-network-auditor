@@ -2,6 +2,7 @@
 
 from qgis.PyQt.QtCore import Qt
 from collections import Counter
+import sqlite3
 
 from qgis.PyQt.QtWidgets import QAbstractItemView, QComboBox, QDialog, QHBoxLayout, QInputDialog, QLineEdit, QMessageBox, QVBoxLayout
 
@@ -11,9 +12,18 @@ from .tabelas_topologia_gis import ACOMPANHAMENTO, TabelaRelacoes
 from .modelo_gis_ui import aviso, botao, expansivel
 from .navegacao_cartografica import navegar_registros
 from .revisao_sequencial_gis import RevisaoSequencialGIS
+from .duplicatas_conexoes_ui import DuplicatasConexoesUI
 
 
 CANDIDATAS = ('CONEXAO_T', 'CRUZAMENTO', 'EXTREMIDADES_PROXIMAS')
+VEREDITOS = (('Confirmar e incluir na hipótese','CONFIRMADA',True),
+             ('Confirmar sem incluir','CONFIRMADA',False),
+             ('Manter separadas','SEPARADA',True),
+             ('Necessita investigação','INDETERMINADA',False))
+
+
+def acompanhamento_padrao(decisao):
+    return 'VERIFICADO' if decisao in ('CONFIRMADA','SEPARADA') else 'NECESSITA_CONFIRMACAO'
 TIPOS_CONEXAO = {
     'CONEXAO_T':'Conexões em T', 'EXTREMIDADES_PROXIMAS':'Extremidades próximas',
     'CRUZAMENTO':'Cruzamentos ambíguos', 'DECLARADA':'Conexões declaradas',
@@ -22,7 +32,7 @@ TIPOS_CONEXAO = {
 }
 
 
-class RelacoesGIS(RevisaoSequencialGIS):
+class RelacoesGIS(RevisaoSequencialGIS,DuplicatasConexoesUI):
     def iniciar_tabela_conexoes(self, layout):
         self.conexoes_b, secao = expansivel(layout,'Conexões e continuidade da rede')
         self.filtro_conexoes = QComboBox()
@@ -48,6 +58,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
         self.conexao_info = aviso()
         secao.addWidget(self.conexao_info)
         botao(secao,'Revisar conexão selecionada…',self.revisar_conexao_tabela)
+        botao(secao,'Verificar conexões repetidas…',self.verificar_conexoes_repetidas)
         self.montar_revisao_sequencial(secao)
         secao.addWidget(aviso('Uma conexão direta declara uma ligação. Uma tubulação de interligação cria um Pipe complementar.'))
         self.adicionar_conexao_b = botao(secao,'Adicionar conexão entre tubulações…',lambda:self.editar('CONEXAO'))
@@ -63,6 +74,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
 
     def preencher_conexoes(self, relacoes, marcados):
         tabela = self.conexoes_lista
+        relacoes={u:self.registros.get(u,r) if r['tipo']=='CONEXAO' else r for u,r in relacoes.items()}
         atual = tabela.currentItem()
         selecionada = atual.data(Qt.UserRole) if atual else None
         filtro = self.filtro_conexoes.currentData()
@@ -72,7 +84,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
         for uid,r in relacoes.items():
             if r['tipo'] not in ('CONEXAO','PIPE'):
                 continue
-            if r.get('excluido') and uid not in marcados and not self.mostrar_excluidos.isChecked():
+            if (r.get('excluido') or r.get('substituida_por')) and uid not in marcados and not self.mostrar_excluidos.isChecked():
                 continue
             linhas.append((uid,r))
         linhas.extend((f'candidata:{uid}',r) for uid,r in self._candidatas_tabela.items()
@@ -92,6 +104,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
             relacao = 'uuid' in r
             titulo = r.get('nome') or uid.split(':')[-1][:10]
             if r.get('excluido'):titulo += ' · excluída'
+            if r.get('substituida_por'):titulo += ' · substituída'
             interpretacao = pg.DECISOES.get(r.get('decisao'),'Candidata' if not relacao else '—')
             item = tabela.inserir((titulo,TIPOS_CONEXAO[categoria],interpretacao,
                     ACOMPANHAMENTO.get(r.get('acompanhamento'),'Pendente'),len(r.get('portas',())),
@@ -140,7 +153,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
         if item:
             uid = item.data(Qt.UserRole)
             return (self._candidatas_tabela.get(uid.split(':',1)[1]) if uid.startswith('candidata:')
-                    else self._relacao_por_id(uid))
+                    else self.registros.get(uid) or self._relacao_por_id(uid))
 
     def _navegar_conexao(self,indice,aproximar):
         if r := self._conexao_da_linha(indice.row()):
@@ -152,13 +165,20 @@ class RelacoesGIS(RevisaoSequencialGIS):
         self.conexao_info.setText(self._texto_conexao(r) if r else '')
 
     def _texto_conexao(self,r):
-        textos = []
+        textos = [TIPOS_CONEXAO.get(self._categoria_conexao(r),'Conexão')]
         for uid,pos in r.get('portas',()):
             t = getattr(self,'tubos',{}).get(uid,{})
-            textos.append(f"{t.get('id') or uid[:8]} · {t.get('camada') or 'Camada indisponível'} · {pos:.1%}")
+            identificador=t.get('id')
+            textos.append(f"{identificador if identificador is not None else uid[:8]} · "
+                          f"{t.get('camada') or 'Camada indisponível'} · {pos:.1%}")
         dist = r.get('distancia_m')
         if dist is not None:textos.append(f'Distância geométrica {dist:.3f} m')
         if r.get('motivo'):textos.append(r['motivo'])
+        rel=r if r.get('tipo')=='CONEXAO' else self._veredito_atual(r)
+        if rel:
+            textos.append(f"{pg.DECISOES.get(rel.get('decisao'),'—')} · "
+                          f"{ACOMPANHAMENTO.get(rel.get('acompanhamento'),'Pendente')} · revisão {rel['rev'][:8]}")
+            textos.append('Marcada no rascunho' if rel['uuid'] in self._selecionados() else 'Fora do rascunho')
         h = self._hip_ativa
         textos.append(f"Hipótese em edição · {h['nome']} · {h['rev'][:8]}" if h else 'Hipótese temporária em edição')
         return '\n'.join(textos)
@@ -174,10 +194,7 @@ class RelacoesGIS(RevisaoSequencialGIS):
         motivo = self._motivo_edicao(None) or ('' if r.get('portas') else 'Pontos de ligação indisponíveis.')
         return [
             ('Conferir conexão…',lambda:self.conferir_conexao(r),motivo),
-            ('Confirmar e incluir',lambda:self.interpretar_candidata(r,'CONFIRMADA',incluir=True),motivo),
-            ('Confirmar sem incluir',lambda:self.interpretar_candidata(r,'CONFIRMADA',incluir=False),motivo),
-            ('Manter separadas',lambda:self.interpretar_candidata(r,'SEPARADA',incluir=True),motivo),
-            ('Marcar como indeterminada',lambda:self.interpretar_candidata(r,'INDETERMINADA',incluir=False),motivo),
+            *((rotulo+'…',lambda d=d,i=i:self.conferir_conexao(r,(d,i)),motivo) for rotulo,d,i in VEREDITOS),
             ('Editar pontos de ligação…',lambda:self.revisar_conexao(r=r),motivo),
             ('Aproximar e destacar',lambda:self._navegar_conexao(indice,True)),
         ]
@@ -187,8 +204,12 @@ class RelacoesGIS(RevisaoSequencialGIS):
             if r['tipo']=='PIPE':self._editar_relacao(r)
             else:self.conferir_conexao(r)
 
-    def conferir_conexao(self,r):
-        anterior = r if 'uuid' in r else self._com_erro(lambda:self._registro_da_candidata(r))
+    def conferir_conexao(self,r,escolha=None):
+        try:
+            anterior=r if 'uuid' in r else self._registro_da_candidata(r)
+        except ValueError as erro:
+            self.status.setText(str(erro))
+            return
         if motivo := self._motivo_edicao(anterior):
             self.status.setText(motivo)
             return
@@ -199,23 +220,38 @@ class RelacoesGIS(RevisaoSequencialGIS):
         d.setWindowTitle('Conferir conexão')
         v = QVBoxLayout(d)
         v.addWidget(aviso(self._texto_conexao(r)))
+        v.addWidget(aviso('Verificada indica que a revisão foi concluída pelo usuário. A conferência em campo tem registro próprio.'))
+        tipo=QComboBox()
+        for texto,decisao,incluir in VEREDITOS:tipo.addItem(texto,(decisao,incluir))
+        tipo.addItem('Manter separadas, sem incluir na hipótese',('SEPARADA',False))
+        if anterior and escolha is None:
+            decisao=anterior.get('decisao')
+            escolha_atual=(decisao,anterior['uuid'] in self._selecionados())
+            i=tipo.findData(escolha_atual)
+            if i<0:
+                tipo.addItem(pg.DECISOES[decisao],escolha_atual)
+                i=tipo.count()-1
+            tipo.setCurrentIndex(i)
+        elif escolha:tipo.setCurrentIndex(max(0,tipo.findData(escolha)))
+        v.addWidget(tipo)
         nota = QLineEdit((anterior or {}).get('nota',''))
         nota.setPlaceholderText('Observação opcional')
         v.addWidget(nota)
         acompanhamento = QComboBox()
-        acompanhamento.addItem('Acompanhamento padrão da ação',None)
         for valor,rotulo in ACOMPANHAMENTO.items():acompanhamento.addItem(rotulo,valor)
         v.addWidget(acompanhamento)
-        def gravar(decisao,incluir):
+        def definir_padrao():
+            acompanhamento.setCurrentIndex(acompanhamento.findData(acompanhamento_padrao(tipo.currentData()[0])))
+        tipo.currentIndexChanged.connect(definir_padrao)
+        definir_padrao()
+        if anterior and escolha is None and (i:=acompanhamento.findData(anterior.get('acompanhamento')))>=0:
+            acompanhamento.setCurrentIndex(i)
+        def gravar():
+            decisao,incluir=tipo.currentData()
             if self.interpretar_candidata(r,decisao,incluir=incluir,nota=nota.text().strip(),
                                          acompanhamento=acompanhamento.currentData()):
                 d.accept()
-        for rotulo,decisao,incluir in (
-                ('Confirmar e incluir na hipótese','CONFIRMADA',True),
-                ('Confirmar sem incluir','CONFIRMADA',False),
-                ('Manter separadas','SEPARADA',True),
-                ('Necessita investigação','INDETERMINADA',False)):
-            botao(v,rotulo,lambda _,decisao=decisao,incluir=incluir:gravar(decisao,incluir))
+        botao(v,'Salvar decisão',gravar)
         botao(v,'Voltar',d.reject)
         d.exec_()
 
@@ -226,6 +262,8 @@ class RelacoesGIS(RevisaoSequencialGIS):
             return 'Conclua a edição que já está aberta.'
         if r and r.get('excluido'):
             return 'Recupere o complemento antes de editá-lo.'
+        if r and r.get('substituida_por'):
+            return 'Esta relação foi substituída. Consulte a relação principal.'
         if r and (atual:=self.registros.get(r['uuid'])) and atual['rev']!=r['rev']:
             return 'Use a revisão mais recente no rascunho antes de editar este registro histórico.'
         return ''
@@ -296,6 +334,8 @@ class RelacoesGIS(RevisaoSequencialGIS):
         if r.get('excluido') or not r.get('habilitado',True):
             return 'Recupere ou habilite o complemento para incluí-lo.'
         atual=self.registros.get(r['uuid'],r)
+        if atual.get('substituida_por'):
+            return 'A relação foi substituída. Consulte a relação principal.'
         if atual.get('excluido'):
             return 'O complemento foi excluído. Esta revisão continua disponível na hipótese histórica.'
         return ''
@@ -355,12 +395,16 @@ class RelacoesGIS(RevisaoSequencialGIS):
             raise ValueError('Há mais de uma relação para esta candidata. Escolha a revisão pela tabela de fontes e conexões.')
         return antigos[0] if antigos else None
 
+    def _veredito_atual(self,r):
+        rs=self._por_candidata.get(r['uid'],())
+        return rs[0] if len(rs)==1 else None
+
     def _interpretacao_atual(self,r):
-        if not self._resultado_historico and r.get('tipo') in CANDIDATAS:
+        if r.get('tipo') in CANDIDATAS:
             try:relacao=self._registro_da_candidata(r)
             except ValueError:return 'Múltiplas interpretações'
             if relacao:
-                return pg.DECISOES[relacao['decisao']]+(' · em edição' if relacao.get('rev')!=r.get('revisao') else '')
+                return pg.DECISOES[relacao['decisao']]
         estado=r['situacao']
         return pg.DECISOES.get(estado,estado.replace('_',' ').capitalize())
 
@@ -371,19 +415,29 @@ class RelacoesGIS(RevisaoSequencialGIS):
             anterior=r if r['tipo']=='CONEXAO' else self._registro_da_candidata(r)
             motivo=self._motivo_edicao(anterior)
             if motivo:raise ValueError(motivo)
+            if incluir and anterior and (motivo:=self._motivo_participacao(anterior)):
+                raise ValueError(motivo)
             dados=dict(anterior or {})
             if r['tipo'] in CANDIDATAS:
                 crs=self.dados['crs']
                 dados.update(portas=r['portas'],pontos_rede=pontos_portas(r['portas'],self.tubos),
                     candidato=r['uid'],categoria_candidata=r['tipo'],wkb=r.get('wkb'),crs=crs,crs_rede=crs)
             dados.update(decisao=decisao,situacao=dados.get('situacao','INFORMADA'),
-                         acompanhamento=acompanhamento or ('VERIFICADO' if decisao in ('CONFIRMADA','SEPARADA')
-                                                          else 'NECESSITA_CONFIRMACAO'))
+                         acompanhamento=acompanhamento or acompanhamento_padrao(decisao),
+                         contexto_veredito=dict(execucao=(self.dados or {}).get('uuid'),
+                             hipotese_rev=(self._hip_ativa or {}).get('rev'),incluir=incluir))
             if nota is not None:dados['nota']=nota
-            novo=self._salvar('CONEXAO',dados,anterior)
-            self._atualizar_rascunho_relacao(novo,incluir=incluir)
+            ant=anterior or {}
+            novo=pg.salvar_revisao(self._base_complementos(True),self.uid_projeto,'CONEXAO',dados,
+                                  ant.get('uuid'),ant.get('rev'))
+            try:
+                self._atualizar_rascunho_relacao(novo,incluir=incluir)
+                self.guardar_rascunho()
+            except (ValueError,OSError,RuntimeError,sqlite3.Error) as erro:
+                raise ValueError(f"Revisão {novo['rev'][:8]} persistida. A atualização do rascunho requer atenção. {erro}") from erro
             incluido=novo['uuid'] in self._selecionados()
-            self.status.setText(pg.DECISOES[decisao]+(' · incluída no rascunho. Reexecute para aplicar.' if incluido else
+            self.status.setText(f"{pg.DECISOES[decisao]} · {ACOMPANHAMENTO[novo['acompanhamento']]} · "
+                f"revisão {novo['rev'][:8]}"+(' · incluída no rascunho. Reexecute para aplicar.' if incluido else
                 ' · fora da hipótese em edição.'))
             return True
         return self._com_erro(salvar)

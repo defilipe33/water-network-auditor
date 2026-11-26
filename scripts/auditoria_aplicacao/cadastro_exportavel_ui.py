@@ -11,6 +11,7 @@ from .entradas_grafo_gis import ler, preparar
 from .modelo_gis import revisoes
 from .modelo_gis_ui import aviso, botao, expansivel, formulario
 from .navegacao_cartografica import acao_disponivel
+from .conjuntos_modelagem_ui import CatalogoConjuntos
 
 
 REGRAS={
@@ -24,11 +25,14 @@ class CadastroExportavelUI:
     def montar_exportacao_modelagem(self,layout):
         _,v=expansivel(layout,'Exportar dados GIS para modelagem')
         v.addWidget(aviso('Prepare os Pipes e Junctions para conferência. O cadastro completo inclui redes isoladas e fontes fora da análise de referência.'))
-        self.previa_cadastro_b=botao(v,'Prévia do cadastro completo…',self.prever_cadastro_completo)
+        self.previa_cadastro_b=botao(v,'Prévia do cadastro completo…',lambda:self.prever_cadastro_completo())
         botao(v,'Exportar rede alcançável da visão macro…',lambda:self.exportar_integral(None,'REDE'))
+        botao(layout,'Conjuntos para WaterGEMS…',lambda:self.prever_cadastro_completo(abrir_catalogo=True))
 
-    def prever_cadastro_completo(self):
-        if not self.foto or self.central.ocupado():return
+    def prever_cadastro_completo(self,*,abrir_catalogo=False,preselecao=None):
+        if not self.foto or self.central.ocupado():
+            self.status.setText('Abra uma execução de conectividade e aguarde a atividade atual.')
+            return
         foto=self.foto
         p=self._projeto()
         estado=self.central.estados_de_visualizacao().get(f"TOPOLOGIA_GIS:{foto['uuid']}",{}).get('exportacao_cadastro',{})
@@ -64,9 +68,25 @@ class CadastroExportavelUI:
                                          contagem=detalhes,origens=origens,cancelar=cancelar)
                 previa['manifesto']['modelo_cadastral_rev']=atual.get('uuid')
                 return previa
-            self._tarefa_cartografica('Preparando inventário cadastral e derivados',conferir,
-                                      lambda previa:self._mostrar_previa_cadastro(previa,estado,p))
+            def mostrar(previa):
+                if self._projeto()['uuid']!=p['uuid'] or self.foto is not foto:return
+                if abrir_catalogo:
+                    self._abrir_catalogo_conjuntos(previa,estado,preselecao)
+                else:
+                    self._mostrar_previa_cadastro(previa,estado,p)
+            self._tarefa_cartografica('Preparando inventário cadastral e derivados',conferir,mostrar)
         self._com_erro(iniciar)
+
+    def _abrir_catalogo_conjuntos(self,previa,estado,preselecao=None,parent=None):
+        dlg=CatalogoConjuntos(self,previa,estado,preselecao,parent)
+        dlg.open()
+        if preselecao:dlg.editar()
+
+    def criar_conjunto_do_resultado(self,r,categoria):
+        from .conjuntos_modelagem import por_segmentos
+        chaves=por_segmentos(self.foto,r['segmentos'])
+        self.prever_cadastro_completo(abrir_catalogo=True,preselecao=(chaves,categoria,
+            dict(modo='Resultado estrutural',referencias=[r['uid']],nome=r.get('nome'))))
 
     def _mostrar_previa_cadastro(self,previa,estado,p):
         if self._projeto()['uuid']!=p['uuid']:return
@@ -146,6 +166,7 @@ class CadastroExportavelUI:
         opcoes_formato.addItem('Shapefile e tabelas','ESRI Shapefile')
         opcoes_formato.setCurrentIndex(max(0,opcoes_formato.findData(estado.get('formato'))))
         formulario(v).addRow('Formato',opcoes_formato)
+        botao(v,'Conjuntos para WaterGEMS…',lambda:self._abrir_catalogo_conjuntos(previa,estado,parent=dlg))
         def salvar():
             pasta=QFileDialog.getExistingDirectory(dlg,'Pasta de destino')
             if not pasta:return

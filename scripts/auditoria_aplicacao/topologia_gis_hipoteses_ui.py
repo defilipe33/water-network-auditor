@@ -211,10 +211,10 @@ class HipotesesGIS:
     def _participantes_exatos(self,repetir=False):
         atuais=pg.vigentes(self._base_complementos(),self.uid_projeto)
         for uid in self._selecionados():
-            if atuais.get(uid,{}).get('excluido'):
+            if atuais.get(uid,{}).get('excluido') or atuais.get(uid,{}).get('substituida_por'):
                 fixada=(self._hip_ativa or {}).get('vinculos',{}).get(uid)
                 if not repetir or not fixada or self._pinos.get(uid,{}).get('rev')!=fixada:
-                    raise ValueError('Há um complemento excluído na seleção. Retire-o ou recupere-o antes de gravar ou testar outra hipótese.')
+                    raise ValueError('A seleção inclui um complemento excluído ou substituído. Confira a revisão antes de gravar ou testar outra hipótese.')
         ativos={**atuais,**self._pinos}
         return pg.selecionar(ativos,self._selecionados())
 

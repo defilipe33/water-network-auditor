@@ -440,8 +440,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self._participacoes=participacoes
         self._por_candidata={}
         relacoes={**self.registros,**self._pinos}
-        for r in relacoes.values():
-            if r.get('candidato') and not r.get('excluido'):
+        for r in self.registros.values():
+            if r.get('candidato') and not r.get('excluido') and not r.get('substituida_por'):
                 self._por_candidata.setdefault(r['candidato'],[]).append(r)
         self.participantes.blockSignals(True)
         self.participantes.setSortingEnabled(False)
@@ -578,6 +578,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                     g=t.get('geom')
                     wkb=bytes(g.asWkb()).hex() if g else t.get('wkb')
                     if wkb:dados['geometrias_rede'][uid]=wkb
+                if tipo=='CONEXAO' and not atual and not candidato:
+                    if not self.confirmar_distincao_manual(dlg,dados):return False
                 novo=self._salvar(tipo,dados,atual)
                 self._atualizar_rascunho_relacao(novo)
                 self.status.setText('Revisão salva. Marque a relação para reexecutar. Hipóteses anteriores preservam suas revisões.')
@@ -706,6 +708,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         self._comparadas=None
         self.comparacao.hide()
         self._resultado_historico=True
+        self._vereditos_foto={r['candidato']:r for r in d['participantes']
+                              if r['tipo']=='CONEXAO' and r.get('candidato')}
         self.tubos={t['uid']:t for t in d['tubos']}
         self.nos={n['uid']:n for n in d['nos']}
         self.componentes={g['uid']:g for g in d['componentes']}
@@ -791,7 +795,15 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         return f"{t.get('id') or uid[:8]} · {t.get('camada','Fonte anterior')}"
 
     def _acompanhamento(self,r):
+        if r.get('tipo') in CANDIDATAS:
+            atuais=self._por_candidata.get(r['uid'],())
+            if len(atuais)>1:return 'Múltiplas interpretações'
+            if atuais:return ACOMPANHAMENTO.get(atuais[0].get('acompanhamento'),'Pendente')
         return ACOMPANHAMENTO.get(self._decisoes_resultado.get(r['uid'],{}).get('acompanhamento'),'Pendente')
+
+    def _acompanhamento_foto(self,r):
+        anterior=getattr(self,'_vereditos_foto',{}).get(r['uid'],{})
+        return ACOMPANHAMENTO.get(anterior.get('acompanhamento'),'Sem revisão na fotografia')
 
     def _colunas_resultados(self):
         categoria=self.categoria.currentData()
@@ -800,9 +812,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                     'Origens alcançáveis','Candidatas','Acompanhamento')
         if categoria=='REDE_PRINCIPAL':
             return ('Componente','Trechos','Extensão relevante (m)','Maior Ø (mm)','Origens','Critério','Prioridade','Acompanhamento')
-        return ('ID','Tubulação que termina' if categoria=='CONEXAO_T' else 'Tubulação A',
+        cols=('ID','Tubulação que termina' if categoria=='CONEXAO_T' else 'Tubulação A',
                 'Tubulação receptora' if categoria=='CONEXAO_T' else 'Tubulação B',
-                'Distância (m)','Componentes','Interpretação','Acompanhamento')
+                'Distância (m)','Componentes','Interpretação atual','Acompanhamento atual')
+        return (*cols,'Acompanhamento na fotografia') if categoria in CANDIDATAS else cols
 
     def _valores(self,r):
         categoria=self.categoria.currentData()
@@ -824,9 +837,10 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         a=ponta or (ts[0] if ts else None)
         b=receptora or (ts[1] if len(ts)>1 else None)
         componentes=r.get('componentes') or sorted({self.componentes_tubo[u]['uid'] for u in ts if u in self.componentes_tubo})
-        return (r['uid'][:8],self._rotulo_tubo(a) if a else None,self._rotulo_tubo(b) if b else None,
+        vals=(r['uid'][:8],self._rotulo_tubo(a) if a else None,self._rotulo_tubo(b) if b else None,
                 r.get('distancia_m'),', '.join(u[:8] for u in componentes),
                 self._interpretacao_atual(r),situacao)
+        return (*vals,self._acompanhamento_foto(r)) if categoria in CANDIDATAS else vals
 
     def ordenar_resultados(self,coluna):
         atual=self._ordem_coluna
@@ -951,10 +965,15 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
         if r.get('motivo') or r.get('criterio'):partes.append(r.get('motivo') or r['criterio'])
         if g and g.get('nos'):
             partes.append('Nós: '+', '.join(u[:8] for u in g['nos'][:8]))
-        decisao=self._decisoes_resultado.get(r['uid'],{})
+        decisao=(self._veredito_atual(r) if r.get('tipo') in CANDIDATAS else None) or self._decisoes_resultado.get(r['uid'],{})
         estado=decisao.get('acompanhamento','PENDENTE')
         self.acompanhamento.setCurrentIndex(max(0,self.acompanhamento.findData(estado)))
-        partes.append('Acompanhamento: '+ACOMPANHAMENTO.get(estado,'Pendente'))
+        partes.append('Acompanhamento atual · '+self._acompanhamento(r))
+        if r.get('tipo') in CANDIDATAS:
+            partes.append('Acompanhamento na fotografia · '+self._acompanhamento_foto(r))
+            if decisao.get('tipo')=='CONEXAO':
+                partes.append(f"Revisão atual {decisao['rev'][:8]} · "+(
+                    'marcada no rascunho' if decisao['uuid'] in self._selecionados() else 'fora do rascunho'))
         if decisao.get('nota'):partes.append('Observação: '+decisao['nota'])
         hip=self.dados.get('hipotese')
         partes.append('Hipótese: '+(hip['nome']+' · '+hip['rev'][:8] if hip else 'Execução temporária'))
@@ -983,7 +1002,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                 motivo=str(erro)
             motivo=motivo or ('' if r.get('portas') else 'A candidata não possui pontos de conexão confiáveis.')
             acoes.append(('Conferir conexão…',lambda:self.conferir_conexao(r),motivo))
-            acoes.extend((rotulo,lambda d=d,incluir=incluir:self.interpretar_candidata(r,d,incluir=incluir),motivo)
+            acoes.extend((rotulo+'…',lambda d=d,incluir=incluir:self.conferir_conexao(r,(d,incluir)),motivo)
                 for rotulo,d,incluir in [('Confirmar e incluir','CONFIRMADA',True),
                     ('Confirmar sem incluir','CONFIRMADA',False),
                     ('Manter tubulações separadas','SEPARADA',True),
@@ -997,8 +1016,9 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                      lambda:self._marcar_relacao(rel['uuid'],not marcado),'' if marcado else self._motivo_participacao(rel)),
                     ('Histórico da conexão',lambda:self._mostrar_historico(rel['uuid'])),
                 ])
-        acoes.extend([None,('Alterar situação e observação…',lambda:self.anotar(r=r,escolher_situacao=True)),
-                       ('Histórico do resultado',lambda:self._mostrar_historico(self._id_resultado(r)))])
+        if r.get('tipo') not in CANDIDATAS:
+            acoes.append(('Alterar situação e observação…',lambda:self.anotar(r=r,escolher_situacao=True)))
+        acoes.append(('Histórico do diagnóstico da execução',lambda:self._mostrar_historico(self._id_resultado(r))))
         return acoes
 
     def destacar(self,checked=False,aproximar=False,registros=None,toda_extensao=None):
@@ -1046,6 +1066,8 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
 
     def anotar(self,checked=False,r=None,escolher_situacao=False):
         alvo=r or self._selecionado()
+        if alvo and alvo.get('tipo') in CANDIDATAS:
+            return self.conferir_conexao(alvo)
         uid=self._id_resultado(alvo)
         if not uid or self.central.ocupado():return
         anterior=self.registros.get(uid,dict(uuid=uid))
