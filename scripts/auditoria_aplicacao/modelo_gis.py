@@ -39,7 +39,7 @@ CATEGORIAS = {
     **{
         codigo: _categoria('Válvulas e equipamentos', nome, 'Point', 'nome tipo diametro situacao' if codigo == 'PRV' else 'tipo diametro situacao')
         for codigo, nome in (
-            ('PRV', 'PRVs'), ('TCV', 'TCVs'), ('FCV', 'FCVs'), ('PBV', 'PBVs'),
+            ('PRV', 'PRVs'), ('PSV', 'PSVs'), ('TCV', 'TCVs'), ('FCV', 'FCVs'), ('PBV', 'PBVs'),
             ('AIR_VALVE', 'Ventosas'), ('HYDRANT', 'Hidrantes'),
             ('REGISTRO', 'Registros de bloqueio'), ('DISPOSITIVO', 'Outros dispositivos'),
         )
@@ -189,7 +189,7 @@ def sugerir(camada):
         ('ZONA_VRP', 'zona vrp|zona de vrp|zona pressao'), ('ZONA_BOOSTER', 'zona booster|zona de booster'),
         ('PIPE', 'tubo|tubul|distribuicao|aducao|rede'), ('JUNCTION', 'junction|nos|no gis'),
         ('RESERVOIR', 'reservoir'), ('TANK', 'tank|tanque'), ('PUMP', 'bomba|pump'),
-        ('BOOSTER', 'booster'), ('PRV', 'prv|vrp'), ('TCV', 'tcv'), ('FCV', 'fcv'),
+        ('BOOSTER', 'booster'), ('PRV', 'prv|vrp'), ('PSV', 'psv'), ('TCV', 'tcv'), ('FCV', 'fcv'),
         ('PBV', 'pbv'), ('AIR_VALVE', 'ventosa'), ('HYDRANT', 'hidrante'),
         ('REGISTRO', 'registro'), ('SETOR', 'setor'), ('RUA', 'rua|arruamento|logradouro'),
         ('LIMITE', 'limite'), ('ORTOFOTO', 'ortofoto'),

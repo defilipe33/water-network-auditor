@@ -17,7 +17,7 @@ from .grafo_gis import _indexar
 
 AREAS = {'SETOR', 'ZONA', 'ZONA_VRP', 'ZONA_BOOSTER', 'LIMITE'}
 ORIGENS = {'RESERVOIR', 'TANK', 'ENTRADA'}
-EQUIPAMENTOS = ORIGENS | {'PRV', 'TCV', 'FCV', 'PBV', 'PUMP', 'BOOSTER',
+EQUIPAMENTOS = ORIGENS | {'PRV', 'PSV', 'TCV', 'FCV', 'PBV', 'PUMP', 'BOOSTER',
                         'AIR_VALVE', 'HYDRANT', 'REGISTRO', 'DISPOSITIVO'}
 
 
@@ -106,7 +106,15 @@ def ler(preparacao, cancelar=None, etapa=lambda *_:None, *, cadastro=None):
             nome = atributos.get(mapeamento.get('label') or mapeamento.get('nome'))
             unidades_mm = {'mm':1., 'cm':10., 'm':1000., 'pol':25.4}
             unidade = unidades.get(fonte['uid'])
-            diametro = _numero(atributos.get(mapeamento.get('diametro')), unidades_mm.get(unidade))
+            campo_diametro=mapeamento.get('diametro')
+            bruto_diametro=atributos.get(campo_diametro)
+            diametro = _numero(bruto_diametro, unidades_mm.get(unidade))
+            if cadastro is not None and categoria=='PIPE':
+                dx=contagem.setdefault('diametro',dict(campo=campo_diametro,unidade=unidade,contagens={}))
+                motivo=('VALIDO' if diametro is not None else 'SEM_CAMPO' if not campo_diametro else
+                        'SEM_UNIDADE' if unidade not in unidades_mm else 'SEM_VALOR' if bruto_diametro in (None,'') else
+                        'VALOR_INVALIDO')
+                dx['contagens'][motivo]=dx['contagens'].get(motivo,0)+1
             for i,g in enumerate(geom.asGeometryCollection() if geom.isMultipart() and categoria in ('PIPE','JUNCTION') else [geom]):
                 if categoria=='PIPE' and g.length()<=0:
                     descartadas += 1

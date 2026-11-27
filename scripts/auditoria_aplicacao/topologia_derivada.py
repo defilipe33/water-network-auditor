@@ -5,14 +5,16 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from qgis.core import QgsCoordinateReferenceSystem
+from math import isfinite
+
+from qgis.core import QgsCoordinateReferenceSystem, QgsPointXY, QgsWkbTypes
 
 from auditoria_fronteiras.entradas import digest
 from auditoria_fronteiras.modelos import verificar_cancelamento
 from .investigacao_gis import geometria
 
 
-def preparar(foto,cancelar=None,*,indices=None):
+def preparar(foto,cancelar=None,*,indices=None,tolerar_pontas=False):
     crs = QgsCoordinateReferenceSystem(foto['crs'])
     from auditoria_fronteiras import Parametros
     from auditoria_fronteiras.entradas import crs_processamento
@@ -32,31 +34,42 @@ def preparar(foto,cancelar=None,*,indices=None):
     for e in arestas:
         verificar_cancelamento(cancelar)
         u = e['tubo']
-        if u not in tubos or e['a'] not in nos or e['b'] not in nos:
+        if u not in tubos or not tolerar_pontas and (e.get('a') not in nos or e.get('b') not in nos):
             raise ValueError('Aresta sem Pipe ou Junction correspondente.')
         t = tubos[u]
         g = geometria(t.get('wkb'))
         inicio,fim = e['inicio'],e['fim']
-        if not g or g.isEmpty() or not 0<=inicio<fim<=1:
-            raise ValueError('Segmento sem geometria ou com intervalo inválido.')
-        if (inicio,fim)!=(0.,1.):
+        erro = None
+        if not g or g.isEmpty() or g.type()!=QgsWkbTypes.LineGeometry or g.isMultipart():
+            erro='Segmento sem geometria linear simples.'
+        elif not 0<=inicio<fim<=1:
+            erro='O intervalo da divisão virtual é inválido.'
+        elif (inicio,fim)!=(0.,1.):
             g = type(g)(g.constGet().curveSubstring(inicio*g.length(),fim*g.length()))
+        comprimento = g.length() if g else 0.
+        ps = g.asPolyline() if g and g.type()==QgsWkbTypes.LineGeometry and not g.isMultipart() else []
+        if erro is None and (len(ps)<2 or not isfinite(comprimento) or comprimento<=1e-8):
+            erro='Segmento de comprimento nulo ou sem extremidades materializáveis.'
+        if erro and not tolerar_pontas:
+            raise ValueError(erro)
         chave = digest(['segmento_gis',u,inicio,fim])
-        comprimento = g.length()
-        if chave in ids or not comprimento>1e-8:
-            raise ValueError('Segmento duplicado ou de comprimento nulo.')
+        if chave in ids:
+            raise ValueError('Segmento duplicado.')
         ids.add(chave)
-        ps = g.asPolyline()
-        from qgis.core import QgsPointXY
-        deslocamento = max(p.distance(QgsPointXY(*nos[uid]['xy'])) for p,uid in ((ps[0],e['a']),(ps[-1],e['b'])))
+        pontas=((ps[0],e.get('a')),(ps[-1],e.get('b'))) if ps else ()
+        deslocamento = max((p.distance(QgsPointXY(*nos[uid]['xy'])) for p,uid in pontas if uid in nos
+                           and len(xy:=nos[uid].get('xy') or ())==2
+                           and all(isinstance(v,(float,int)) and isfinite(v) for v in xy)),default=0.)
+        if erro:
+            problemas.append(dict(segmento=chave, motivo=erro))
         if deslocamento>1e-6:
             problemas.append(dict(segmento=chave,deslocamento_m=deslocamento,
                                   motivo='Ponta geométrica e nó topológico têm coordenadas distintas.'))
-        saida.append(dict(uid=chave,original=t.get('feicao') or u,parte=u,gis_id=t.get('id'),no_a=e['a'],no_b=e['b'],
+        saida.append(dict(uid=chave,original=t.get('feicao') or u,parte=u,gis_id=t.get('id'),no_a=e.get('a'),no_b=e.get('b'),
             inicio=inicio,fim=fim,comprimento_m=comprimento,diametro_mm=t.get('diametro_mm'),
             material=t.get('material'),fontes=t.get('fontes',[]),proposta=t.get('proposta_uid'),
             natureza='PROPOSTA' if t.get('proposta_uid') else 'DIVISAO_VIRTUAL' if u in divisoes else 'CADASTRO',
-            wkb=bytes(g.asWkb())))
+            wkb=bytes(g.asWkb()) if g and not g.isEmpty() else b'', erro_materializacao=erro))
     if indices is not None:
         usados={r[k] for r in saida for k in ('no_a','no_b')}
         partes={r['parte'] for r in saida}

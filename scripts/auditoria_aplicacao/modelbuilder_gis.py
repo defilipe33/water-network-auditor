@@ -9,11 +9,14 @@ import re
 from auditoria_fronteiras.entradas import digest
 from auditoria_fronteiras.modelos import verificar_cancelamento
 from .investigacao_gis import geometria
+from . import labels_modelagem as labels
+from .validacao_modelbuilder_gis import PendenciasCriticas, diagnosticar
 
 
 VERSAO = 1
 TIPOS_NOS = ('JUNCTION', 'RESERVOIR', 'TANK')
-CAMPOS_PIPE = dict(mb_inicio='MB_INICIO', mb_fim='MB_FIM', mb_comp_h='MB_COMP_H', mb_hw_c='MB_HW_C')
+CAMPOS_PIPE = dict(mb_inicio='MB_INICIO', mb_fim='MB_FIM', mb_tipo_a='MB_TIPO_A', mb_tipo_b='MB_TIPO_B',
+                  mb_comp_h='MB_COMP_H', mb_hw_c='MB_HW_C', segmento_anterior='SEG_ANT')
 CAMPOS_NO = dict(mb_x='MB_X', mb_y='MB_Y', mb_cota='MB_COTA', mb_carga='MB_CARGA',
                  mb_nmin='MB_NMIN', mb_nini='MB_NINI', mb_nmax='MB_NMAX', mb_diam='MB_DIAM')
 CAMPOS_REAIS = set(CAMPOS_NO) | {'mb_comp_h', 'mb_hw_c'}
@@ -29,7 +32,18 @@ ESCALAS = {'m': 1., 'cm': .01, 'mm': .001, 'km': 1000., 'ft': .3048, 'C': 1.}
 DESTINOS = ('2020', '2026', 'OUTRA')
 COLUNAS_ESPERADO = ('tipo','uid','label','gis_id','orig_uid','parte','inicio','fim','no_a','no_b',
                     'x','y','comprimento_geom_m','comprimento_hid_m','diametro_mm','atividade','assinatura_geometria')
-COLUNAS_PENDENCIA = ('tipo','uid','motivo','classe')
+COLUNAS_PENDENCIA = ('tipo','uid','motivo','classe','gravidade','codigo','gis_id','label_cadastral','camada',
+                     'original','parte','inicio','fim','no_a','no_b','coordenadas','relacoes','solucao')
+CONTRATO_EQUIPAMENTOS={
+    'HYDRANT':'Nó Hydrant com porta declarada, elevação e configuração do ramal, quando aplicável.',
+    'PRV':'Portas explícitas, Pipe de jusante, elevação e pressão/carga de regulagem.',
+    'PSV':'Portas explícitas, Pipe de jusante, elevação e pressão/carga de sustentação.',
+    'TCV':'Portas e orientação explícitas, configuração da perda de carga e estado da válvula.',
+    'FCV':'Portas explícitas, Pipe de jusante e vazão de regulagem com unidade.',
+    'PUMP':'Sucção e recalque identificados, curva ou definição da bomba e condições de operação.',
+    'BOOSTER':'Composição explícita de bombas, dispositivos e interligações.',
+    'REGISTRO':'Identidade do Pipe e posição da válvula de isolamento, com estado explícito.',
+}
 COLUNAS_EVIDENCIA = ('tipo','uid','id_modelo','label','gis_id','no_a','no_b','x','y',
                      'comprimento_geom_m','comprimento_hid_m','diametro_mm','atividade')
 
@@ -51,6 +65,7 @@ def validar_perfil(p):
                 raise ValueError('Informe o campo de origem e a unidade compatível.')
     if p['modo']=='ATUALIZAR' and not str(p.get('modelo_destino','')).strip():
         raise ValueError('Identifique o modelo de destino para preparar uma atualização.')
+    labels.validar_prefixos(p.get('prefixos',{}))
     return p
 
 
@@ -92,7 +107,7 @@ def _conferir_equipamentos(previa, nos, inventario, perfil, pendencias, toleranc
         verificar_cancelamento(cancelar)
         t,u = r['categoria'],r['uid']
         if t not in ('RESERVOIR','TANK'):
-            motivo='Requer mapeamento de tipo, portas, orientação e propriedades operacionais.'
+            motivo=CONTRATO_EQUIPAMENTOS.get(t,'Requer tipo, vínculos e propriedades hidráulicas verificadas.')
         elif t not in perfil['tipos']:
             motivo='Tipo mantido no inventário por escolha do perfil.'
         else:
@@ -108,11 +123,13 @@ def _conferir_equipamentos(previa, nos, inventario, perfil, pendencias, toleranc
                                      and valores['mb_nmin']<valores['mb_nmax'] and valores['mb_diam']>0):
                 motivo='Confira os níveis relativos e o diâmetro do tanque cilíndrico.'
             else:
-                candidatos[n['uid']].append(dict(n,**valores,equipamento_uid=u, tipo_modelbuilder=t,
+                candidatos[n['uid']].append(dict(n,**valores,equipamento_uid=u, tipo_modelbuilder=t,label=r.get('label'),
                     WNA_ORIG_UID=r['feicao'], WNA_ID_GIS=r.get('id'), WNA_PROCEDENCIA=r.get('procedencia','GIS_ORIGINAL'),
                     WNA_SITUACAO='EQUIPAMENTO_CADASTRADO'))
                 continue
-        pendencias.append(dict(tipo=t,uid=u,motivo=motivo,classe='EQUIPAMENTO'))
+        pendencias.append(dict(tipo=t,uid=u,motivo=motivo,classe='EQUIPAMENTO',gravidade='HIDRAULICA',
+            label_cadastral=r.get('label'),gis_id=r.get('id'),relacoes=r.get('declaracoes',[]),
+            solucao='Complete os atributos e vínculos no cadastro GIS e revalide.'))
     saida={}
     for u,es in candidatos.items():
         if len(es)==1:
@@ -130,11 +147,22 @@ def preparar(previa, pipes, nos, associacoes, configuracao, cancelar=None):
     if _numero(tol) is None or not 0<=tol<=1:
         raise ValueError('Informe uma tolerância de conferência entre 0 e 1 m.')
     inventario={r['uid']:r for r in previa['cadastro']}
+    pipes,nos,pendencias,excluidos,substituidos=diagnosticar(previa,pipes,nos,tol,
+        segmentar=configuracao.get('segmentar_aneis',False),cancelar=cancelar)
+    if excluidos and not (configuracao.get('parcial') or configuracao.get('validar')):
+        raise PendenciasCriticas(pendencias)
+    if not pipes and not configuracao.get('validar'):
+        raise ValueError('Nenhum Pipe válido no escopo. Consulte as pendências antes de exportar.')
     por_no={n['uid']:n for n in nos}
-    if not pipes or len(por_no)!=len(nos):
-        raise ValueError('O pacote precisa de Pipes e identidades de nós distintas.')
-    pendencias=[]
     equipamentos=_conferir_equipamentos(previa,por_no,inventario,perfil,pendencias,tol,cancelar)
+    nodais={u:equipamentos.get(u,n) for u,n in por_no.items()}
+    tipos_no={u:r.get('tipo_modelbuilder','JUNCTION') for u,r in nodais.items()}
+    rotulos=labels.reservar(
+        [dict(uid=r['uid'],tipo='PIPE',label=r.get('label'),original=r['original']) for r in pipes]+
+        [dict(uid=u,tipo=tipos_no[u],label=r.get('label'),original=r.get('WNA_ORIG_UID')) for u,r in nodais.items()],
+        m['projeto'],m['execucao'],base=configuracao.get('base_labels'),gravar=not configuracao.get('validar'),
+        prefixos=perfil.get('prefixos'),preservar=perfil.get('preservar_label',True),
+        anteriores={r['uid']:r['label'] for r in configuracao.get('componentes_anteriores',())},cancelar=cancelar)
     tipos={t:[] for t in TIPOS_NOS}
     esperado=[]
     geometrias_nos=defaultdict(list)
@@ -153,7 +181,7 @@ def preparar(previa, pipes, nos, associacoes, configuracao, cancelar=None):
                    tipo_modelbuilder='JUNCTION')
             if r.get('mb_cota') is None:
                 pendencias.append(dict(tipo='JUNCTION',uid=n['uid'],motivo='Elevação não informada.',classe='ATRIBUTO'))
-        r.update(mb_x=g[0],mb_y=g[1])
+        r.update(mb_x=g[0],mb_y=g[1],WNA_LABEL=rotulos[r['uid']])
         t=r['tipo_modelbuilder']
         tipos[t].append(r)
         esperado.append(dict(tipo=t,uid=r['uid'],label=r['WNA_LABEL'],x=g[0],y=g[1],
@@ -169,14 +197,6 @@ def preparar(previa, pipes, nos, associacoes, configuracao, cancelar=None):
         a,b=p['no_a'],p['no_b']
         if a not in por_no or b not in por_no or a==b:
             raise ValueError(f"O Pipe {p['uid']} possui nós ausentes ou o mesmo nó nas duas pontas.")
-        g=geometria(p['wkb'].hex())
-        pontos=g.asPolyline() if g else []
-        if len(pontos)<2 or not g.isGeosValid() or not isfinite(g.length()) or g.length()<=0:
-            raise ValueError(f"O Pipe {p['uid']} tem geometria inválida.")
-        for pt,u in ((pontos[0],a),(pontos[-1],b)):
-            if dist((pt.x(),pt.y()),por_no[u]['xy'])>tol:
-                pendencias.append(dict(tipo='PIPE',uid=p['uid'],motivo='Ponta geométrica deslocada da Junction esperada.',
-                                       classe='TOPOLOGIA'))
         attrs=inventario.get(p['parte'],{}).get('atributos_originais') or {}
         adicionais=_atributos('PIPE',attrs,perfil)
         for k,valor in list(adicionais.items()):
@@ -190,26 +210,48 @@ def preparar(previa, pipes, nos, associacoes, configuracao, cancelar=None):
                                    classe='ATRIBUTO'))
         if p.get('diametro_mm') is None:
             pendencias.append(dict(tipo='PIPE',uid=p['uid'],motivo='Diâmetro ou unidade de origem não informada.',classe='ATRIBUTO'))
-        preparados.append(dict(p,**adicionais,mb_inicio=por_no[a]['WNA_LABEL'],mb_fim=por_no[b]['WNA_LABEL']))
-        esperado.append(dict(tipo='PIPE',uid=p['uid'],label=p['WNA_LABEL'],gis_id=p.get('gis_id'),orig_uid=p['original'],
+        preparados.append(dict(p,**adicionais,WNA_LABEL=rotulos[p['uid']],mb_inicio=rotulos[a],mb_fim=rotulos[b],
+                              mb_tipo_a=tipos_no[a],mb_tipo_b=tipos_no[b]))
+        esperado.append(dict(tipo='PIPE',uid=p['uid'],label=rotulos[p['uid']],gis_id=p.get('gis_id'),orig_uid=p['original'],
             parte=p['parte'],inicio=p['inicio'],fim=p['fim'],no_a=a,no_b=b,
             comprimento_geom_m=p['comprimento_m'],comprimento_hid_m=adicionais.get('mb_comp_h'),diametro_mm=p.get('diametro_mm'),
             atividade=p['atividade'],assinatura_geometria=digest(p['wkb'].hex())))
     chaves={r['uid'] for r in esperado}
-    labels={r['label'].casefold() for r in esperado}
-    if len(chaves)!=len(esperado) or len(labels)!=len(esperado):
+    chaves_labels={r['label'].casefold() for r in esperado}
+    if len(chaves)!=len(esperado) or len(chaves_labels)!=len(esperado):
         raise ValueError('Elementos materializados com chave ou Label repetido.')
     if m.get('lacunas'):
         pendencias.append(dict(tipo='CADASTRO',uid=None,motivo='Há lacunas no inventário. Consulte validacao.json.',classe='COBERTURA'))
+    for r in m.get('serializacao_pendencias',()):
+        pendencias.append(dict(tipo='CADASTRO',uid=None,motivo=r['campo']+' · '+r['motivo'],classe='ATRIBUTO',gravidade='AVISO'))
+    for r in previa['operacoes']:
+        if r['tipo']=='CONEXAO' and r.get('resultado') not in ('APLICADA','SEPARADA'):
+            pendencias.append(dict(tipo='CONEXAO',uid=r['uuid'],motivo='Relação sem aplicação na execução: '+str(r.get('resultado')),
+                classe='TOPOLOGIA',relacoes=[{k:r.get(k) for k in ('uuid','rev','candidato','decisao')}],
+                solucao='Abra a revisão correspondente e confira as portas.'))
     # Preserva a associação pelo mesmo UID e muda somente o tipo nativo efetivamente preparado.
     tipo_por_uid={r['uid']:r['tipo'] for r in esperado}
+    assoc=[]
     for a in associacoes:
-        a['tipo_elemento']=tipo_por_uid[a['elemento_uid']]
+        u=a['elemento_uid']
+        if u in substituidos:
+            for trecho in substituidos[u]:
+                novo=trecho['uid']
+                assoc.append(dict(a,elemento_uid=novo,label_previsto=rotulos[novo],inicio=trecho['inicio'],fim=trecho['fim']))
+        elif u in excluidos:
+            assoc.append(dict(a,situacao_participacao='EXCLUIDO_EXPORTACAO',label_previsto=None))
+        else:
+            assoc.append(dict(a,tipo_elemento=tipo_por_uid[u],label_previsto=rotulos[u]))
+    associacoes[:]=assoc
+    for r in pendencias:
+        r.setdefault('gravidade','HIDRAULICA' if r['classe'] in ('ATRIBUTO','EQUIPAMENTO') else 'AVISO')
     meta=dict(versao=VERSAO, projeto=m['projeto'],execucao=m['execucao'],hipotese=m.get('hipotese'),
               crs=m['crs'],tolerancia_m=tol,perfil=perfil,escopo=configuracao['escopo'],origens=m.get('origens',()),
               cadastro_rev=m.get('modelo_cadastral_rev'),assinatura_topologia=m['assinatura_topologia_exportavel'],
               quantidades=dict(Counter(r['tipo'] for r in esperado)),pendencias=dict(Counter(p['classe'] for p in pendencias)),
-              estado='EXPORTADO_COM_PENDENCIAS' if pendencias else 'EXPORTADO',
+              estado='EXPORTACAO_PARCIAL' if excluidos else 'EXPORTADO_COM_PENDENCIAS' if pendencias else 'EXPORTADO',
+              incompleto=bool(excluidos or m.get('lacunas')),excluidos=sorted(excluidos),
+              aneis_segmentados=sorted(substituidos),gravidades=dict(Counter(r['gravidade'] for r in pendencias)),
               conectividade='REFERENCIAS_START_STOP',aceita_exclusao=False,
               assinatura=digest(esperado))
     return preparados,tipos,esperado,pendencias,meta
@@ -242,7 +284,7 @@ def arquivos(pasta, esperado, pendencias, meta, csv, cancelar):
                 'comprimento_informado':'mb_comp_h / MB_COMP_H','rugosidade_hw_c':'mb_hw_c / MB_HW_C'},
         'nos':{'coordenadas':'MB_X / MB_Y em metros','elevação':'MB_COTA', 'reservoir':'MB_CARGA',
                'tank':'MB_COTA, MB_NMIN, MB_NINI, MB_NMAX, MB_DIAM'},
-        'ude':{'WNA_UID':'Texto; 24 caracteres hexadecimais','WNA_LABEL':'Texto; 28 caracteres',
+        'ude':{'WNA_UID':'Texto; 24 caracteres hexadecimais','WNA_LABEL':'Texto; até 32 caracteres',
                'WNA_ID_GIS':'Texto; preserve zero, vazio e zeros à esquerda'},
         'opcoes':{'criar_nos_ausentes':False,'conectividade_espacial':False,'remover_ausentes':False},
         'atividade':'Utilize uma alternativa explícita. WNA_ATIVO é atividade pretendida.',

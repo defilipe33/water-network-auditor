@@ -149,10 +149,13 @@ class FluxosAjustadosTest(unittest.TestCase):
         self.assertTrue(self.c.mapa.itens);self.assertEqual(self.fx.redes[-1].selectedFeatureIds(),antes)
         e.filtro.setText('id < 0');self.assertFalse(e._amostra_fids)
     def test_investigar_gis_sem_wg(self):
-        for codigo in ('verificar','interferencias'):
-            self.c.objetivo.setCurrentIndex(self.c.objetivo.findData(codigo))
-            with patch.object(self.c,'abrir_analise_gis') as a:
-                self.c.iniciar_objetivo();a.assert_called_once_with(codigo)
+        lista=self.c.objetivo
+        self.assertEqual([lista.itemData(i) for i in range(lista.count())],
+                         ['verificar','conectividade','estrutura','modelbuilder'])
+        lista.setCurrentIndex(lista.findData('verificar'))
+        with patch.object(self.c,'abrir_analise_gis') as a:
+            self.c.iniciar_objetivo()
+            a.assert_called_once_with('verificar')
     def test_poligono_sem_wg(self):
         e=self.editor('SETOR',[self.fx.zona]);self.assertEqual(e.configurar()['alvo_wg'],'')
     def test_declarar_reservatorio_afastado_e_reabrir(self):

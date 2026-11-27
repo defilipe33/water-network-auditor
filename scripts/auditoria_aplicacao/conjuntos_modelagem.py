@@ -179,7 +179,8 @@ def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,escopo=None,c
     selecionados=(set(principais) if somente_conjuntos else set(por_id)) if escopo is None else set(escopo)
     if selecionados-por_id.keys():raise ValueError('O escopo contém elementos ausentes do cadastro exportável.')
     # Junctions necessárias à geometria exportável permanecem disponíveis como contexto.
-    selecionados.update(('JUNCTION',por_id[t,u][k]) for t,u in list(selecionados) if t=='PIPE' for k in ('no_a','no_b'))
+    selecionados.update(('JUNCTION',no) for t,u in list(selecionados) if t=='PIPE' for k in ('no_a','no_b')
+                        if ('JUNCTION',no:=por_id[t,u].get(k)) in por_id)
     if principais.keys()-selecionados:raise ValueError('Um conjunto selecionado possui membros fora do escopo de exportação.')
     pipes,nos,rotulos=([],[],set())
     for (t,u),r in por_id.items():

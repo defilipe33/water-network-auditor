@@ -240,7 +240,23 @@ class Interface(unittest.TestCase):
         d=p.findChild(AssistenteModelBuilder)
         self.assertIsNotNone(d,p.status.text())
         self.assertEqual(d.escopo.currentData(),'COMPLETO')
+        d.escopo.setCurrentIndex(d.escopo.findData('AREAS'))
+        with self.assertRaisesRegex(ValueError,'Escolha os elementos'):
+            d.proximo()
+        d.escopo.setCurrentIndex(d.escopo.findData('COMPLETO'))
+        d.proximo()
+        d.nome.setText('Perfil de regressão')
         d._salvar_perfil()
+        d.nome.clear()
+        d._aplicar_perfil()
+        self.assertEqual(d.nome.text(),'Perfil de regressão')
+        d.voltar_b.click()
+        self.assertEqual(d.tabs.currentIndex(),0)
+        for _ in range(3):d.proximo()
+        self.assertEqual(d.tabs.currentIndex(),3)
+        d.validar()
+        f.f.aguardar()
+        self.assertIsNotNone(d._validado,d.status.text())
         with TemporaryDirectory() as destino:
             with patch.object(QFileDialog,'getExistingDirectory',return_value=destino):
                 d.exportar()

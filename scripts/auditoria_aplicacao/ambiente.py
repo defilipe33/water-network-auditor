@@ -136,11 +136,6 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             ('conectividade','Analisar conectividade'),
             ('estrutura','Redes estruturantes e blocos de abastecimento'),
             ('modelbuilder','Exportar modelo para WaterGEMS'),
-            ('integrada','Investigação integrada GIS–WaterGEMS'),
-            ('interferencias','Examinar interferências GIS'),
-            ('topologia','Consultar topologia WaterGEMS'),
-            ('ilhas','Ilhas sem origem · WaterGEMS'),
-            ('corredores','Corredores · WaterGEMS'),
         ]:
             self.objetivo.addItem(texto,codigo)
         self.objetivo.setSizeAdjustPolicy(QComboBox.AdjustToMinimumContentsLengthWithIcon)
@@ -609,7 +604,7 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
         self.limpar_mapa()
         self.escolhas_projeto.hide()
         codigo=self.objetivo.currentData()
-        if codigo in ('verificar','interferencias'):
+        if codigo=='verificar':
             self.abrir_analise_gis(codigo)
         elif codigo=='conectividade':
             self.abrir_conectividade()
@@ -617,8 +612,6 @@ class AmbienteTrabalho(CentralTrabalho, GestaoProjetosUI, VisualProjetoUI, Salva
             self.abrir_estrutura()
         elif codigo=='modelbuilder':
             if self.abrir_estrutura():self.estrutura_gis.mostrar_comandos_modelbuilder()
-        else:
-            self.acionar('continuar' if codigo=='integrada' else codigo)
 
     def abrir_analise_gis(self, objetivo):
         if self.ocupado() or not self.modelo_gis.resolver(): return False

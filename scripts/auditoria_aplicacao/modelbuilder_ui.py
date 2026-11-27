@@ -10,10 +10,12 @@ from uuid import uuid4
 
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt import sip
-from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QInputDialog,
-    QDoubleSpinBox, QLineEdit, QScrollArea, QTabWidget, QVBoxLayout, QWidget)
+from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog, QInputDialog,QMessageBox,
+    QDoubleSpinBox, QHBoxLayout, QLineEdit, QScrollArea, QStackedWidget, QVBoxLayout, QWidget)
+from qgis.core import QgsGeometry,QgsPointXY
 
 from auditoria_fronteiras.modelos import verificar_cancelamento
+from auditoria_fronteiras.entradas import digest
 from . import cadastro_exportavel as cadastro
 from . import conjuntos_modelagem as cm
 from . import modelbuilder_conferencia as conferir
@@ -22,6 +24,15 @@ from . import persistencia_grafo_gis as pg
 from .manifesto_projeto import pasta_projeto
 from .modelo_gis_ui import aviso, botao, formulario
 from .publicar_pasta_gis import publicar
+from .labels_modelagem import PREFIXOS
+from .navegacao_cartografica import navegar_registros
+from .seletor_multiplos import escolher,opcoes_corredores
+from .tabelas_topologia_gis import TabelaGIS
+from .validacao_modelbuilder_gis import linha
+from .investigacao_gis import geometria
+
+
+GRAVIDADES={'CRITICA':'Crítica','AVISO':'Aviso','HIDRAULICA':'Hidráulica','INFORMACAO':'Informação'}
 
 
 def _combo(pares):
@@ -61,9 +72,15 @@ class AssistenteModelBuilder(QDialog):
         self.conjuntos={u:r for u,r in _revisoes(pagina,'CONJUNTO_WG').items() if not r.get('arquivado') and
                         r['topologia_uid']==previa['manifesto']['execucao']}
         self.escopo_chaves=None
+        self.origens_escopo=list(previa['manifesto']['origens'])
         self.conjuntos_ids=[]
+        self._etapas=[]
+        self._validado=None
+        self._operacao=None
         v=QVBoxLayout(self)
-        self.tabs=QTabWidget()
+        self.titulo_etapa=aviso()
+        v.addWidget(self.titulo_etapa)
+        self.tabs=QStackedWidget()
         v.addWidget(self.tabs)
         selecao=self._aba('Origem e escopo')
         m=previa['manifesto']
@@ -77,12 +94,13 @@ class AssistenteModelBuilder(QDialog):
             ('Blocos calculados','BLOCOS'),('Áreas cadastradas','AREAS'),('Conjuntos personalizados','CONJUNTOS')))
         form=formulario(selecao)
         form.addRow('Escopo',self.escopo)
-        self.escopo.currentIndexChanged.connect(lambda *_:setattr(self,'escopo_chaves',None))
-        botao(selecao,'Escolher corredores, blocos, áreas ou conjuntos…',lambda:self._acao(self._escolher_escopo))
+        self.escopo.currentIndexChanged.connect(self._mudar_escopo)
+        self.escolher_escopo_b=botao(selecao,'Escolher elementos do escopo…',lambda:self._acao(self._escolher_escopo))
+        self.escolher_escopo_b.setVisible(False)
         self.selecao_resumo=aviso('O cadastro completo inclui Pipes isolados e fora da hipótese.')
         selecao.addWidget(self.selecao_resumo)
         selecao.addStretch()
-        dados=self._aba('Tipos e atributos')
+        dados=self._aba('Elementos e atributos')
         self.perfis_combo=_combo([('Novo perfil',None),*((r['nome']+' · '+u[:8],u) for u,r in self.perfis.items())])
         form=formulario(dados)
         form.addRow('Perfil salvo',self.perfis_combo)
@@ -126,11 +144,26 @@ class AssistenteModelBuilder(QDialog):
         dados.addWidget(aviso('A chave técnica, o Label previsto, o GIS-ID original e os nós Start/Stop são inclusos. '
             'Reservoirs e Tanks precisam de atributos e vínculo verificados. Os demais equipamentos seguem no inventário.'))
         self.perfis_combo.currentIndexChanged.connect(self._aplicar_perfil)
+        self.preservar_label=QCheckBox('Reutilizar Labels cadastrais curtos e únicos quando disponíveis')
+        self.preservar_label.setChecked(True)
+        dados.addWidget(self.preservar_label)
+        campos_prefixos=formulario(dados)
+        self.prefixos={}
+        for tipo,prefixo in PREFIXOS.items():
+            entrada=QLineEdit(prefixo)
+            entrada.setMaxLength(6)
+            campos_prefixos.addRow('Prefixo '+tipo.title(),entrada)
+            self.prefixos[tipo]=entrada
         botao(dados,'Salvar perfil no projeto',lambda:self._acao(self._salvar_perfil))
-        final=self._aba('Atividade, conjuntos e saída')
+        etapa3=self._aba('Atividade e conjuntos')
         self.atividade=_combo((('Manter atividade da prévia','PREVIA'),('Ativos na hipótese','HIPOTESE'),('Tudo a definir','INDEFINIDA')))
-        f=formulario(final)
+        f=formulario(etapa3)
         f.addRow('Atividade pretendida',self.atividade)
+        botao(etapa3,'Incluir conjuntos salvos…',self.escolher_conjuntos)
+        etapa3.addWidget(aviso('A regra de atividade é independente do alcance. As exceções por Pipe físico continuam aplicáveis.'))
+        etapa3.addStretch()
+        final=self._aba('Validação e exportação')
+        f=formulario(final)
         self.formato=_combo((('Shapefile e tabelas','ESRI Shapefile'),('GeoPackage e tabelas','GPKG'),('CSV com WKT','CSV')))
         f.addRow('Formato',self.formato)
         self.tolerancia=QDoubleSpinBox()
@@ -139,19 +172,49 @@ class AssistenteModelBuilder(QDialog):
         self.tolerancia.setValue(.001)
         self.tolerancia.setSuffix(' m')
         f.addRow('Tolerância de conferência',self.tolerancia)
-        botao(final,'Incluir conjuntos salvos…',self.escolher_conjuntos)
-        self.validacao=aviso(f"{totais['originais_materializados']} de {totais['pipes_originais']} Pipes físicos · {totais['segmentos']} segmentos · "
+        self.aneis=QCheckBox('Segmentar anéis simples com nó original verificado')
+        final.addWidget(self.aneis)
+        self.parcial=QCheckBox('Exportar apenas elementos válidos e registrar as exclusões')
+        self.parcial.setEnabled(False)
+        final.addWidget(self.parcial)
+        self.destino_pacote=QLineEdit()
+        self.destino_pacote.setReadOnly(True)
+        f.addRow('Pasta de destino',self.destino_pacote)
+        botao(final,'Escolher pasta…',self.escolher_pasta)
+        self.validacao=aviso(f"Prévia · {totais['originais_materializados']} de {totais['pipes_originais']} Pipes físicos · {totais['segmentos']} segmentos · "
             f"{totais['pipes_divididos']} divididos\n{totais['fora_da_hipotese']} segmentos fora da hipótese · "
             f"{totais['sem_origem']} sem origem · {totais['atividade'].get('INATIVO',0)} previstos como inativos\n"
             f"{totais['junctions']} nós · {totais['equipamentos']} equipamentos inventariados · {totais['sem_diametro']} sem diâmetro.\n"
             +( 'Existem lacunas. Consulte a tabela de pendências antes de importar.' if m['lacunas'] else 'O pacote inclui uma ficha de conferência para o ModelBuilder.'))
         final.addWidget(self.validacao)
-        botao(final,'Validar e exportar pacote…',lambda:self._acao(self.exportar))
+        self.tabela_pendencias=TabelaGIS()
+        self.tabela_pendencias.colunas(('Gravidade','Tipo','ID GIS ou UID','Camada','Ocorrência'))
+        self.tabela_pendencias.setMinimumHeight(180)
+        self.filtro_pendencias=_combo((('Todas as pendências',None),
+            *((nome,('gravidade',k)) for k,nome in GRAVIDADES.items()),
+            ('Pipes',('tipo','PIPE')),('Junctions',('tipo','JUNCTION')),
+            ('Equipamentos',('classe','EQUIPAMENTO')),('Atributos',('classe','ATRIBUTO')),
+            ('Topologia e conexões',('classe','TOPOLOGIA')),('Cobertura',('classe','COBERTURA'))))
+        self._pendencias=[]
+        self._linhas_pendencia=[]
+        final.addWidget(self.filtro_pendencias)
+        final.addWidget(self.tabela_pendencias)
+        self.filtro_pendencias.currentIndexChanged.connect(self._listar_pendencias)
+        navegar_registros(self.tabela_pendencias,self._localizar_pendencia,self._menu_pendencia,pagina.central.mapa.limpar)
+        botao(final,'Diâmetros por fonte…',self.diametros)
         botao(final,'Conferir importações ou reabrir pacotes…',self.abrir_historico)
         final.addStretch()
         self.status=aviso()
         v.addWidget(self.status)
-        botao(v,'Fechar',self.reject)
+        botoes=QHBoxLayout()
+        v.addLayout(botoes)
+        self.voltar_b=botao(botoes,'‹ Voltar',lambda:self.tabs.setCurrentIndex(self.tabs.currentIndex()-1))
+        self.proximo_b=botao(botoes,'Próximo ›',lambda:self._acao(self.proximo))
+        self.validar_b=botao(botoes,'Validar',lambda:self._acao(self.validar))
+        self.exportar_b=botao(botoes,'Exportar pacote',lambda:self._acao(self.exportar))
+        botao(botoes,'Cancelar',self.cancelar)
+        self.tabs.currentChanged.connect(self._mostrar_etapa)
+        self._mostrar_etapa()
 
     def abrir_historico(self):
         self._historico=HistoricoModelBuilder(self.pagina,self)
@@ -161,9 +224,75 @@ class AssistenteModelBuilder(QDialog):
         scroll=QScrollArea()
         scroll.setWidgetResizable(True)
         w=QWidget()
+        layout=QVBoxLayout(w)
         scroll.setWidget(w)
-        self.tabs.addTab(scroll,nome)
-        return QVBoxLayout(w)
+        self.tabs.addWidget(scroll)
+        self._etapas.append(nome)
+        return layout
+
+    def _mostrar_etapa(self,*_):
+        i=self.tabs.currentIndex()
+        self.titulo_etapa.setText(f'Etapa {i+1} de {len(self._etapas)} · {self._etapas[i]}')
+        self.voltar_b.setEnabled(i>0)
+        self.proximo_b.setVisible(i<len(self._etapas)-1)
+        self.validar_b.setVisible(i==len(self._etapas)-1)
+        self.exportar_b.setVisible(i==len(self._etapas)-1)
+
+    def proximo(self):
+        i=self.tabs.currentIndex()
+        if i==0:
+            self._escopo()
+        elif i==1:
+            perfil=self._perfil()
+            if perfil['modo']=='ATUALIZAR' and not self.anterior.text():
+                raise ValueError('Localize o pacote anterior para comparar a atualização.')
+        elif i==2:
+            escopo=self._escopo()
+            if escopo is not None:
+                chaves=set(escopo)
+                por_uid={p['uid']:p for p in self.previa['pipes']}
+                chaves.update(('JUNCTION',por_uid[u][k]) for t,u in escopo if t=='PIPE' for k in ('no_a','no_b'))
+                if any((e['tipo'],e['uid']) not in chaves for u in self.conjuntos_ids for e in self.conjuntos[u]['membros']):
+                    raise ValueError('Alguns membros dos conjuntos selecionados ficaram fora do escopo. Reveja a etapa 1 ou a seleção de conjuntos.')
+        self.tabs.setCurrentIndex(i+1)
+
+    def cancelar(self):
+        if self._operacao is not None and self._operacao is self.pagina.app.atividades.atual:
+            self._operacao.cancelar()
+            return
+        self.reject()
+
+    def _mudar_escopo(self,*_):
+        self.escopo_chaves=None
+        self.escolher_escopo_b.setVisible(self.escopo.currentData() not in ('COMPLETO','HIPOTESE'))
+        self.selecao_resumo.setText('Confira os elementos e os conjuntos quando mudar o escopo.')
+
+    def escolher_pasta(self):
+        sugestao=_pasta(self.projeto)
+        if self.projeto.get('manifesto_wna'):
+            sugestao.mkdir(parents=True,exist_ok=True)
+        pasta=QFileDialog.getExistingDirectory(self,'Destino do pacote ModelBuilder',str(sugestao))
+        if pasta:self.destino_pacote.setText(pasta)
+
+    def diametros(self):
+        linhas=[]
+        for r in self.previa['manifesto'].get('fontes',{}).values():
+            d=r.get('diametro')
+            if d:
+                n=d['contagens']
+                linhas.append(f"{r['nome']} · {d['campo'] or 'campo não mapeado'} · {d['unidade'] or 'unidade a confirmar'}\n"
+                              f"{n.get('VALIDO',0)} válidos de {sum(n.values())} Pipes lidos · "+
+                              ', '.join(f'{v} {k.lower().replace("_"," ")}' for k,v in n.items() if k!='VALIDO'))
+        janela=QMessageBox(self)
+        janela.setWindowTitle('Diâmetros por fonte')
+        janela.setText('\n\n'.join(linhas) or 'O inventário não contém uma contagem por fonte.')
+        modelo=janela.addButton('Abrir Modelo GIS',QMessageBox.ActionRole)
+        janela.addButton('Fechar',QMessageBox.RejectRole)
+        janela.exec()
+        if janela.clickedButton() is modelo:
+            c=self.pagina.central
+            c.area.setCurrentIndex(c.area.findData('preparar'))
+            self.reject()
 
     def _acao(self,fn):
         try:
@@ -176,10 +305,15 @@ class AssistenteModelBuilder(QDialog):
                 for t,ps in self.campos.items()}
         return mb.validar_perfil(dict(versao=mb.VERSAO,nome=self.nome.text().strip(),destino=self.destino.currentData(),
             modo=self.modo.currentData(),modelo_destino=self.modelo.text().strip(),tipos=[t for t,b in self.tipos.items()
-            if b.isChecked()],campos=campos,politica_remocao='PRESERVAR'))
+            if b.isChecked()],campos=campos,politica_remocao='PRESERVAR',preservar_label=self.preservar_label.isChecked(),
+            prefixos={t:w.text().strip() for t,w in self.prefixos.items()}))
 
     def _salvar_perfil(self):
-        d=self._perfil()
+        d=dict(self._perfil(),opcoes=dict(escopo=self.escopo.currentData(),formato=self.formato.currentData(),
+            tolerancia=self.tolerancia.value(),atividade=self.atividade.currentData(),aneis=self.aneis.isChecked(),
+            execucao=self.foto['uuid'],chaves=sorted(self.escopo_chaves) if self.escopo_chaves is not None else None,
+            conjuntos=self.conjuntos_ids,origens=self.origens_escopo,anterior=self.anterior.text(),
+            observado=self.observado.text()))
         anterior=self.perfis.get(self.perfis_combo.currentData(),{})
         r=pg.salvar_revisao(self.pagina._complementos(True),self.projeto['uuid'],'MODELBUILDER_PERFIL',d,
                             anterior.get('uuid'),anterior.get('rev'))
@@ -200,12 +334,31 @@ class AssistenteModelBuilder(QDialog):
         self.destino.setCurrentIndex(self.destino.findData(r['destino']))
         self.modo.setCurrentIndex(self.modo.findData(r['modo']))
         self.modelo.setText(r.get('modelo_destino',''))
+        self.preservar_label.setChecked(r.get('preservar_label',True))
+        for t,w in self.prefixos.items():w.setText(r.get('prefixos',{}).get(t,PREFIXOS[t]))
         for t,ps in self.campos.items():
             self.tipos[t].setChecked(t in r['tipos'])
             for k,(c,u) in ps.items():
                 a=r['campos'].get(t,{}).get(k,{})
                 c.setCurrentIndex(max(0,c.findData(a.get('campo'))))
                 u.setCurrentIndex(max(0,u.findData(a.get('unidade'))))
+        if op:=r.get('opcoes'):
+            for combo,k in ((self.escopo,'escopo'),(self.formato,'formato'),(self.atividade,'atividade')):
+                combo.setCurrentIndex(max(0,combo.findData(op.get(k))))
+            self.tolerancia.setValue(op.get('tolerancia',.001))
+            self.aneis.setChecked(op.get('aneis',False))
+            self.anterior.setText(op.get('anterior',''))
+            self.observado.setText(op.get('observado',''))
+            if op.get('execucao')==self.foto['uuid']:
+                self.escopo_chaves={tuple(k) for k in op['chaves']} if op.get('chaves') is not None else None
+                self.conjuntos_ids=[u for u in op.get('conjuntos',()) if u in self.conjuntos]
+                self.origens_escopo=[u for u in op.get('origens',self.previa['manifesto']['origens'])
+                                    if u in self.foto['origens_validas']]
+            else:
+                self.escopo_chaves=None
+                self.conjuntos_ids=[]
+                self.origens_escopo=list(self.previa['manifesto']['origens'])
+                self.status.setText('Perfil recuperado. Confira o escopo e os conjuntos para esta execução.')
 
     def localizar_anterior(self):
         pasta=QFileDialog.getExistingDirectory(self,'Pacote exportado anteriormente')
@@ -217,10 +370,12 @@ class AssistenteModelBuilder(QDialog):
         if arq:self.observado.setText(arq)
 
     def escolher_conjuntos(self):
-        ids=self.pagina._escolher_itens_integral('Conjuntos para este pacote',
-            [(u,r['nome']) for u,r in self.conjuntos.items()])
+        ids=escolher(self,'Conjuntos para este pacote',
+            [(u,r['nome'],r['categoria']) for u,r in self.conjuntos.items()],self.conjuntos_ids)
+        if ids is None:return
         self.conjuntos_ids=ids
         self.status.setText(f'{len(ids)} conjuntos selecionados.')
+        return ids
 
     def _escolher_escopo(self):
         modo=self.escopo.currentData()
@@ -232,17 +387,28 @@ class AssistenteModelBuilder(QDialog):
             if modo=='BLOCOS':
                 registros.extend(macro.get('detalhados',()))
             grupos={r['uid']:r for r in registros}
-            ids=self.pagina._escolher_itens_integral('Elementos do escopo',
-                [(u,r.get('nome') or u[:10]) for u,r in grupos.items()])
+            opcoes=(opcoes_corredores(list(grupos.values())) if modo=='CORREDORES' else
+                    ((u,r.get('nome') or u[:10],r.get('tipo') or 'Blocos') for u,r in grupos.items()))
+            ids=escolher(self,'Elementos do escopo',opcoes)
+            if ids is None:return
             self.escopo_chaves=cm.por_segmentos(self.foto,{i for u in ids for i in grupos[u]['segmentos']})
         elif modo=='AREAS':
-            ids=self.pagina._escolher_itens_integral('Áreas em interseção espacial',
+            ids=escolher(self,'Áreas em interseção espacial',
                 [(r['uid'],str(r.get('label') or r.get('id') or r['uid'][:10])) for r in self.foto.get('areas',())])
+            if ids is None:return
             partes={t['uid'] for t in self.foto['tubos'] if set(t.get('zonas_uids',())).intersection(ids)}
             self.escopo_chaves={('PIPE',r['uid']) for r in self.previa['pipes'] if r['parte'] in partes}
         elif modo=='CONJUNTOS':
-            self.escolher_conjuntos()
+            if self.escolher_conjuntos() is None:return
             self.escopo_chaves={(r['tipo'],r['uid']) for u in self.conjuntos_ids for r in self.conjuntos[u]['membros']}
+        elif modo=='ALCANCAVEL':
+            ids=escolher(self,'Origens da rede alcançável',
+                [(u,f"{self.pagina._nomes([u])} · {u[:10]}") for u in sorted(self.foto['origens_validas'])],
+                self.origens_escopo)
+            if ids is None:return
+            self.origens_escopo=ids
+            self.selecao_resumo.setText(f'{len(ids)} origens selecionadas.')
+            return
         else:
             self.selecao_resumo.setText('O escopo usa a condição cadastral e as origens selecionadas na prévia.')
             return
@@ -254,50 +420,141 @@ class AssistenteModelBuilder(QDialog):
         if modo=='HIPOTESE':
             return {('PIPE',r['uid']) for r in self.previa['pipes'] if r['participacao']=='INCLUIDO'}
         if modo=='ALCANCAVEL':
-            if not self.previa['manifesto']['origens']:
+            if not self.origens_escopo:
                 raise ValueError('Selecione origens válidas para usar a rede alcançável.')
-            return {('PIPE',r['uid']) for r in self.previa['pipes'] if r['condicao_topologica']=='COM_ORIGEM'}
+            if any(p.get(k) is None for p in self.previa['pipes'] for k in ('no_a','no_b')):
+                raise ValueError('Há pontas ausentes na fotografia. Valide primeiro com o cadastro completo.')
+            if set(self.origens_escopo)==set(self.previa['manifesto']['origens']):
+                alcancaveis={('PIPE',r['uid']) for r in self.previa['pipes'] if r['condicao_topologica']=='COM_ORIGEM'}
+            else:
+                condicao=cadastro._condicao(self.foto,self.origens_escopo,None)
+                alcancaveis={('PIPE',r['uid']) for r in self.previa['pipes'] if
+                    r['participacao']=='INCLUIDO' and any(c[0]=='COM_ORIGEM' for c in condicao.get(r['parte'],()))}
+            if not alcancaveis:raise ValueError('Nenhum Pipe alcançável pelas origens selecionadas.')
+            return alcancaveis
         if not self.escopo_chaves:
             raise ValueError('Escolha os elementos que serão exportados neste escopo.')
         return self.escopo_chaves
 
-    def exportar(self):
+    def _configuracao(self):
         if self.pagina.foto is not self.foto or self.pagina._projeto()['uuid']!=self.projeto['uuid']:
             raise ValueError('O contexto mudou. Reabra o assistente.')
         perfil=self._perfil()
         escopo=self._escopo()
-        cfg=dict(perfil=perfil,escopo=self.escopo.currentData(),tolerancia_m=self.tolerancia.value())
+        cfg=dict(perfil=perfil,escopo=self.escopo.currentData(),tolerancia_m=self.tolerancia.value(),
+                 segmentar_aneis=self.aneis.isChecked())
         anterior=self.anterior.text()
         observado=self.observado.text()
         if perfil['modo']=='ATUALIZAR' and not anterior:
             raise ValueError('Localize o pacote de referência para comparar a atualização.')
-        formato=self.formato.currentData()
-        sugestao=_pasta(self.projeto)
-        if self.projeto.get('manifesto_wna'):
-            sugestao.mkdir(parents=True,exist_ok=True)
-        pasta=QFileDialog.getExistingDirectory(self,'Destino do pacote ModelBuilder',str(sugestao))
-        if not pasta:return
         selecoes=[self.conjuntos[u] for u in self.conjuntos_ids]
         regra=self.atividade.currentData()
+        dados=self.previa
+        if cfg['escopo']=='ALCANCAVEL':
+            dados=dict(dados,manifesto=dict(dados['manifesto'],origens=list(self.origens_escopo)))
+        assinatura=digest([cfg,sorted(escopo or ()),dados['manifesto']['origens'],
+                           [(r['uuid'],r['rev']) for r in selecoes],regra,anterior,observado])
+        if regra!='PREVIA':
+            excecoes=dados['manifesto'].get('atividades_explicitas',{})
+            dados=dict(dados,pipes=[dict(r,atividade=excecoes.get(r['original'],
+                'ATIVO' if regra=='HIPOTESE' and r['participacao']=='INCLUIDO' else 'A_DEFINIR')) for r in dados['pipes']])
+        return cfg,escopo,selecoes,dados,assinatura,anterior,observado
+
+    def _carregar_anterior(self,cfg,anterior,observado):
+        if cfg['perfil']['modo']=='ATUALIZAR':
+            m0,originais=mb.ler_pacote(anterior)
+            if m0['projeto']!=self.projeto['uuid']:
+                raise ValueError('O pacote anterior pertence a outro projeto.')
+            cfg['componentes_anteriores']=originais
+            cfg['referencia_anterior']=m0['assinatura_csv']
+            if observado:cfg['observado']=conferir.ler_evidencia(observado)
+
+    def validar(self):
+        cfg,escopo,selecoes,dados,assinatura,anterior,observado=self._configuracao()
+        cfg['base_labels']=self.pagina._complementos()
+        self._validado=None
+        def tarefa(parar,_):
+            self._carregar_anterior(cfg,anterior,observado)
+            return cadastro.validar_modelbuilder(dados,cfg,selecoes=selecoes,escopo=escopo,cancelar=parar)
+        def pronto(rs):
+            if sip.isdeleted(self):return
+            self._pendencias,m=rs
+            self._validado=(assinatura,m)
+            self._listar_pendencias()
+            self.parcial.setEnabled(bool(m['excluidos']))
+            self.parcial.setChecked(False)
+            cont=' · '.join(f'{GRAVIDADES[k]}: {n}' for k,n in m['gravidades'].items()) or 'Sem pendências'
+            preparados=' · '.join(f'{n} {k.title()}'+('s' if n!=1 else '') for k,n in m['quantidades'].items()) or 'Nenhum elemento preparado'
+            self.status.setText(preparados+'\n'+cont)
+        self._executar('Validar topologia e atributos',tarefa,pronto)
+
+    def _executar(self,titulo,funcao,pronto):
+        if self.pagina.tarefa(titulo,funcao,pronto):
+            self._operacao=self.pagina.app.atividades.atual
+
+    def _listar_pendencias(self,*_):
+        filtro=self.filtro_pendencias.currentData()
+        self.tabela_pendencias.limpar()
+        self._linhas_pendencia=[r for r in self._pendencias if not filtro or r.get(filtro[0])==filtro[1]]
+        for r in self._linhas_pendencia:
+            uid=r.get('uid') or '—'
+            chave=r.get('gis_id')
+            self.tabela_pendencias.inserir((GRAVIDADES[r['gravidade']],r['tipo'],chave if chave is not None else uid[:12],
+                                          r.get('camada'),r['motivo']))
+
+    def _localizar_pendencia(self,i,aproximar):
+        if not i.isValid() or self.pagina.foto is not self.foto:return
+        r=self._linhas_pendencia[i.row()]
+        u=r.get('uid')
+        g=None
+        if r['tipo']=='PIPE' and (p:=next((p for p in self.previa['pipes'] if p['uid']==u),None)):
+            g=linha(p)
+        elif (n:=next((n for n in self.previa['nos'] if n['uid']==u),None)) and len(n.get('xy') or ())==2:
+            g=QgsGeometry.fromPointXY(QgsPointXY(*n['xy']))
+        elif (e:=next((e for e in self.previa['equipamentos'] if e['uid']==u),None)):
+            g=geometria(e.get('wkb'))
+        if not g:
+            self.status.setText('Geometria indisponível para esta pendência. Consulte o registro e as relações.')
+            return
+        self.pagina.central.mapa.destacar_investigacao([('tubo' if r['tipo']=='PIPE' else 'local',g)],
+            self.pagina.crs_foto,aproximar,toda_extensao=True)
+
+    def _menu_pendencia(self,i):
+        r=self._linhas_pendencia[i.row()]
+        def consultar():
+            dados=dict(r)
+            QMessageBox.information(self,'Diagnóstico e relações',json.dumps(dados,ensure_ascii=False,indent=2,default=str))
+        def revisar():
+            c=self.pagina.central
+            if not c.abrir_conectividade():return
+            t=c.conectividade_gis
+            por_id={d['uid']:d for d in self.foto.get('diagnosticos',())}
+            rel=next((x['candidato'] for x in r.get('relacoes',()) if x.get('candidato') in por_id),None)
+            if rel and (t.dados or {}).get('uuid')==self.foto['uuid']:
+                t.selecionar_resultado_uid(rel,por_id[rel]['tipo'])
+            else:
+                t.status.setText('Abra a execução usada no pacote e confira as portas na tabela de conexões.')
+        return [('Consultar diagnóstico e relações…',consultar),('Revisar na conectividade',revisar)]
+
+    def exportar(self):
+        cfg,escopo,selecoes,dados,assinatura,anterior,observado=self._configuracao()
+        if not self._validado or self._validado[0]!=assinatura:
+            raise ValueError('Valide a configuração atual antes de exportar.')
+        m=self._validado[1]
+        if m['excluidos'] and not self.parcial.isChecked():
+            raise ValueError('Há elementos críticos. Revise as pendências ou marque a exportação parcial.')
+        cfg['parcial']=self.parcial.isChecked()
+        formato=self.formato.currentData()
+        if not self.destino_pacote.text():
+            self.escolher_pasta()
+        pasta=self.destino_pacote.text()
+        if not pasta:return
         base=self.pagina._complementos(True)
         projeto_uid=self.projeto['uuid']
         raiz=Path(self.projeto['manifesto_wna']).parent.resolve() if self.projeto.get('manifesto_wna') else None
-        previa=self.previa
         def executar(parar,etapa):
-            dados=previa
-            if regra!='PREVIA':
-                excecoes=previa['manifesto'].get('atividades_explicitas',{})
-                dados=dict(previa,pipes=[dict(r,atividade=excecoes.get(r['original'],
-                    'ATIVO' if regra=='HIPOTESE' and r['participacao']=='INCLUIDO' else 'A_DEFINIR'))
-                    for r in previa['pipes']])
-            if perfil['modo']=='ATUALIZAR':
-                m0,originais=mb.ler_pacote(anterior)
-                if m0['projeto']!=projeto_uid:
-                    raise ValueError('O pacote anterior pertence a outro projeto.')
-                cfg['componentes_anteriores']=originais
-                cfg['referencia_anterior']=m0['assinatura_csv']
-                if observado:cfg['observado']=conferir.ler_evidencia(observado)
-            dst=cadastro.exportar(dados,Path(pasta),formato,parar,etapa,selecoes=selecoes,modelbuilder=cfg,escopo=escopo)
+            self._carregar_anterior(cfg,anterior,observado)
+            dst=cadastro.exportar(dados,Path(pasta),formato,parar,etapa,selecoes=selecoes,modelbuilder=cfg,escopo=escopo,base_labels=base)
             m=json.loads((dst/'MODELBUILDER.json').read_text(encoding='utf-8'))
             relativo=bool(raiz and dst.resolve().is_relative_to(raiz))
             p=str(dst.resolve().relative_to(raiz)) if relativo else str(dst.resolve())
@@ -310,7 +567,7 @@ class AssistenteModelBuilder(QDialog):
             texto=f"Pacote {r['uuid'][:8]} · {r['estado'].lower().replace('_',' ')}\n{dst}"
             self.pagina.status.setText(texto)
             if not sip.isdeleted(self):self.status.setText(texto)
-        self.pagina.tarefa('Validar e exportar para ModelBuilder',executar,pronto)
+        self._executar('Exportar para ModelBuilder',executar,pronto)
 
 
 class HistoricoModelBuilder(QDialog):

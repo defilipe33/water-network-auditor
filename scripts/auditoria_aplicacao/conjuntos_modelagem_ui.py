@@ -5,8 +5,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from qgis.PyQt.QtCore import Qt
-from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog,
-    QInputDialog, QLineEdit, QListWidget, QListWidgetItem, QMessageBox, QVBoxLayout)
+from qgis.PyQt.QtWidgets import (QCheckBox, QComboBox, QDialog, QFileDialog,
+    QInputDialog, QLineEdit, QMessageBox, QVBoxLayout)
 from qgis.core import QgsFeatureRequest, QgsGeometry, QgsPointXY
 
 from auditoria_fronteiras.entradas import valor_python
@@ -18,6 +18,7 @@ from .entradas_grafo_gis import marca_feicao
 from .modelo_gis import identificar, revisoes
 from .modelo_gis_ui import aviso, botao, formulario
 from .navegacao_cartografica import navegar_registros
+from .seletor_multiplos import escolher, opcoes_corredores
 from .tabelas_topologia_gis import TabelaGIS
 
 
@@ -249,7 +250,10 @@ class CatalogoConjuntos(QDialog):
         if not ok:return None
         if modo in linhas:
             grupos={r['uid']:r for r,_ in linhas[modo]}
-            ids=self.pagina._escolher_itens_integral(modo,[(u,r.get('nome') or 'Bloco detalhado · '+u[:10]) for u,r in grupos.items()])
+            opcoes=(opcoes_corredores(list(grupos.values())) if modo=='Corredores' else
+                    [(u,r.get('nome') or 'Bloco detalhado · '+u[:10]) for u,r in grupos.items()])
+            ids=escolher(self,modo,opcoes)
+            if ids is None:return None
             chaves=cm.por_segmentos(self.foto,{i for u in ids for i in grupos[u]['segmentos']})
             return chaves,linhas[modo][0][1] if ids else 'PERSONALIZADOS',dict(modo=modo,referencias=ids)
         if modo=='Conexões confirmadas':
@@ -263,20 +267,21 @@ class CatalogoConjuntos(QDialog):
             componentes=m.get('componentes',())
             origens={u for c in componentes for u in c['origens']}
             if not origens:raise ValueError('Calcule a visão macro integral com fontes habilitadas.')
-            nomes={f"{self.pagina._nomes([u])} · {u[:10]}":u for u in sorted(origens)}
-            n,ok=QInputDialog.getItem(self,modo,'Origem topológica',list(nomes),0,False)
-            if not ok:return None
-            u=nomes[n]
-            segs={i for i,c in enumerate(m['componente_segmento']) if u in componentes[c]['origens']}
-            return cm.por_segmentos(self.foto,segs),'ORIGENS',dict(modo=modo,origem=u)
+            ids=escolher(self,modo,[(u,f"{self.pagina._nomes([u])} · {u[:10]}") for u in sorted(origens)])
+            if ids is None:return None
+            selecionadas=set(ids)
+            segs={i for i,c in enumerate(m['componente_segmento']) if selecionadas.intersection(componentes[c]['origens'])}
+            return cm.por_segmentos(self.foto,segs),'ORIGENS',dict(modo=modo,origem=ids[0] if len(ids)==1 else None,origens=ids)
         if modo=='Setor ou zona':
-            nomes={f"{a.get('label') or a.get('id') or 'Área'} · {a['uid'][:10]}":a['uid'] for a in self.foto.get('areas',())}
+            nomes=[(a['uid'],f"{a.get('label') or a.get('id') or 'Área'} · {a['uid'][:10]}")
+                   for a in self.foto.get('areas',())]
             if not nomes:raise ValueError('A execução não contém setores ou zonas cadastrados.')
-            n,ok=QInputDialog.getItem(self,modo,'Área (interseção espacial)',list(nomes),0,False)
-            if not ok:return None
-            u=nomes[n]
-            partes={r['uid'] for r in self.foto['tubos'] if u in r.get('zonas_uids',())}
-            return {('PIPE',p['uid']) for p in self.previa['pipes'] if p['parte'] in partes},'AREAS',dict(modo=modo,area=u)
+            ids=escolher(self,'Áreas em interseção espacial',nomes)
+            if ids is None:return None
+            selecionadas=set(ids)
+            partes={r['uid'] for r in self.foto['tubos'] if selecionadas.intersection(r.get('zonas_uids',()))}
+            return {('PIPE',p['uid']) for p in self.previa['pipes'] if p['parte'] in partes},'AREAS',dict(
+                modo=modo,area=ids[0] if len(ids)==1 else None,areas=ids)
         if modo=='Intervenções':
             propostas={r['uuid']:r for r in self.previa['operacoes'] if r['tipo']=='PIPE'}
             ids=self.pagina._escolher_itens_integral(modo,[(u,r.get('nome') or u[:10]) for u,r in propostas.items()])
@@ -302,46 +307,10 @@ class CatalogoConjuntos(QDialog):
         return chaves,'ATIVIDADE' if modo=='Pipes inativos' else 'TOPOLOGIA',dict(modo=modo)
 
     def _escolher_membros(self,ids):
-        d=QDialog(self)
-        d.setWindowTitle('Editar membros materializados')
-        v=QVBoxLayout(d)
-        filtro=QLineEdit()
-        filtro.setPlaceholderText('Pesquisar UID, ID GIS, Label ou camada')
-        v.addWidget(filtro)
-        lista=QListWidget()
-        v.addWidget(lista)
-        situacao=aviso()
-        v.addWidget(situacao)
-        escolhidos=set(ids)
-        rotulos={k:f"{k[0]} · {r.get('gis_id') or '—'} · {r.get('label') or '—'} · {r.get('camada') or ''} · {k[1]}"
-                 for k,r in self.por_id.items()}
-        def mostrar():
-            lista.blockSignals(True)
-            lista.clear()
-            termo=filtro.text().casefold().strip()
-            xs=[k for k,t in rotulos.items() if termo in t.casefold()]
-            if not termo:xs.sort(key=lambda k:k not in escolhidos)
-            for k in xs[:250]:
-                i=QListWidgetItem(rotulos[k])
-                i.setData(Qt.UserRole,list(k))
-                i.setCheckState(Qt.Checked if k in escolhidos else Qt.Unchecked)
-                lista.addItem(i)
-            lista.blockSignals(False)
-            situacao.setText(f'{len(escolhidos)} marcados · {min(len(xs),250)} de {len(xs)} resultados visíveis.')
-        def alternar(i):
-            k=tuple(i.data(Qt.UserRole))
-            if i.checkState()==Qt.Checked:escolhidos.add(k)
-            else:escolhidos.discard(k)
-            situacao.setText(f'{len(escolhidos)} marcados. A pesquisa preserva todas as marcas.')
-        filtro.textChanged.connect(mostrar)
-        lista.itemChanged.connect(alternar)
-        botoes=QDialogButtonBox(QDialogButtonBox.Ok|QDialogButtonBox.Cancel)
-        botoes.accepted.connect(d.accept)
-        botoes.rejected.connect(d.reject)
-        v.addWidget(botoes)
-        mostrar()
-        d.resize(780,495)
-        return escolhidos if d.exec()==QDialog.Accepted else None
+        opcoes=[(k,f"{r.get('gis_id') or '—'} · {r.get('label') or '—'} · {r.get('camada') or ''} · {k[1]}",k[0])
+                for k,r in self.por_id.items()]
+        escolhidos=escolher(self,'Editar membros materializados',opcoes,ids)
+        return set(escolhidos) if escolhidos is not None else None
 
     def editar(self,r=None,*,metadados=False):
         def editar():
@@ -434,6 +403,7 @@ class CatalogoConjuntos(QDialog):
         if not ok:return
         pasta=QFileDialog.getExistingDirectory(self,'Pasta do pacote de preparação')
         if not pasta:return
+        base=self._base(True)
         def gerar(parar,etapa):
             selecoes=[]
             for r in registros:
@@ -446,6 +416,6 @@ class CatalogoConjuntos(QDialog):
             previa=dict(self.previa,manifesto=dict(self.previa['manifesto'],filtro_conjuntos=dict(
                 atividade_ou_situacao=estados[estado],tipos=tipos[tipo])))
             return cadastro.exportar(previa,Path(pasta),'GPKG' if fmt=='GeoPackage' else 'ESRI Shapefile',
-                parar,etapa,selecoes=selecoes,somente_conjuntos=not completo)
+                parar,etapa,selecoes=selecoes,somente_conjuntos=not completo,base_labels=base)
         self.pagina.tarefa('Preparando Selection Sets para WaterGEMS',gerar,
                            lambda p:self.pagina.status.setText('Pacote de preparação gravado em '+str(p)))

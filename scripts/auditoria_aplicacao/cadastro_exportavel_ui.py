@@ -85,7 +85,7 @@ class CadastroExportavelUI:
                 if abrir_modelbuilder:
                     from .modelbuilder_ui import AssistenteModelBuilder
                     self._dialogo_modelbuilder=AssistenteModelBuilder(self,previa)
-                    self._dialogo_modelbuilder.open()
+                    self._dialogo_modelbuilder.show()
                 elif abrir_catalogo:
                     self._abrir_catalogo_conjuntos(previa,estado,preselecao)
                 else:
@@ -194,9 +194,10 @@ class CadastroExportavelUI:
             pasta=QFileDialog.getExistingDirectory(dlg,'Pasta de destino')
             if not pasta:return
             formato=opcoes_formato.currentData()
+            base=self._complementos(True)
             dlg.accept()
             self.tarefa('Exportando cadastro para conferência',
-                        lambda p,e:cadastro.exportar(previa,Path(pasta),formato,p,e),
+                        lambda p,e:cadastro.exportar(previa,Path(pasta),formato,p,e,base_labels=base),
                         lambda arq:self.status.setText('Prévia exportada em '+str(arq)))
         b=botao(v,'Exportar prévia…',salvar)
         acao_disponivel(b,'' if previa['pipes'] else 'Nenhum Pipe materializado. Consulte as pendências.')

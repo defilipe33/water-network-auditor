@@ -1,6 +1,8 @@
 # Water Network Auditor — GIS & WaterGEMS
 
-A **1.19.0** acrescenta a preparação de pacotes ModelBuilder, a conferência pós-importação por identificadores e a fila prioritária de cruzamentos GIS. [Guia do ModelBuilder e da revisão](documentacao/publica/MODELBUILDER_E_CRUZAMENTOS_1_19_0.md).
+A **1.19.1** acrescenta validação por elemento, assistente em quatro etapas e Labels persistentes aos pacotes ModelBuilder. Também corrige a exportação de Selection Sets com datas do QGIS. [Guia e diagnóstico técnico da 1.19.1](documentacao/publica/MODELBUILDER_1_19_1.md).
+
+A **1.19.0** introduziu a preparação de pacotes ModelBuilder, a conferência pós-importação por identificadores e a fila prioritária de cruzamentos GIS. [Guia do ModelBuilder e da revisão na 1.19.0](documentacao/publica/MODELBUILDER_E_CRUZAMENTOS_1_19_0.md).
 
 A pré-release **1.18.3** integra os vereditos ao acompanhamento, inclui a auditoria de conexões repetidas e adiciona um catálogo de conjuntos materializados para preparar Selection Sets. [Guia da versão 1.18.3](documentacao/publica/CONEXOES_E_CONJUNTOS_1_18_3.md).
 

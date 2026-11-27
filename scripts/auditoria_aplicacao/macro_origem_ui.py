@@ -587,25 +587,9 @@ class MacroOrigemUI:
                 dict(r, segmentos=r['alternativas'], tipo='ALTERNATIVAS'), True)))
         return acoes
 
-    def _escolher_itens_integral(self, titulo, opcoes):
-        d = QDialog(self)
-        d.setWindowTitle(titulo)
-        v = QVBoxLayout(d)
-        lista = QListWidget()
-        lista.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        for uid, nome in opcoes:
-            i = QListWidgetItem(nome)
-            i.setData(Qt.UserRole, uid)
-            i.setCheckState(Qt.Unchecked)
-            lista.addItem(i)
-        v.addWidget(lista)
-        b = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        b.accepted.connect(d.accept)
-        b.rejected.connect(d.reject)
-        v.addWidget(b)
-        if d.exec_() != QDialog.Accepted:
-            return []
-        return [i.data(Qt.UserRole) for j in range(lista.count()) if (i := lista.item(j)).checkState() == Qt.Checked]
+    def _escolher_itens_integral(self,titulo,opcoes):
+        from .seletor_multiplos import escolher
+        return escolher(self,titulo,opcoes) or []
 
     def _editar_integral(self, r, acao):
         if self.central.ocupado():
