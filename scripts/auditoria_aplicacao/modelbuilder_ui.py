@@ -8,7 +8,7 @@ import sqlite3
 from tempfile import TemporaryDirectory
 from uuid import uuid4
 
-from qgis.PyQt.QtCore import Qt, QUrl
+from qgis.PyQt.QtCore import Qt, QTimer, QUrl
 from qgis.PyQt.QtGui import QDesktopServices
 from qgis.PyQt import sip
 from qgis.PyQt.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QFileDialog, QInputDialog,QMessageBox,
@@ -218,6 +218,7 @@ class AssistenteModelBuilder(QDialog):
         botao(final,'Diâmetros por fonte…',self.diametros)
         botao(final,'Cobertura por categoria…',lambda:self._acao(self.cobertura))
         self.corrigir_b=botao(final,'Corrigir pendências topológicas…',lambda:self._acao(self.corrigir_pendencias))
+        botao(final,'Histórico de correções…',lambda:self._acao(lambda:self.corrigir_pendencias(historico=True)))
         botao(final,'Conferir importações ou reabrir pacotes…',self.abrir_historico)
         self.acoes_pacote=QWidget()
         faixa_pacote=QHBoxLayout(self.acoes_pacote)
@@ -413,8 +414,9 @@ class AssistenteModelBuilder(QDialog):
 
     def _aplicar_perfil(self,*_):
         r=self.perfis.get(self.perfis_combo.currentData())
-        if not r:
-            return
+        if r:self._preencher_perfil(r)
+
+    def _preencher_perfil(self,r):
         self.nome.setText(r['nome'])
         self.destino.setCurrentIndex(self.destino.findData(r['destino']))
         self.modo.setCurrentIndex(self.modo.findData(r['modo']))
@@ -558,21 +560,50 @@ class AssistenteModelBuilder(QDialog):
     def validar(self):
         cfg,escopo,selecoes,dados,assinatura,anterior,observado=self._configuracao()
         cfg['base_labels']=self.pagina._complementos()
-        self._validado=None
+        self.invalidar_validacao()
         def tarefa(parar,_):
             self._carregar_anterior(cfg,anterior,observado)
             return cadastro.validar_modelbuilder(dados,cfg,selecoes=selecoes,escopo=escopo,cancelar=parar)
         def pronto(rs):
             if sip.isdeleted(self):return
+            if self._configuracao()[4]!=assinatura:
+                self.status.setText('A configuração mudou durante a validação. Use Validar novamente.')
+                return
             self._pendencias,m=rs
             self._validado=(assinatura,m)
+            self._conferir_observacoes(assinatura,cfg['escopo']=='COMPLETO' and 'PIPE' in cfg['perfil']['tipos'],dados)
             self._listar_pendencias()
             self.parcial.setEnabled(bool(m['excluidos']))
             self.parcial.setChecked(False)
             cont=' · '.join(f'{GRAVIDADES[k]}: {n}' for k,n in m['gravidades'].items()) or 'Sem pendências'
             preparados=' · '.join(f'{n} {k.title()}'+('s' if n!=1 else '') for k,n in m['quantidades'].items()) or 'Nenhum elemento preparado'
-            self.status.setText(preparados+'\n'+cont)
+            todos=self._correcoes(todas=True)
+            obs=self._observacoes_correcao()
+            n=len(correcao.fila(self.foto,self._pendencias,todos,obs))
+            self.status.setText(preparados+'\n'+cont+f' · {n} pendências críticas na fila')
+            janela=getattr(self,'_dialogo_correcao',None)
+            if janela is not None and not sip.isdeleted(janela):
+                janela.atualizar(self._pendencias,todos)
+            if retorno:=getattr(self,'_retorno_resolucao',None):
+                self._retorno_resolucao=None
+                if not n:self.status.setText(self.status.text()+'\nConectividade recalculada e fila atualizada.')
+                QTimer.singleShot(0,lambda:self._acao(lambda:self.corrigir_pendencias(
+                    historico=not n,selecionada=retorno)) if not sip.isdeleted(self) else None)
         self._executar('Validar topologia e atributos',tarefa,pronto)
+
+    def invalidar_validacao(self):
+        self._validado=None
+        self._pendencias=[]
+        self._listar_pendencias()
+        self.parcial.setChecked(False)
+        self.parcial.setEnabled(False)
+
+    def pendencias_vigentes(self):
+        if not self._validado:return []
+        if self._configuracao()[4]!=self._validado[0]:
+            self.invalidar_validacao()
+            return []
+        return self._pendencias
 
     def _executar(self,titulo,funcao,pronto):
         if self.pagina.tarefa(titulo,funcao,pronto):
@@ -612,7 +643,7 @@ class AssistenteModelBuilder(QDialog):
             QMessageBox.information(self,'Diagnóstico e relações',json.dumps(dados,ensure_ascii=False,indent=2,default=str))
         acoes=[('Consultar diagnóstico e relações…',consultar),
                ('Revisar na conectividade',lambda:self.revisar_pendencia(r))]
-        if r['gravidade']=='CRITICA':
+        if r['gravidade']=='CRITICA' or r.get('codigo')=='SEGMENTO_CURTO_LIGACOES':
             acoes.append(('Abrir correção guiada…',lambda:self._acao(lambda:self.corrigir_pendencias(r))))
         return acoes
 
@@ -633,19 +664,98 @@ class AssistenteModelBuilder(QDialog):
                 return
         t.status.setText('Abra a execução usada no pacote e confira as portas na tabela de conexões.')
 
-    def _correcoes(self):
-        return {u:r for u,r in _revisoes(self.pagina,correcao.TIPO).items() if r['topologia_uid']==self.foto['uuid']}
+    def _correcoes(self,*,todas=False):
+        return {u:r for u,r in _revisoes(self.pagina,correcao.TIPO).items()
+                if todas or r['topologia_uid']==self.foto['uuid']}
 
-    def corrigir_pendencias(self,r=None):
-        registros=self._correcoes()
-        if not registros and not any(x['gravidade']=='CRITICA' for x in self._pendencias):
-            raise ValueError('Use Validar para listar as pendências críticas da execução.')
+    def _observacoes_correcao(self):
+        return {r['correcao_uid']:r for r in _revisoes(self.pagina,'MODELBUILDER_VALIDACAO_CORRECAO').values()}
+
+    def _conferir_observacoes(self,assinatura,completo,dados):
+        if not completo:return
+        registros=self._correcoes(todas=True)
+        if not registros:return
+        obs=self._observacoes_correcao()
+        partes={p['parte'] for p in dados['pipes'] if p.get('participacao')=='INCLUIDO'}
+        projeto=self.projeto['uuid']
+        base=self.pagina._complementos()
+        hipoteses={h['rev']:h for h in pg.revisoes(base,projeto,tipo='HIPOTESE')}
+        caminho=[(self.foto.get('hipotese') or {}).get('rev')]
+        linhagem=set()
+        while caminho:
+            rev=caminho.pop()
+            if rev in hipoteses and rev not in linhagem:
+                h=hipoteses[rev]
+                linhagem.add(rev)
+                caminho.extend((h.get('anterior'),(h.get('hipotese_origem') or {}).get('rev')))
+        for u,r in registros.items():
+            antes=obs.get(u,{})
+            estado=correcao.estado_em_validacao(r,self.foto,self._pendencias,partes,completo,
+                antes.get('estado') if antes.get('correcao_rev')==r['rev'] else None,linhagem=linhagem)
+            if estado is None:continue
+            atual=dict(projeto_uid=projeto,correcao_uid=u,correcao_rev=r['rev'],topologia_uid=self.foto['uuid'],
+                       configuracao=assinatura,estado=estado,parte=r['diagnostico']['parte'])
+            if any(antes.get(k)!=v for k,v in atual.items()):
+                pg.salvar_revisao(base,projeto,'MODELBUILDER_VALIDACAO_CORRECAO',atual,
+                    digest(['validacao_correcao',u]),antes.get('rev'),referencia=(u,r['rev']))
+
+    def corrigir_pendencias(self,r=None,*,historico=False,selecionada=None):
+        registros=self._correcoes(todas=True)
+        ativos=self.pendencias_vigentes()
+        if not historico and not ativos and not self._validado:
+            raise ValueError('Use Validar para listar as pendências críticas da configuração vigente.')
         if self.pagina.central.ocupado():
             raise ValueError('Aguarde a operação em curso.')
         from .correcao_modelbuilder_ui import CorrecaoTopologica
-        uid=correcao.identidade(self.foto['uuid'],r) if r else None
-        self._dialogo_correcao=CorrecaoTopologica(self,self._pendencias,registros,uid)
+        uid=correcao.identidade(self.foto['uuid'],r) if r else selecionada
+        anterior=getattr(self,'_dialogo_correcao',None)
+        if anterior is not None and not sip.isdeleted(anterior):
+            anterior.historico=historico
+            anterior.adicional=r if r and r.get('codigo')=='SEGMENTO_CURTO_LIGACOES' else None
+            anterior.atualizar(ativos,registros,selecionada=uid)
+            anterior.raise_()
+            return
+        self._dialogo_correcao=CorrecaoTopologica(self,ativos,registros,uid,historico=historico,
+            adicional=r if r and r.get('codigo')=='SEGMENTO_CURTO_LIGACOES' else None)
         self._dialogo_correcao.show()
+
+    def executar_derivada(self,referencia,correcao_uid):
+        central=self.pagina.central
+        if central.ocupado():return
+        p=self.pagina._projeto()
+        h=next((r for r in pg.revisoes(self.pagina._complementos(),p['uuid'],referencia['uuid'],tipo='HIPOTESE')
+                if r['rev']==referencia['rev']),None)
+        if h is None:raise ValueError('A hipótese derivada está indisponível no projeto.')
+        topo=central.__dict__.get('conectividade_gis')
+        if topo is not None and topo.uid_projeto==p['uuid'] and not topo.resolver_edicao():
+            self.status.setText('Decisão gravada. Retome a execução pelo histórico de correções.')
+            return
+        perfil=dict(self._perfil(),opcoes=dict(escopo='COMPLETO',formato=self.formato.currentData(),
+            tolerancia=self.tolerancia.value(),atividade=self.atividade.currentData(),aneis=self.aneis.isChecked(),
+            anterior=self.anterior.text(),observado=self.observado.text()))
+        regra=self.previa['manifesto']['regra_atividade']
+        pasta=self.destino_pacote.text()
+        if not central.abrir_conectividade(para_estrutura=True):
+            self.status.setText('Decisão gravada. Abra a conectividade pelo histórico de correções para executar.')
+            return
+        topo=central.conectividade_gis
+        topo.atualizar_complementos()
+        topo._aplicar(h)
+        def voltar(foto):
+            if (central.projetos.atual() or {}).get('uuid')!=p['uuid']:return
+            if not central.abrir_estrutura(foto=foto):return
+            def configurar(novo):
+                novo._preencher_perfil(perfil)
+                novo.destino_pacote.setText(pasta)
+                novo.tabs.setCurrentIndex(3)
+                novo._retorno_resolucao=correcao_uid
+                novo.validar()
+            central.estrutura_gis.prever_cadastro_completo(abrir_modelbuilder=True,regra=regra,ao_abrir=configurar)
+        worker=topo.iniciar(modo='salva',ao_concluir=voltar)
+        if worker:
+            self.close()
+        else:
+            self.status.setText('Hipótese derivada carregada. Inicie a execução na tela de conectividade.')
 
     def exportar(self):
         cfg,escopo,selecoes,dados,assinatura,anterior,observado=self._configuracao()

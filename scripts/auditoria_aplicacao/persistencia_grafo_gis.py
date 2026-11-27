@@ -127,7 +127,8 @@ def vigentes(caminho, projeto_uid):
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *, referencia=None):
     if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME','CONJUNTO_WG',
-                    'MODELBUILDER_PERFIL','MODELBUILDER_EXPORTACAO','MODELBUILDER_CORRECAO','MODELBUILDER_DESTINO'):
+                    'MODELBUILDER_PERFIL','MODELBUILDER_EXPORTACAO','MODELBUILDER_CORRECAO','MODELBUILDER_DESTINO',
+                    'MODELBUILDER_VALIDACAO_CORRECAO'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO','PIPE') and dados.get('situacao') not in SITUACOES:
@@ -154,6 +155,9 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *
     if tipo=='MODELBUILDER_CORRECAO':
         from .correcao_modelbuilder import validar
         validar(dados,projeto_uid)
+    if tipo=='MODELBUILDER_VALIDACAO_CORRECAO':
+        from .correcao_modelbuilder import validar_observacao
+        validar_observacao(dados,projeto_uid)
     if tipo=='MODELBUILDER_DESTINO' and (dados.get('projeto_uid')!=projeto_uid or not dados.get('pasta')):
         raise ValueError('Informe a pasta escolhida para este projeto.')
     if tipo=='MODELBUILDER_EXPORTACAO' and (dados.get('projeto_uid')!=projeto_uid or not dados.get('topologia_uid')
@@ -172,9 +176,11 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *
                              (outra_uid,)).fetchone()
             if rref!=(outra_rev,):
                 raise ValueError('A revisão da relação principal mudou. Repita a auditoria.')
-        r=con.execute('SELECT rev,tipo FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
+        r=con.execute('SELECT rev,tipo,dados FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
         if (r[0] if r else None)!=esperada or r and r[1]!=tipo:
             raise ValueError('Revisão alterada por outra sessão. Reabra antes de salvar.')
+        if r and tipo=='MODELBUILDER_CORRECAO' and dados.get('estado')=='APLICADA' and json.loads(r[2])['estado']=='APLICADA':
+            raise ValueError('A correção já foi aplicada. Confira a validação ou reverta antes de reaplicar.')
         data=_agora()
         con.execute('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',(rev,uid,tipo,esperada,data,_json(dados)))
     return dict(dados,uuid=uid,rev=rev,tipo=tipo,anterior=esperada,data_utc=data)
@@ -194,9 +200,7 @@ def salvar_separacao_modelbuilder(caminho,projeto,hipotese,dados,relacao,uid,esp
                          (hipotese['rev'],hipotese['uuid'])).fetchone()
         if not linha:
             raise ValueError('A hipótese de referência não está disponível.')
-        atual=con.execute('SELECT rev,tipo FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
-        if atual!=((esperada,TIPO) if esperada else None):
-            raise ValueError('A decisão foi revisada por outra sessão. Reabra a correção.')
+        _conferir_correcao(con,uid,esperada,TIPO)
         h=json.loads(linha[0])
         if h.get('formato')!=2 or h.get('projeto_uid')!=projeto:
             raise ValueError('Crie uma hipótese atual com revisões fixadas para poder derivá-la.')
@@ -213,6 +217,67 @@ def salvar_separacao_modelbuilder(caminho,projeto,hipotese,dados,relacao,uid,esp
         con.executemany('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',[
             (rel_rev,rel_uid,'CONEXAO',None,data,_json(relacao)),
             (hip_rev,hip_uid,'HIPOTESE',None,data,_json(h)),
+            (dec_rev,uid,TIPO,esperada,data,_json(dados)),
+        ])
+    return dict(dados,uuid=uid,rev=dec_rev,tipo=TIPO,anterior=esperada,data_utc=data)
+
+
+def _conferir_correcao(con,uid,esperada,tipo):
+    atual=con.execute('SELECT rev,tipo,dados FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
+    if (atual[:2] if atual else None)!=((esperada,tipo) if esperada else None):
+        raise ValueError('A decisão foi revisada por outra sessão. Reabra a correção.')
+    if atual and json.loads(atual[2]).get('estado')=='APLICADA':
+        raise ValueError('A decisão já foi aplicada. Reabra a hipótese derivada ou reverta a decisão.')
+
+
+def salvar_resolucao_modelbuilder(caminho,projeto,hipotese,dados,plano,uid,esperada):
+    """Anexa as revisões das ligações, a hipótese derivada e a decisão atomicamente."""
+    from .correcao_modelbuilder import TIPO, validar
+
+    data=_agora()
+    hip_uid,hip_rev,dec_rev=[uuid4().hex for _ in range(3)]
+    with closing(sqlite3.connect(caminho)) as con, con:
+        con.execute('PRAGMA foreign_keys=ON')
+        con.execute('BEGIN IMMEDIATE')
+        _identidade(con,projeto)
+        _conferir_correcao(con,uid,esperada,TIPO)
+        h=con.execute("SELECT rev,dados FROM TG_REVISOES WHERE tipo='HIPOTESE' AND uuid=? ORDER BY rowid DESC LIMIT 1",
+                      (hipotese['uuid'],)).fetchone()
+        if not h or h[0]!=hipotese['rev']:
+            raise ValueError('A hipótese de referência foi alterada. Abra uma execução da revisão atual.')
+        hip=json.loads(h[1])
+        if hip.get('formato')!=2 or hip.get('projeto_uid')!=projeto or not plano['operacoes']:
+            raise ValueError('A aplicação exige uma hipótese salva e alterações confirmadas.')
+        for u,rev in plano['revisoes'].items():
+            atual=con.execute("SELECT rev FROM TG_REVISOES WHERE uuid=? AND tipo='CONEXAO' ORDER BY rowid DESC LIMIT 1",
+                              (u,)).fetchone()
+            if atual!=(rev,):
+                raise ValueError('Uma ligação foi revisada por outra sessão. Reabra a prévia.')
+        vinculos=dict(hip['vinculos'])
+        for u,op in plano['operacoes'].items():
+            if not op['incluir']:
+                vinculos.pop(u,None)
+                continue
+            rev=op['rev']
+            if op['dados'] is not None:
+                nova={k:v for k,v in op['dados'].items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
+                if nova.get('decisao') not in DECISOES or nova.get('situacao') not in SITUACOES:
+                    raise ValueError('Uma revisão proposta de ligação é inválida.')
+                if rev!=op['antecessora']:
+                    raise ValueError('A alteração não se baseia na revisão vigente da ligação.')
+                rev=uuid4().hex
+                con.execute('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',
+                            (rev,u,'CONEXAO',op['antecessora'],data,_json(nova)))
+            vinculos[u]=rev
+        hip.update(nome=hip['nome']+' · revisar ligações '+dados['elemento_uid'][:8],
+                   hipotese_origem={k:hipotese[k] for k in ('uuid','rev')},vinculos=vinculos,selecionados=list(vinculos))
+        dados=dict(dados,operacao='CONFLITOS',assinatura_plano=plano['assinatura'],
+                   decisoes=plano['escolhas'],consolidada_em=plano['consolidada_em'],
+                   notas_ligacoes=plano.get('notas',{}),hipotese_origem=hip['hipotese_origem'],
+                   nova_hipotese={'uuid':hip_uid,'rev':hip_rev})
+        validar(dados,projeto)
+        con.executemany('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',[
+            (hip_rev,hip_uid,'HIPOTESE',None,data,_json(hip)),
             (dec_rev,uid,TIPO,esperada,data,_json(dados)),
         ])
     return dict(dados,uuid=uid,rev=dec_rev,tipo=TIPO,anterior=esperada,data_utc=data)

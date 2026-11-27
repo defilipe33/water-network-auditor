@@ -142,6 +142,7 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
                                    'origem','atributos_originais')} for t in chain(tubos,junctions,equipamentos,areas)]
     manifesto=dict(versao=VERSAO,escopo='CADASTRO_COMPLETO',projeto=foto['projeto_uid'],execucao=foto['uuid'],
                    hipotese=foto.get('hipotese'),crs=foto['crs'],unidades={'comprimento':'m','diametro':'mm'},
+                   tolerancia_grafo_m=foto.get('parametros',{}).get('tolerancia'),
                    origens=foto['origens_validas'] if origens is None else origens,
                    regra_atividade=modo_atividade,contagens=cobertura,fontes=contagem or {},avisos=avisos,
                    atividades_explicitas=atividades,

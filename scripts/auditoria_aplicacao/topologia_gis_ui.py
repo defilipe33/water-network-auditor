@@ -653,7 +653,7 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
 
 
 
-    def iniciar(self,modo=None):
+    def iniciar(self,modo=None,*,ao_concluir=None):
         if self.central.ocupado() or self._editor is not None or not self.central.modelo_gis.resolver():return
         self.cancelar_captura()
         def iniciar():
@@ -696,8 +696,17 @@ class TopologiaGIS(QScrollArea,HipotesesGIS,MapaGIS,RelacoesGIS):
                 self.central._catalogo_lido=None
                 self.receber(d)
                 self.central.atualizar_continuacao()
-            self.app.atividades.executar_thread('Analisar conectividade',p['nome'],trabalho,pronto,self.status.setText)
-        self._com_erro(iniciar)
+            worker=self.app.atividades.executar_thread('Analisar conectividade',p['nome'],trabalho,pronto,self.status.setText)
+            if ao_concluir:
+                from qgis.PyQt.QtCore import QTimer
+                op=self.app.atividades.atual
+                def retornar():
+                    if op.estado=='CONCLUIDO' and self.dados and self.dados['projeto_uid']==projeto_uid:
+                        resultado=self.dados
+                        QTimer.singleShot(0,lambda:ao_concluir(resultado))
+                worker.finished.connect(retornar)
+            return worker
+        return self._com_erro(iniciar)
 
     def executar_configuracao_atual(self):
         if self._hip_ativa and self._edicao_limpa!=self._assinatura_edicao():

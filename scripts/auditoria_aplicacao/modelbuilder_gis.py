@@ -26,7 +26,8 @@ DESTINOS = ('2020', '2026', 'OUTRA')
 COLUNAS_ESPERADO = ('tipo','uid','label','gis_id','orig_uid','parte','inicio','fim','no_a','no_b',
                     'x','y','comprimento_geom_m','comprimento_hid_m','diametro_mm','atividade','assinatura_geometria')
 COLUNAS_PENDENCIA = ('tipo','uid','motivo','classe','gravidade','codigo','gis_id','label_cadastral','camada',
-                     'original','parte','inicio','fim','no_a','no_b','coordenadas','relacoes','solucao')
+                     'original','parte','inicio','fim','no_a','no_b','coordenadas','relacoes','solucao',
+                     'comprimento_m','tolerancia_grafo_m')
 COLUNAS_EVIDENCIA_LEGADO = ('tipo','uid','id_modelo','label','gis_id','no_a','no_b','x','y',
                      'comprimento_geom_m','comprimento_hid_m','diametro_mm','atividade')
 COLUNAS_EVIDENCIA=(*COLUNAS_EVIDENCIA_LEGADO,'montante','jusante','pipe_associado')
@@ -186,7 +187,8 @@ def _dependencias_excluidas(pipes,equipamentos,anexos,bloqueados,pendencias):
             if p['uid'] in retirados:continue
             retirados.add(p['uid'])
             pendencias.append(dict(tipo='PIPE',uid=p['uid'],codigo='NO_HIDRAULICO_PENDENTE',
-                gis_id=p.get('gis_id'),camada=p.get('camada'),original=p['original'],no_a=p['no_a'],no_b=p['no_b'],
+                gis_id=p.get('gis_id'),camada=p.get('camada'),original=p['original'],parte=p['parte'],
+                no_a=p['no_a'],no_b=p['no_b'],
                 classe='EQUIPAMENTO',gravidade='CRITICA',motivo='O nó hidráulico exigido pelo Pipe não está preparado.',
                 solucao='Confira os atributos, as portas e a orientação do equipamento.'))
             for v in dependentes[p['uid']]:

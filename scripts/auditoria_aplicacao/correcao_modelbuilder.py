@@ -7,7 +7,7 @@ from .validacao_modelbuilder_gis import EPS, linha, planejar_anel
 
 
 TIPO='MODELBUILDER_CORRECAO'
-ESTADOS={'APLICADA','PENDENTE','REVERTIDA'}
+ESTADOS={'APLICADA','PENDENTE','REVERTIDA','VERIFICADA'}
 
 
 def assinatura_pipe(p):
@@ -29,8 +29,55 @@ def validar(dados,projeto):
             f=dados.get('fracao')
             if not isinstance(f,(int,float)) or not isfinite(f) or not 0<f<1 or not dados.get('assinatura'):
                 raise ValueError('A correção do anel perdeu a referência ao segmento ou à posição do corte.')
-        elif dados.get('operacao')!='SEPARACAO' or not dados.get('nova_hipotese'):
+        elif dados.get('operacao') not in ('SEPARACAO','CONFLITOS') or not dados.get('nova_hipotese'):
             raise ValueError('Uma separação precisa de uma hipótese derivada.')
+
+
+def validar_observacao(dados,projeto):
+    if (dados.get('projeto_uid')!=projeto or not all(dados.get(k) for k in (
+            'correcao_uid','correcao_rev','topologia_uid','configuracao')) or
+            dados.get('estado') not in ('VALIDADA','INCONSISTENTE','REABERTA')):
+        raise ValueError('A conferência precisa identificar a correção e a execução verificadas.')
+
+
+def estado_em_validacao(r,foto,problemas,partes,configuracao_completa,anterior=None,*,linhagem=()):
+    """Ausência só comprova resolução quando a mesma parte continua no cadastro validado."""
+    if r['estado'] not in ('APLICADA','VERIFICADA') or not configuracao_completa:
+        return None
+    trecho=(r.get('diagnostico') or {}).get('parte')
+    if not trecho or trecho not in partes:
+        return None
+    persiste=any(p.get('parte')==trecho and p.get('gravidade')=='CRITICA' for p in problemas)
+    if nova:=r.get('nova_hipotese'):
+        h=foto.get('hipotese') or {}
+        if h.get('uuid')!=nova['uuid'] or h.get('rev')!=nova['rev']:
+            if persiste and anterior in ('VALIDADA','REABERTA') and nova['rev'] in linhagem:
+                return 'REABERTA'
+            return None
+    elif r['topologia_uid']!=foto['uuid']:
+        return None
+    if persiste:
+        return 'REABERTA' if anterior in ('VALIDADA','REABERTA') else 'INCONSISTENTE'
+    return 'VALIDADA'
+
+
+def fila(foto,pendencias,registros,observacoes):
+    saida={}
+    for p in pendencias:
+        if p.get('gravidade')!='CRITICA':continue
+        u=identidade(foto['uuid'],p)
+        r=registros.get(u,{})
+        if r.get('estado')=='APLICADA' and r.get('nova_hipotese'):
+            continue
+        obs=observacoes.get(u,{})
+        estado='REABERTA' if obs.get('estado') in ('REABERTA','VALIDADA') else 'PENDENTE_ATUAL'
+        # O UID de segmentos pode mudar entre fotografias. A parte atesta somente a reabertura,
+        # e a nova ocorrência mantém a própria identidade.
+        if any(x.get('estado')=='REABERTA' and x.get('parte')==p.get('parte') and
+               x['topologia_uid']==foto['uuid'] for x in observacoes.values()):
+            estado='REABERTA'
+        saida[u]=dict(p,situacao_fila=estado)
+    return saida
 
 
 def do_pacote(registros,execucao):

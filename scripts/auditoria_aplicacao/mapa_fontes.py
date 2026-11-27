@@ -1,13 +1,13 @@
 """Destaques efêmeros de fontes cadastradas, sem alterar seleção ou renderer."""
 from qgis.PyQt import sip
-from qgis.PyQt.QtCore import QObject, pyqtSignal
-from qgis.PyQt.QtGui import QColor
+from qgis.PyQt.QtCore import QObject, QPointF, QSizeF, pyqtSignal
+from qgis.PyQt.QtGui import QColor, QTextDocument
 from qgis.core import (
     QgsCoordinateTransform, QgsFeatureRequest, QgsGeometry,
     QgsProject, QgsRectangle, QgsVariantUtils, QgsVectorLayer, QgsVectorLayerFeatureSource,
-    QgsExpressionContext,
+    QgsExpressionContext, QgsPointXY, QgsTextAnnotation,
 )
-from qgis.gui import QgsRubberBand
+from qgis.gui import QgsMapCanvasAnnotationItem, QgsRubberBand
 
 from .modelo_gis import expressao, identificar
 
@@ -53,6 +53,7 @@ class MapaFontes(QObject):
         self.app = app
         self.canvas = canvas if app is None else getattr(app.iface,'mapCanvas',lambda:None)()
         self.itens, self.caixas = [], []
+        self._anotacoes=[]
         self.camada, self.fonte = None, None
         self.geracao = 0
         if self.canvas:
@@ -75,6 +76,7 @@ class MapaFontes(QObject):
             for item in self.itens:
                 self.canvas.scene().removeItem(item)
         self.itens.clear()
+        self._anotacoes.clear()
         self.caixas.clear()
 
     def selecao(self, *_):
@@ -187,7 +189,7 @@ class MapaFontes(QObject):
         self.mensagem.emit(nome + ' · destaque temporário; use Enquadrar para aproximar.')
         return True
 
-    def destacar_investigacao(self, itens, crs, aproximar=False,toda_extensao=False,foco=None):
+    def destacar_investigacao(self, itens, crs, aproximar=False,toda_extensao=False,foco=None,rotulos=()):
         if (self.app is not None and self.app.atividades.em_execucao()) or not self.canvas:return False
         self.limpar()
         destino=self.canvas.mapSettings().destinationCrs()
@@ -220,6 +222,19 @@ class MapaFontes(QObject):
             b.setIconSize(12 if papel=='local' else 9);b.setToGeometry(g,None)
             self.itens.append(b);self.caixas.append(g.boundingBox())
             if papel!='local':caixas.append(geom.boundingBox())
+        for i,(texto,xy) in enumerate(rotulos):
+            doc=QTextDocument()
+            doc.setPlainText(texto)
+            anotacao=QgsTextAnnotation()
+            anotacao.setDocument(doc)
+            anotacao.setHasFixedMapPosition(True)
+            anotacao.setMapPositionCrs(crs)
+            anotacao.setMapPosition(QgsPointXY(*xy))
+            anotacao.setFrameSizeMm(QSizeF(9,8))
+            anotacao.setFrameOffsetFromReferencePointMm(QPointF(3+10*(i//5),-8-8*(i%5)))
+            item=QgsMapCanvasAnnotationItem(anotacao,self.canvas)
+            self._anotacoes.append(anotacao)
+            self.itens.append(item)
         if aproximar and self.itens:
             caixas=caixas or [g.boundingBox() for _,g in itens if g is not None]
             caixa=QgsRectangle(caixas[0])

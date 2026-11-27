@@ -121,7 +121,8 @@ def diagnosticar(previa,pipes,nos,tolerancia,*,segmentar=False,correcoes=None,ca
         ps=[(v.x(),v.y()) for v in (vertices[0],vertices[-1])] if vertices else []
         ref=dict(tipo='PIPE',uid=u,gis_id=p.get('gis_id'),label_cadastral=p.get('label'),camada=p.get('camada'),
                  original=p.get('original'),parte=p.get('parte'),inicio=p.get('inicio'),fim=p.get('fim'),
-                 no_a=a,no_b=b,coordenadas=ps,classe='TOPOLOGIA',relacoes=operacoes.get(p.get('parte'),[]))
+                 no_a=a,no_b=b,coordenadas=ps,classe='TOPOLOGIA',relacoes=operacoes.get(p.get('parte'),[]),
+                 comprimento_m=p.get('comprimento_m'),tolerancia_grafo_m=previa['manifesto'].get('tolerancia_grafo_m'))
         causas=[]
         if not a or a not in por_no or a in invalidos:causas.append(('NO_INICIAL_INDISPONIVEL','Nó inicial ausente ou inválido.'))
         if not b or b not in por_no or b in invalidos:causas.append(('NO_FINAL_INDISPONIVEL','Nó final ausente ou inválido.'))
@@ -175,6 +176,11 @@ def diagnosticar(previa,pipes,nos,tolerancia,*,segmentar=False,correcoes=None,ca
                     if codigo=='ANEL_MESMO_NO' else 'Localize o elemento e confira as portas e decisões na conectividade.')))
             continue
         preparados.append(p)
+        tol_grafo=ref['tolerancia_grafo_m']
+        if tol_grafo and 0<p.get('comprimento_m',0)<=tol_grafo and len(ref['relacoes'])>=2:
+            problemas.append(dict(ref,codigo='SEGMENTO_CURTO_LIGACOES',gravidade='INFORMACAO',
+                motivo=f"Segmento de {p['comprimento_m']:.6g} m abaixo ou igual à tolerância do grafo. As pontas usam nós distintos.",
+                solucao='Confirme a representação se as ligações precisarem de revisão. O segmento foi preservado.'))
         if any(dist(x,por_no[i]['xy'])>tolerancia for x,i in zip(ps,(a,b))):
             problemas.append(dict(ref,codigo='PONTA_DESLOCADA',gravidade='AVISO',
                 motivo='Ponta geométrica deslocada do nó esperado.',solucao='Confira as referências explícitas Start/Stop.'))

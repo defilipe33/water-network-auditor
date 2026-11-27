@@ -3,6 +3,7 @@
 from math import isfinite
 import sqlite3
 
+from qgis.PyQt import sip
 from qgis.PyQt.QtCore import Qt
 from qgis.PyQt.QtWidgets import (QComboBox, QDialog, QDoubleSpinBox, QHBoxLayout,
     QLineEdit, QPlainTextEdit, QVBoxLayout)
@@ -16,7 +17,7 @@ from .validacao_modelbuilder_gis import EPS, diagnosticar, linha, no_ja_conectad
 
 
 class CorrecaoTopologica(QDialog):
-    def __init__(self,assistente,pendencias,registros,selecionada=None):
+    def __init__(self,assistente,pendencias,registros,selecionada=None,*,historico=False,adicional=None):
         super().__init__(assistente)
         self.setWindowTitle('Correção topológica para ModelBuilder')
         self.setAttribute(Qt.WA_DeleteOnClose)
@@ -26,18 +27,15 @@ class CorrecaoTopologica(QDialog):
         self.foto=assistente.foto
         self.projeto=assistente.projeto['uuid']
         self.registros=dict(registros)
+        self.observacoes={}
         self.registros_diagnostico={}
-        for r in pendencias:
-            if r.get('gravidade')=='CRITICA':
-                self.registros_diagnostico[motor.identidade(self.foto['uuid'],r)]=r
-        for u,r in registros.items():
-            if r.get('diagnostico'):
-                self.registros_diagnostico.setdefault(u,r['diagnostico'])
-        self.chaves=list(self.registros_diagnostico)
+        self.chaves=[]
+        self.historico=historico
+        self.adicional=adicional
         self.pipes={r['uid']:r for r in assistente.previa['pipes']}
         self.nos={r['uid']:r for r in assistente.previa['nos']}
         self.plano=None
-        self.idx=self.chaves.index(selecionada) if selecionada in self.chaves else 0
+        self.idx=0
         v=QVBoxLayout(self)
         faixa=QHBoxLayout()
         v.addLayout(faixa)
@@ -45,6 +43,7 @@ class CorrecaoTopologica(QDialog):
         self.posicao=aviso()
         faixa.addWidget(self.posicao,1)
         self.proxima=botao(faixa,'Próxima ›',lambda:self._mostrar(self.idx+1))
+        self.alternar_b=botao(faixa,'Histórico e execuções pendentes',self._alternar)
         self.resumo=aviso()
         v.addWidget(self.resumo)
         self.detalhe=QPlainTextEdit()
@@ -67,8 +66,9 @@ class CorrecaoTopologica(QDialog):
         self.meio.currentIndexChanged.connect(self._mudar_no)
         faixa=QHBoxLayout()
         v.addLayout(faixa)
-        botao(faixa,'Aproximar e destacar',lambda:self._acao(self._destacar))
-        botao(faixa,'Consultar conectividade',self._consultar)
+        self.mapa_b=botao(faixa,'Aproximar e destacar',lambda:self._acao(self._destacar))
+        self.consultar_b=botao(faixa,'Consultar conectividade',self._consultar)
+        self.conflitos_b=botao(faixa,'Resolver conexões conflitantes…',lambda:self._acao(self.resolver_conflitos))
         self.prever=botao(faixa,'Pré-visualizar correção',lambda:self._acao(self.preview))
         form=formulario(v)
         self.nota=QLineEdit()
@@ -79,28 +79,75 @@ class CorrecaoTopologica(QDialog):
         v.addLayout(faixa)
         self.aplicar_b=botao(faixa,'Aplicar',lambda:self._acao(self.aplicar))
         self.reverter_b=botao(faixa,'Reverter',lambda:self._acao(lambda:self._gravar('REVERTIDA')))
-        botao(faixa,'Manter pendente',lambda:self._acao(lambda:self._gravar('PENDENTE')))
-        botao(faixa,'Revalidar elemento',lambda:self._acao(self.revalidar))
+        self.pendente_b=botao(faixa,'Manter pendente',lambda:self._acao(lambda:self._gravar('PENDENTE')))
+        self.elemento_b=botao(faixa,'Revalidar elemento',lambda:self._acao(self.revalidar))
+        self.executar_b=botao(v,'Executar hipótese derivada',lambda:self._acao(self._executar_derivada))
         botao(v,'Revalidar cadastro completo',lambda:self._acao(self._revalidar_completo))
         botao(v,'Encerrar',self.close)
-        self._mostrar(self.idx)
+        self.atualizar(pendencias,registros,selecionada=selecionada)
+
+    def _alternar(self):
+        self.historico=not self.historico
+        self.atualizar(self.assistente.pendencias_vigentes(),self.assistente._correcoes(todas=True))
+
+    def atualizar(self,pendencias,registros,*,selecionada=None):
+        anterior=selecionada or (self.chaves[self.idx] if self.chaves else None)
+        self.registros=registros
+        self.observacoes=self.assistente._observacoes_correcao()
+        ativos=motor.fila(self.foto,pendencias,registros,self.observacoes)
+        self.ativos=len(ativos)
+        if self.historico:
+            self.registros_diagnostico={u:r['diagnostico'] for u,r in reversed(tuple(registros.items()))
+                                       if r.get('diagnostico')}
+        else:
+            self.registros_diagnostico=ativos
+            if self.adicional and any(x==self.adicional for x in pendencias):
+                u=motor.identidade(self.foto['uuid'],self.adicional)
+                if not (r:=registros.get(u)) or r['estado'] not in ('APLICADA','VERIFICADA'):
+                    self.registros_diagnostico[u]=self.adicional
+        self.chaves=list(self.registros_diagnostico)
+        self.alternar_b.setText('Voltar à fila ativa' if self.historico else 'Histórico e execuções pendentes')
+        self._mostrar(self.chaves.index(anterior) if anterior in self.chaves else min(self.idx,max(0,len(self.chaves)-1)))
 
     def _atual(self):
+        if not self.chaves:raise ValueError('Não há ocorrências nesta visualização.')
         u=self.chaves[self.idx]
         return u,self.registros_diagnostico[u],self.registros.get(u,{})
 
     def _mostrar(self,i):
         self.idx=i
-        _,r,decisao=self._atual()
+        if not self.chaves:
+            self.posicao.setText(f'{self.ativos} pendências críticas ativas')
+            self.resumo.setText('Nenhuma ocorrência nesta visualização.')
+            self.detalhe.clear()
+            self.nota.clear()
+            for w in (self.anterior,self.proxima,self.reverter_b,self.pendente_b,self.elemento_b,self.prever,
+                      self.mapa_b,self.consultar_b,self.conflitos_b,self.executar_b):w.setEnabled(False)
+            for w in (self.rotulo_corte,self.fracao,self.meio,self.corte_mapa):w.hide()
+            self._invalidar()
+            self.status.setText('As decisões ficam disponíveis no histórico. Use Validar para atualizar a fila.')
+            return
+        uid,r,decisao=self._atual()
+        mesma=not decisao or decisao['topologia_uid']==self.foto['uuid']
+        aplicada=decisao.get('estado')=='APLICADA'
+        obs=self.observacoes.get(uid,{})
+        observada=obs.get('estado') if obs.get('correcao_rev')==decisao.get('rev') else None
+        confirmada=observada=='VALIDADA'
+        retomavel=aplicada and bool(decisao.get('nova_hipotese')) and not confirmada
+        estado=r.get('situacao_fila','PENDENTE_ATUAL')
+        if self.historico:
+            estado=('CORRIGIDA_E_VALIDADA' if confirmada else observada if observada else
+                    'AGUARDANDO_NOVA_EXECUCAO' if retomavel else 'AGUARDANDO_VALIDACAO' if aplicada and mesma else
+                    decisao.get('estado','HISTORICA'))
         self.anterior.setEnabled(i>0)
         self.proxima.setEnabled(i+1<len(self.chaves))
-        self.posicao.setText(f'Pendência {i+1} de {len(self.chaves)}')
+        self.posicao.setText(f"{i+1} de {len(self.chaves)} · {self.ativos} pendências ativas")
         chave=r['uid'] if r.get('gis_id') in (None,'') else r['gis_id']
         self.resumo.setText(f"{r['tipo']} · {chave} · {r.get('camada') or 'Camada indisponível'}\n"
-                            f"{r['motivo']} · {decisao.get('estado','PENDENTE').title()}")
+                            f"{r['motivo']} · {estado.replace('_',' ').capitalize()}")
         coords=r.get('coordenadas') or ()
         posicoes=[f'{x:.4f}, {y:.4f}' for x,y in coords]
-        textos=[f"Gravidade: crítica · {r.get('codigo') or r['tipo']}",
+        textos=[f"Gravidade: {r.get('gravidade','').lower()} · {r.get('codigo') or r['tipo']}",
                 f"Label cadastral: {r.get('label_cadastral') or '—'}",
                 f"UID do elemento: {r['uid']}"]
         if r['tipo']=='PIPE':
@@ -117,10 +164,20 @@ class CorrecaoTopologica(QDialog):
                               +(f' · {portas}' if portas else ''))
         if r.get('solucao'):
             textos.extend(('','Próximo passo',r['solucao']))
+        if decisao.get('notas_ligacoes'):
+            textos.append('\nObservações das ligações na revisão')
+            textos.extend(f"{u[:12]} · {n}" for u,n in decisao['notas_ligacoes'].items())
         self.detalhe.setPlainText('\n'.join(textos))
         self.nota.setText(decisao.get('nota',''))
-        self.reverter_b.setEnabled(decisao.get('estado')=='APLICADA')
-        modo_anel=r.get('codigo')=='ANEL_MESMO_NO'
+        pode_editar=mesma and not aplicada and not self.historico
+        self.reverter_b.setEnabled(aplicada and mesma)
+        self.pendente_b.setEnabled(pode_editar)
+        self.elemento_b.setEnabled(mesma)
+        self.executar_b.setEnabled(retomavel)
+        self.mapa_b.setEnabled(mesma)
+        self.consultar_b.setEnabled(mesma)
+        self.conflitos_b.setEnabled(pode_editar and r['tipo']=='PIPE' and r.get('parte') is not None)
+        modo_anel=pode_editar and r.get('codigo')=='ANEL_MESMO_NO'
         self.rotulo_corte.setVisible(modo_anel)
         self.fracao.setVisible(modo_anel)
         self.meio.setVisible(modo_anel)
@@ -140,7 +197,7 @@ class CorrecaoTopologica(QDialog):
         self.meio.blockSignals(False)
         self.fracao.setValue(corto)
         self.fracao.setEnabled(self.meio.currentData() is None)
-        self.prever.setEnabled(r.get('codigo') in ('ANEL_MESMO_NO','MESMO_NO_PONTAS_DISTINTAS'))
+        self.prever.setEnabled(pode_editar and r.get('codigo') in ('ANEL_MESMO_NO','MESMO_NO_PONTAS_DISTINTAS'))
         self._invalidar()
         self.status.setText('Consulte as relações antes de aplicar. A prévia usa a fotografia selecionada.')
 
@@ -203,9 +260,65 @@ class CorrecaoTopologica(QDialog):
         _,r,_=self._atual()
         self.assistente.revisar_pendencia(r)
 
+    def resolver_conflitos(self):
+        from . import resolver_conexoes_modelbuilder as conflitos
+        from .resolver_conexoes_modelbuilder_ui import ResolverConexoes
+        uid,r,decisao=self._atual()
+        if self.historico or decisao.get('estado')=='APLICADA' or not (p:=self.pipes.get(r['uid'])):
+            raise ValueError('Abra uma ocorrência ativa com uma parte de Pipe na fotografia.')
+        anterior=getattr(self,'_resolver',None)
+        if anterior is not None and not sip.isdeleted(anterior):
+            if anterior.uid==uid:
+                anterior.raise_()
+                return
+            anterior.close()
+        vigentes=tuple(pg.vigentes(self.pagina._complementos(),self.projeto).values()) if self.pagina._complementos() else ()
+        def pronto(analise):
+            if sip.isdeleted(self) or not self.chaves or self._atual()[0]!=uid:return
+            if not analise['ligacoes']:
+                self.status.setText('Nenhuma relação declarada foi encontrada para as portas ou o trecho. Confira a inferência de proximidade e as Junctions.')
+                return
+            self._resolver=ResolverConexoes(self,analise,p,uid)
+            self._resolver.show()
+            self._resolver.destacar()
+        self.pagina._tarefa_cartografica('Investigar relações do Pipe',
+            lambda parar,_:conflitos.investigar(self.foto,p,vigentes,parar),pronto)
+
+    def salvar_conflitos(self,plano,referencia):
+        uid,r,antes=self._atual()
+        if uid!=referencia or self.historico:
+            raise ValueError('A ocorrência selecionada mudou. Reabra a resolução.')
+        if antes.get('estado')=='APLICADA':
+            raise ValueError('A correção já foi aplicada para esta ocorrência.')
+        dados=self._dados(r,'APLICADA')
+        base=self.pagina._complementos(True)
+        h=self.foto.get('hipotese')
+        if not plano['operacoes']:
+            d=pg.salvar_revisao(base,self.projeto,motor.TIPO,dict(dados,estado='VERIFICADA',decisoes=plano['escolhas'],
+                              notas_ligacoes=plano['notas']),
+                              uid,antes.get('rev'))
+            self.registros[uid]=d
+            self.adicional=None
+            self.assistente.validar()
+            return d
+        if not h or not h.get('rev'):
+            raise ValueError('Salve e execute a hipótese atual antes de gravar uma derivação de conectividade.')
+        d=pg.salvar_resolucao_modelbuilder(base,self.projeto,h,dados,plano,uid,antes.get('rev'))
+        self._depois_de_gravar(uid,d)
+        self.assistente.executar_derivada(d['nova_hipotese'],uid)
+        return d
+
+    def _executar_derivada(self):
+        u,_,d=self._atual()
+        if d.get('estado')!='APLICADA' or not d.get('nova_hipotese'):
+            raise ValueError('Esta ocorrência não tem execução derivada pendente.')
+        self.assistente.executar_derivada(d['nova_hipotese'],u)
+
     def preview(self):
         self._invalidar()
-        _,r,_=self._atual()
+        _,r,d=self._atual()
+        if d.get('estado')=='APLICADA' or self.historico:
+            raise ValueError('Esta ocorrência já foi revisada. Confira sua situação no histórico.')
         p=self.pipes[r['uid']]
         if r.get('codigo')=='ANEL_MESMO_NO':
             escolhido=self.meio.currentData()
@@ -235,12 +348,30 @@ class CorrecaoTopologica(QDialog):
             raise ValueError('Pré-visualize a configuração antes de aplicar.')
         self._gravar('APLICADA')
 
-    def _gravar(self,estado):
+    def _dados(self,r,estado):
+        return dict(projeto_uid=self.projeto,topologia_uid=self.foto['uuid'],elemento_uid=r['uid'],
+                    codigo=r['codigo'],estado=estado,diagnostico=r,nota=self.nota.text().strip())
+
+    def _depois_de_gravar(self,uid,d):
+        self.registros[uid]=d
+        self.assistente.invalidar_validacao()
+        if d.get('nova_hipotese'):
+            self.historico=True
+            self.atualizar([],self.registros,selecionada=uid)
+            self.status.setText('Hipótese derivada salva. Execute a nova hipótese para conferir a correção.')
+        else:
+            self._invalidar()
+            self.status.setText('Decisão gravada · aguardando validação do cadastro.')
+            self.assistente.validar()
+
+    def _gravar(self,estado,*,notas_ligacoes=None):
         if self.pagina.central.ocupado():
             raise ValueError('Aguarde a operação em curso.')
         uid,r,antes=self._atual()
-        dados=dict(projeto_uid=self.projeto,topologia_uid=self.foto['uuid'],elemento_uid=r['uid'],
-                   codigo=r['codigo'],estado=estado,diagnostico=r,nota=self.nota.text().strip())
+        if antes.get('estado')=='APLICADA' and estado!='REVERTIDA':
+            raise ValueError('A correção já foi aplicada. Use Reverter para alterar a decisão.')
+        dados=self._dados(r,estado)
+        if notas_ligacoes:dados['notas_ligacoes']=dict(notas_ligacoes)
         base=self.pagina._complementos(True)
         if estado=='APLICADA':
             p=self.plano
@@ -249,16 +380,7 @@ class CorrecaoTopologica(QDialog):
             d=pg.salvar_separacao_modelbuilder(base,self.projeto,self.foto['hipotese'],dados,p['relacao'],uid,antes.get('rev'))
         else:
             d=pg.salvar_revisao(base,self.projeto,motor.TIPO,dados,uid,antes.get('rev'))
-        self.registros[uid]=d
-        self.assistente._validado=None
-        self._mostrar(self.idx)
-        if d.get('nova_hipotese'):
-            self.status.setText('Hipótese derivada salva. Em Conectividade, selecione a hipótese “separar extremidades” '
-                                'e execute novamente. Use a execução nova para exportar.')
-        elif estado=='REVERTIDA' and antes.get('nova_hipotese'):
-            self.status.setText('Reversão registrada. Selecione a hipótese original nas próximas execuções.')
-        else:
-            self.revalidar()
+        self._depois_de_gravar(uid,d)
 
     def revalidar(self):
         _,r,d=self._atual()
@@ -278,4 +400,4 @@ class CorrecaoTopologica(QDialog):
     def _revalidar_completo(self):
         self.assistente.escopo.setCurrentIndex(self.assistente.escopo.findData('COMPLETO'))
         self.assistente.validar()
-        self.close()
+        self.historico=False

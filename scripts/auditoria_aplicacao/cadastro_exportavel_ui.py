@@ -35,20 +35,21 @@ class CadastroExportavelUI:
         self.exportacoes_modelagem_b.setChecked(True)
         self.ensureWidgetVisible(self.execucoes if not self.foto else self.exportacoes_modelagem_b)
 
-    def prever_cadastro_completo(self,*,abrir_catalogo=False,preselecao=None,abrir_modelbuilder=False):
+    def prever_cadastro_completo(self,*,abrir_catalogo=False,preselecao=None,abrir_modelbuilder=False,regra=None,ao_abrir=None):
         if not self.foto or self.central.ocupado():
             self.status.setText('Abra uma execução de conectividade e aguarde a atividade atual.')
             return
         foto=self.foto
         p=self._projeto()
         estado=self.central.estados_de_visualizacao().get(f"TOPOLOGIA_GIS:{foto['uuid']}",{}).get('exportacao_cadastro',{})
-        chaves=list(REGRAS)
-        rotulos=list(REGRAS.values())
-        i=chaves.index(estado['regra']) if estado.get('regra') in REGRAS else 0
-        rotulo,ok=QInputDialog.getItem(self,'Prévia do cadastro completo','Atividade pretendida no WaterGEMS',
-                                      rotulos,i,False)
-        if not ok:return
-        regra=chaves[rotulos.index(rotulo)]
+        if regra is None:
+            chaves=list(REGRAS)
+            rotulos=list(REGRAS.values())
+            i=chaves.index(estado['regra']) if estado.get('regra') in REGRAS else 0
+            rotulo,ok=QInputDialog.getItem(self,'Prévia do cadastro completo','Atividade pretendida no WaterGEMS',
+                                          rotulos,i,False)
+            if not ok:return
+            regra=chaves[rotulos.index(rotulo)]
         modelos=revisoes(p)
         atual=next(reversed(modelos),{})
         if abrir_modelbuilder:
@@ -88,6 +89,7 @@ class CadastroExportavelUI:
                     from .modelbuilder_ui import AssistenteModelBuilder
                     self._dialogo_modelbuilder=AssistenteModelBuilder(self,previa)
                     self._dialogo_modelbuilder.show()
+                    if ao_abrir:ao_abrir(self._dialogo_modelbuilder)
                 elif abrir_catalogo:
                     self._abrir_catalogo_conjuntos(previa,estado,preselecao)
                 else:
