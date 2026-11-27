@@ -156,17 +156,27 @@ class CorrecaoTopologica(QDialog):
                            f"Nó inicial: {r.get('no_a') or '—'} · {posicoes[0] if posicoes else '—'}",
                            f"Nó final: {r.get('no_b') or '—'} · {posicoes[-1] if posicoes else '—'}"))
         if r.get('relacoes'):
-            textos.append('\nRelações topológicas')
+            textos.append('\nRelações na execução do diagnóstico' if self.historico else '\nRelações topológicas')
             for x in r['relacoes']:
                 nome=x.get('nome') or x.get('uuid') or 'Relação'
                 portas=', '.join(f'{u[:12]} @ {fr:g}' for u,fr in x.get('portas') or ())
                 textos.append(f"• {nome} · {x.get('resultado') or x.get('decisao') or '—'}"
                               +(f' · {portas}' if portas else ''))
-        if r.get('solucao'):
+        if r.get('solucao') and not self.historico:
             textos.extend(('','Próximo passo',r['solucao']))
-        if decisao.get('notas_ligacoes'):
-            textos.append('\nObservações das ligações na revisão')
-            textos.extend(f"{u[:12]} · {n}" for u,n in decisao['notas_ligacoes'].items())
+        if self.historico:
+            from .resolver_conexoes_modelbuilder import DECISOES
+            nomes={x['uuid']:x.get('nome') for x in r.get('relacoes',())}
+            textos.append('\nRevisões da correção')
+            for h in reversed(pg.revisoes(self.pagina._complementos(),self.projeto,uid,tipo=motor.TIPO)):
+                textos.append(f"{h['data_utc'][:16]} · {h['estado'].capitalize()} · revisão {h['rev'][:12]}")
+                for u,d in h.get('decisoes',{}).items():
+                    textos.append(f"• {nomes.get(u) or u[:12]} · {DECISOES[d]}")
+                for u,nota in h.get('notas_ligacoes',{}).items():
+                    textos.append(f"• {nomes.get(u) or u[:12]} · {nota}")
+                if h.get('nota'):textos.append(h['nota'])
+                if nova:=h.get('nova_hipotese'):
+                    textos.append('Hipótese derivada · revisão '+nova['rev'][:12])
         self.detalhe.setPlainText('\n'.join(textos))
         self.nota.setText(decisao.get('nota',''))
         pode_editar=mesma and not aplicada and not self.historico
@@ -199,7 +209,11 @@ class CorrecaoTopologica(QDialog):
         self.fracao.setEnabled(self.meio.currentData() is None)
         self.prever.setEnabled(pode_editar and r.get('codigo') in ('ANEL_MESMO_NO','MESMO_NO_PONTAS_DISTINTAS'))
         self._invalidar()
-        self.status.setText('Consulte as relações antes de aplicar. A prévia usa a fotografia selecionada.')
+        if self.historico:
+            self.status.setText('A validação foi registrada na execução '+obs['topologia_uid'][:12]+'.'
+                                if observada else 'Consulte a decisão gravada e as revisões anteriores.')
+        else:
+            self.status.setText('Consulte as relações antes de aplicar. A prévia usa a fotografia selecionada.')
 
     def _mudar_no(self,*_):
         escolhido=self.meio.currentData()

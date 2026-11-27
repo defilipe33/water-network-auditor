@@ -11,7 +11,7 @@ Na 1.19.2, o assistente misturava diagnósticos da última validação com regis
 5. Use **Pré-visualizar decisão**. Confira os segmentos, nós, componentes e referências de equipamentos e conjuntos que podem precisar de revisão.
 6. Clique em **Salvar decisões e recalcular conectividade**. Após a execução, o assistente valida o cadastro completo e volta à fila ou mostra a decisão validada no histórico. Se precisar retomar mais tarde, abra **Histórico e execuções pendentes** no exportador e selecione **Executar hipótese derivada**.
 
-Deixar uma ligação fora da nova hipótese preserva seu veredito cadastral. **Sem conexão** grava uma nova revisão da relação. Ambas as operações preservam a fotografia e os vínculos da hipótese anterior. A divisão de anéis para o pacote continua disponível como correção de materialização.
+Deixar uma ligação fora da nova hipótese preserva seu veredito cadastral. O grafo pode manter a continuidade por outro caminho ou por inferência habilitada. **Sem conexão** grava uma nova revisão da relação. Ambas as operações preservam a fotografia e os vínculos da hipótese anterior. A divisão de anéis para o pacote continua disponível como correção de materialização.
 
 ## Como interpretar os resultados
 
