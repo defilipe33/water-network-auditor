@@ -259,7 +259,8 @@ class Interface(unittest.TestCase):
         self.assertIsNotNone(d._validado,d.status.text())
         with TemporaryDirectory() as destino:
             with patch.object(QFileDialog,'getExistingDirectory',return_value=destino):
-                d.exportar()
+                d.escolher_pasta()
+            d.exportar()
             f.f.aguardar()
             d.reject()
             p.abrir_historico_modelbuilder()

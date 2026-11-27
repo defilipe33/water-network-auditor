@@ -205,11 +205,13 @@ class MapaFontes(QObject):
                 'equipamento':QColor(30,185,130,240),'vinculo':QColor(80,140,170,230),
                 'inicio_corredor':QColor(15,137,98,245),'fim_corredor':QColor(208,87,15,245),
                 'ramificacao':QColor(134,65,192,250),
+                'correcao_original':QColor(78,91,108,230),'correcao_segmento':QColor(13,155,135,240),
             }[papel]
             b=QgsRubberBand(self.canvas,g.type());b.setColor(cor);b.setFillColor(QColor(0,0,0,0));b.setWidth(4 if papel=='tubo' else 3)
-            if papel=='vinculo':
+            if papel in ('vinculo','correcao_segmento'):
                 from qgis.PyQt.QtCore import Qt
                 b.setLineStyle(Qt.DashLine)
+            if papel=='correcao_original':b.setWidth(7)
             icones={'REVISAR':QgsRubberBand.ICON_CROSS,'INCONSISTENCIA_IDENTIFICADA':QgsRubberBand.ICON_DIAMOND,'INDETERMINADA':QgsRubberBand.ICON_BOX}
             por_papel={'local':QgsRubberBand.ICON_BOX,'equipamento':QgsRubberBand.ICON_BOX,
                        'inicio_corredor':QgsRubberBand.ICON_BOX,'fim_corredor':QgsRubberBand.ICON_DIAMOND,

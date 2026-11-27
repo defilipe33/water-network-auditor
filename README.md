@@ -1,5 +1,7 @@
 # Water Network Auditor — GIS & WaterGEMS
 
+A **1.19.2** acrescenta correção topológica guiada, destino editável, Labels de extremidade nas camadas de Pipes e preparação GIS de equipamentos por tipo. [Guia e diagnóstico técnico da 1.19.2](documentacao/publica/MODELBUILDER_1_19_2.md).
+
 A **1.19.1** acrescenta validação por elemento, assistente em quatro etapas e Labels persistentes aos pacotes ModelBuilder. Também corrige a exportação de Selection Sets com datas do QGIS. [Guia e diagnóstico técnico da 1.19.1](documentacao/publica/MODELBUILDER_1_19_1.md).
 
 A **1.19.0** introduziu a preparação de pacotes ModelBuilder, a conferência pós-importação por identificadores e a fila prioritária de cruzamentos GIS. [Guia do ModelBuilder e da revisão na 1.19.0](documentacao/publica/MODELBUILDER_E_CRUZAMENTOS_1_19_0.md).

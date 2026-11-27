@@ -56,8 +56,14 @@ def _vetor(saida, formato, nome, tipo, campos, linhas, crs, cancelar, ds=None, *
                 v = r.get(k)
                 if v is not None:
                     f.SetField(campo, v if k in reais else str(v))
-            g = ogr.CreateGeometryFromWkb(r['wkb']) if nome == 'pipes' else ogr.Geometry(ogr.wkbPoint)
-            if nome != 'pipes':
+            if nome=='pipes' or 'xy' not in r:
+                dado=r['wkb']
+                g=ogr.CreateGeometryFromWkb(bytes.fromhex(dado) if isinstance(dado,str) else dado)
+                if g is None:raise ValueError('Geometria inválida em '+nome)
+                if tipo==ogr.wkbMultiPolygon:g=ogr.ForceToMultiPolygon(g)
+                if tipo==ogr.wkbMultiPoint:g=ogr.ForceToMultiPoint(g)
+            else:
+                g=ogr.Geometry(ogr.wkbPoint)
                 g.AddPoint_2D(*r['xy'])
             f.SetGeometry(g)
             if camada.CreateFeature(f) != 0:

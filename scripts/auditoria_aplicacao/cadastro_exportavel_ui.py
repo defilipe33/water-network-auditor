@@ -69,6 +69,8 @@ class CadastroExportavelUI:
             def conferir(cancelar,etapa):
                 detalhes={}
                 inv=ler(prep,cancelar,etapa,cadastro=detalhes)
+                from .executar_grafo_gis import _declaracoes_existentes
+                _declaracoes_existentes([f for f,_,_ in prep[0]],inv[0],inv[2])
                 presentes={f['uid'] for f,_,_ in prep[0]}
                 for f in fontes:
                     u=f['uid']

@@ -9,7 +9,7 @@ from auditoria_fronteiras.modelos import verificar_cancelamento
 
 VERSAO=1
 CATEGORIAS=('CORREDORES','BLOCOS','INTERVENCOES','TOPOLOGIA','ATIVIDADE','AREAS','ORIGENS','PERSONALIZADOS')
-TIPOS=('PIPE','JUNCTION')
+TIPOS=('PIPE','JUNCTION','EQUIPAMENTO')
 CAMPOS={
     'WNA_UID':'WNA_UID','WNA_PROCEDENCIA':'WNA_PROCED','WNA_ORIG_UID':'WNA_ORIG',
     'WNA_ID_GIS':'WNA_ID_GIS','WNA_CORREDOR':'WNA_CORR','WNA_BLOCO':'WNA_BLOCO',
@@ -19,7 +19,7 @@ CAMPOS={
 }
 COLUNAS=('elemento_uid','conjunto_uid','tipo_elemento','categoria','nome','hipotese','revisao',
          'revisao_conjunto','execucao','situacao_participacao','label_previsto','original_uid',
-         'id_gis','parte_uid','inicio','fim','conexao_uid')
+         'id_gis','parte_uid','inicio','fim','conexao_uid','membros_origem')
 CATALOGO=('uuid','nome','categoria','subpasta','descricao','origem','topologia_uid','hipotese',
           'hipotese_rev','projeto_uid','analise_uid','assinatura_topologia_exportavel','versao',
           'data_criacao','data_utc','rev','criterio')
@@ -31,7 +31,7 @@ def _hip(m):
 
 
 def indice(previa):
-    tipos={'PIPE':previa['pipes'],'JUNCTION':previa['nos']}
+    tipos={'PIPE':previa['pipes'],'JUNCTION':previa['nos'],'EQUIPAMENTO':previa.get('equipamentos',())}
     elementos={(tipo,r['uid']):r for tipo in TIPOS for r in tipos[tipo]}
     if len(elementos)!=sum(map(len,tipos.values())):
         raise ValueError('A exportação contém identidades de elementos repetidas.')
@@ -47,12 +47,15 @@ def validar(d,p):
     if not isinstance(rs,list) or not rs or any(
             not isinstance(r,dict) or r.get('tipo') not in TIPOS or
             not re.fullmatch('[0-9a-f]{24}',str(r.get('uid',''))) for r in rs):
-        raise ValueError('A composição deve conter identidades materializadas de Pipes ou Junctions.')
+        raise ValueError('A composição deve conter identidades de Pipes, Junctions ou equipamentos cadastrados.')
     if len({(r['tipo'],r['uid']) for r in rs})!=len(rs):
         raise ValueError('A composição contém elementos repetidos.')
 
 
 def membro(tipo,r):
+    if tipo=='EQUIPAMENTO':
+        return dict(tipo=tipo,uid=r['uid'],categoria=r['categoria'],original=r['feicao'],
+                    declaracoes=[d['uuid'] for d in r.get('declaracoes',())])
     campos=('parte','original','inicio','fim','no_a','no_b') if tipo=='PIPE' else ('portas',)
     dados={k:r[k] for k in campos}
     if tipo=='JUNCTION':dados['portas']=[list(p) for p in r['portas']]
@@ -61,7 +64,7 @@ def membro(tipo,r):
 
 def assinatura(previa):
     dados=indice(previa)
-    return digest([previa['manifesto']['crs'],[membro(k[0],dados[k]) for k in sorted(dados)]])
+    return digest([previa['manifesto']['crs'],[membro(k[0],dados[k]) for k in sorted(dados) if k[0]!='EQUIPAMENTO']])
 
 
 def compor(previa,chaves,**meta):
@@ -108,7 +111,7 @@ def reconciliar(d,previa,por_id=None):
             saida['preservados'].append((t,u))
         elif r:
             saida['ambiguos'].append((t,u))
-        elif t=='JUNCTION':
+        elif t!='PIPE':
             saida['ausentes'].append((t,u))
         else:
             if por_parte is None:
@@ -148,7 +151,8 @@ def selecionar(previa,chaves,*,tipo='TODOS',estado='TODOS',incluir_nos=False,atr
         return True
     ids={k for k in ids if (tipo!='PIPE' or k[0]=='PIPE') and elegivel(k)}
     if incluir_nos and tipo!='PIPE':
-        ids.update(('JUNCTION',por_id[k][campo]) for k in list(ids) if k[0]=='PIPE' for campo in ('no_a','no_b'))
+        ids.update(('JUNCTION',no) for k in list(ids) if k[0]=='PIPE' for campo in ('no_a','no_b')
+                   if ('JUNCTION',no:=por_id[k].get(campo)) in por_id)
     return ids
 
 
@@ -174,7 +178,8 @@ def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,escopo=None,c
                 nome=s['nome'],hipotese=hip,revisao=rev,revisao_conjunto=s.get('rev'),execucao=m['execucao'],
                 situacao_participacao=e.get('atividade','A_DEFINIR'),label_previsto='WNA_'+u[:24],
                 original_uid=e.get('original'),id_gis=e.get('gis_id'),parte_uid=e.get('parte'),
-                inicio=e.get('inicio'),fim=e.get('fim'),conexao_uid=(s.get('criterio') or {}).get('conexao')))
+                inicio=e.get('inicio'),fim=e.get('fim'),conexao_uid=(s.get('criterio') or {}).get('conexao'),
+                membros_origem=[u]))
     if somente_conjuntos and not catalogo:raise ValueError('Escolha ao menos um conjunto para preparar.')
     selecionados=(set(principais) if somente_conjuntos else set(por_id)) if escopo is None else set(escopo)
     if selecionados-por_id.keys():raise ValueError('O escopo contém elementos ausentes do cadastro exportável.')
@@ -185,7 +190,7 @@ def preparar_exportacao(previa,conjuntos,*,somente_conjuntos=False,escopo=None,c
     pipes,nos,rotulos=([],[],set())
     for (t,u),r in por_id.items():
         verificar_cancelamento(cancelar)
-        if (t,u) not in selecionados:continue
+        if (t,u) not in selecionados or t=='EQUIPAMENTO':continue
         categorias=principais[t,u]
         label='WNA_'+u
         if label in rotulos:raise ValueError('Colisão de Labels de preparação. As identidades devem ser conferidas.')

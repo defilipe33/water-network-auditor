@@ -7,7 +7,6 @@ import json
 from pathlib import Path
 import sqlite3
 from tempfile import TemporaryDirectory
-from uuid import uuid4
 
 from auditoria_fronteiras.entradas import digest
 from auditoria_fronteiras.modelos import verificar_cancelamento
@@ -17,6 +16,7 @@ from .exportar_macro_origem import NOS, PIPES, REAIS, _csv, _vetor
 from .topologia_derivada import preparar as materializar
 from .publicar_pasta_gis import publicar
 from .valores_exportacao_gis import normalizar
+from .destino_modelbuilder import nome_pacote, preparar as preparar_destino
 
 
 VERSAO=1
@@ -48,7 +48,7 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
     atividades=atividades or {}
     if set(atividades.values())-set(ATIVIDADES):
         raise ValueError('Há uma atividade pretendida desconhecida.')
-    tubos,junctions,equipamentos,_,avisos=inventario
+    tubos,junctions,equipamentos,areas,avisos=inventario
     originais={t['uid']:t for t in tubos}
     partes={t['uid']:t for t in foto['tubos']}
     resolucoes=foto.get('resolucoes_conexoes',{})
@@ -139,7 +139,7 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
                    conexoes_pendentes=sum(x not in ('APLICADA','SEPARADA') for x in resolucoes.values()),
                    sem_diametro=sum(r['diametro_mm'] is None for r in pipes))
     cadastro=[{k:t.get(k) for k in ('uid','feicao','categoria','id','label','fontes','camada','classificacao',
-                                   'origem','atributos_originais')} for t in chain(tubos,junctions,equipamentos)]
+                                   'origem','atributos_originais')} for t in chain(tubos,junctions,equipamentos,areas)]
     manifesto=dict(versao=VERSAO,escopo='CADASTRO_COMPLETO',projeto=foto['projeto_uid'],execucao=foto['uuid'],
                    hipotese=foto.get('hipotese'),crs=foto['crs'],unidades={'comprimento':'m','diametro':'mm'},
                    origens=foto['origens_validas'] if origens is None else origens,
@@ -148,11 +148,11 @@ def preparar(foto,inventario,*,modo_atividade='A_DEFINIR',atividades=None,contag
                    pendencias=pendencias,divisoes=divisoes,
                    lacunas=bool(avisos or pendencias or cobertura['originais_materializados']!=cobertura['pipes_originais']))
     eq_topologia={r['uid']:r for r in foto.get('equipamentos',())}
-    eqs=[dict(r,declaracoes=eq_topologia.get(r['uid'],{}).get('declaracoes',[]),
+    eqs=[dict(r,declaracoes=r.get('declaracoes') or eq_topologia.get(r['uid'],{}).get('declaracoes',[]),
               participacao='INCLUIDO' if r['uid'] in eq_topologia else 'NAO_INCLUIDO',
-              atividade='A_DEFINIR',procedencia='GIS_ORIGINAL') for r in equipamentos]
+              atividade=atividades.get(r['feicao'],'A_DEFINIR'),procedencia='GIS_ORIGINAL') for r in equipamentos]
     previa=dict(pipes=pipes,nos=list(no_por_uid.values()),cadastro=cadastro,operacoes=participantes,
-                equipamentos=eqs,manifesto=manifesto)
+                equipamentos=eqs,areas=areas,manifesto=manifesto)
     manifesto['assinatura_topologia_exportavel']=conjuntos.assinatura(previa)
     return previa
 
@@ -168,9 +168,9 @@ def validar_modelbuilder(previa,configuracao,*,selecoes=(),escopo=None,cancelar=
 def _normalizar_previa(previa,cancelar):
     pendencias=[]
     dados={}
-    for k in ('cadastro','equipamentos','operacoes','nos','pipes'):
+    for k in ('cadastro','equipamentos','operacoes','nos','pipes','areas'):
         dados[k]=[]
-        for i,r in enumerate(previa[k]):
+        for i,r in enumerate(previa.get(k,())):
             verificar_cancelamento(cancelar)
             geom=r.get('wkb') if k=='pipes' else None
             d=normalizar({key:v for key,v in r.items() if key!='wkb' or k!='pipes'},
@@ -183,13 +183,14 @@ def _normalizar_previa(previa,cancelar):
 
 
 def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=(),somente_conjuntos=False,
-             modelbuilder=None,escopo=None,base_labels=None):
+             modelbuilder=None,escopo=None,base_labels=None,nome_saida=None):
     from osgeo import ogr, osr
 
     if formato not in ('GPKG','ESRI Shapefile') and not (modelbuilder and formato=='CSV'):
         raise ValueError('Escolha GeoPackage ou Shapefile.')
     previa=_normalizar_previa(previa,cancelar)
     m=dict(previa['manifesto'])
+    destino=preparar_destino(Path(pasta),nome_saida or nome_pacote(m['execucao']))
     crs=osr.SpatialReference()
     if crs.SetFromUserInput(m['crs'])!=0:raise ValueError('CRS de exportação inválido.')
     pipes,nos,catalogo,associacoes=conjuntos.preparar_exportacao(
@@ -204,10 +205,11 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
         etapa(0,'Conferindo integridade e referências Start e Stop Node')
         pipes,tipos,esperado,pendencias,manifesto_mb=mb.preparar(
             previa,pipes,nos,associacoes,dict(modelbuilder,base_labels=base_labels),cancelar)
-        pontos={nome:tipos[tipo] for nome,tipo in (('junctions','JUNCTION'),('reservoirs','RESERVOIR'),('tanks','TANK'))
+        pontos={nome:tipos[tipo] for tipo,nome in mb.CAMADAS.items()
                 if tipos[tipo] or tipo=='JUNCTION'}
         pipe_campos.update(mb.CAMPOS_PIPE)
         no_campos.update(mb.CAMPOS_NO)
+        no_campos.update(mb.CAMPOS_EQUIPAMENTO)
         reais=REAIS | mb.CAMPOS_REAIS
         if formato=='CSV':
             from .investigacao_gis import geometria
@@ -221,19 +223,34 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
                         for t,rs in (('PIPE',pipes),('JUNCTION',nos)) for r in rs],m['projeto'],m['execucao'],
                         base=base_labels,gravar=True,cancelar=cancelar)
         for r in chain(pipes,nos):r['WNA_LABEL']=rotulos[r['uid']]
-        for a in associacoes:a['label_previsto']=rotulos[a['elemento_uid']]
+        for a in associacoes:
+            a['label_previsto']=rotulos.get(a['elemento_uid'])
+            if a['tipo_elemento']=='EQUIPAMENTO':
+                a['situacao_participacao']='SOMENTE_INVENTARIO'
     m.update(esquema_wna=conjuntos.VERSAO,conjuntos=len(catalogo),associacoes=len(associacoes),
              exportacao='SELECOES' if somente_conjuntos else 'CADASTRO_COMPLETO',
              elementos_exportados={'PIPE':len(pipes),'JUNCTION':len(nos)})
     if modelbuilder:
         m.update(exportacao=modelbuilder['escopo'],elementos_exportados=manifesto_mb['quantidades'],
                  incompleto=manifesto_mb['incompleto'],excluidos=manifesto_mb['excluidos'])
-    destino=Path(pasta)/('Cadastro_modelagem_'+m['execucao'][:8]+'_'+uuid4().hex[:8])
     etapa(0,'Gravando cadastro, derivados e tabelas de procedência')
     with TemporaryDirectory(prefix='.cadastro_',dir=pasta) as arq:
         saida=Path(arq)/'saida'
         saida.mkdir()
         gpkg=saida/'cadastro_modelagem.gpkg'
+        camadas_auxiliares={}
+        eq_ids={a['elemento_uid'] for a in associacoes if a['tipo_elemento']=='EQUIPAMENTO'}
+        eq_inventario=[r for r in previa['equipamentos'] if not somente_conjuntos or r['uid'] in eq_ids]
+        if modelbuilder or eq_ids:
+            from collections import defaultdict
+            grupos=defaultdict(list)
+            for r in eq_inventario:grupos['inventario_'+r['categoria'].lower()].append(r)
+            if modelbuilder:
+                for r in previa['areas']:grupos['referencia_'+r['categoria'].lower()].append(r)
+            campos_aux=dict(uid='WNA_UID',feicao='WNA_ORIG',id='WNA_ID_GIS',categoria='CATEGORIA',label='LABEL',
+                            camada='FONTE',procedencia='PROCED',atividade='ATIVIDADE')
+            camadas_auxiliares={nome:(ogr.wkbMultiPoint if nome.startswith('inventario_') else ogr.wkbMultiPolygon,rs)
+                                for nome,rs in grupos.items() if nome.isascii() and nome.replace('_','').isalnum()}
         ds=None
         try:
             if formato=='GPKG':ds=ogr.GetDriverByName(formato).CreateDataSource(str(gpkg))
@@ -241,6 +258,8 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
                 _vetor(saida,formato,'pipes',ogr.wkbLineString,pipe_campos,pipes,crs,cancelar,ds,reais=reais)
                 for nome,linhas in pontos.items():
                     _vetor(saida,formato,nome,ogr.wkbPoint,no_campos,linhas,crs,cancelar,ds,reais=reais)
+                for nome,(tipo,linhas) in camadas_auxiliares.items():
+                    _vetor(saida,formato,nome,tipo,campos_aux,linhas,crs,cancelar,ds)
         finally:
             if ds is not None:ds.Destroy()
         tabelas={
@@ -248,15 +267,16 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
             'operacoes_topologicas':previa['operacoes'],
             'estado_pipe':[{k:v for k,v in r.items() if k!='wkb'} for r in pipes],
             'portas_junction':nos,
-            'equipamentos_inventariados':previa['equipamentos'],
+            'equipamentos_inventariados':eq_inventario,
+            'areas_auxiliares':previa['areas'],
             'validacao': [m],
         }
         if somente_conjuntos:
             originais={r['original'] for r in pipes}|{r['WNA_ORIG_UID'] for r in nos}
             refs={a['conexao_uid'] for a in associacoes if a['conexao_uid']}
-            tabelas['inventario_cadastral']=[r for r in previa['cadastro'] if r['feicao'] in originais or r['uid'] in originais]
+            tabelas['inventario_cadastral']=[r for r in previa['cadastro'] if r['feicao'] in originais or r['uid'] in originais|eq_ids]
             tabelas['operacoes_topologicas']=[r for r in previa['operacoes'] if r['uuid'] in refs]
-            tabelas['equipamentos_inventariados']=[]
+            tabelas['areas_auxiliares']=[]
         if formato=='GPKG':
             with closing(sqlite3.connect(gpkg)) as con, con:
                 for nome,rs in tabelas.items():
@@ -299,8 +319,12 @@ def exportar(previa,pasta,formato,cancelar=None,etapa=lambda *_:None,*,selecoes=
             mb.arquivos(saida,esperado,pendencias,manifesto_mb,_csv,cancelar)
             _csv(saida,'WNA_EQUIPAMENTOS_INVENTARIO',('uid','categoria','id','label','wkb','declaracoes','atributos_originais'),
                  previa['equipamentos'],cancelar)
+            _csv(saida,'WNA_AREAS_INVENTARIO',('uid','categoria','id','label','wkb','fontes','atributos_originais'),
+                 previa['areas'],cancelar)
         if formato=='ESRI Shapefile':
             m=dict(m,dicionario_shp={'pipes':pipe_campos,**{k:no_campos for k in pontos}})
+            if camadas_auxiliares:
+                m['dicionario_shp'].update({k:campos_aux for k in camadas_auxiliares})
         (saida/'validacao.json').write_text(json.dumps(m,ensure_ascii=False,indent=2),encoding='utf-8')
         publicar(saida,destino,cancelar)
     return destino
@@ -327,7 +351,7 @@ def _consultas(saida,catalogo,associacoes,cancelar):
 
     grupos=defaultdict(list)
     for r in associacoes:
-        if r['situacao_participacao']!='EXCLUIDO_EXPORTACAO':
+        if r['situacao_participacao'] not in ('EXCLUIDO_EXPORTACAO','SOMENTE_INVENTARIO'):
             grupos[r['conjunto_uid'],r['tipo_elemento']].append(r['elemento_uid'])
     pasta=saida/'MINUTAS_QUERIES'
     pasta.mkdir()

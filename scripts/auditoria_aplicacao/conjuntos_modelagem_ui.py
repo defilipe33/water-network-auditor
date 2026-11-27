@@ -86,7 +86,7 @@ class CatalogoConjuntos(QDialog):
             c=Counter(e['tipo'] for e in r['membros'])
             situacao='Arquivado' if r.get('arquivado') else (
                 'Disponível para preparação' if self.resultados[u]['compativel'] else 'Requer conferência nesta execução')
-            self.tabela.inserir((r['nome'],pasta,c['PIPE'],c['JUNCTION'],0,r.get('hipotese_nome') or 'Temporária',
+            self.tabela.inserir((r['nome'],pasta,c['PIPE'],c['JUNCTION'],c['EQUIPAMENTO'],r.get('hipotese_nome') or 'Temporária',
                                  (r.get('hipotese_rev') or r['rev'])[:8],situacao),u)
         self.tabela.setSortingEnabled(True)
         self.detalhar()
@@ -176,17 +176,21 @@ class CatalogoConjuntos(QDialog):
             self.detalhe.setText('Abra a execução original para localizar a composição histórica.')
             return
         def preparar(parar,_):
-            geos,pontos=[],[]
+            geos,pontos,eqs=[],[],[]
             for e in itens:
                 verificar_cancelamento(parar)
                 if 'wkb' in e:
                     g=QgsGeometry()
-                    g.fromWkb(e['wkb'])
-                    if not g.isEmpty():geos.append(g)
+                    wkb=e['wkb']
+                    if wkb:
+                        g.fromWkb(bytes.fromhex(wkb) if isinstance(wkb,str) else wkb)
+                        if not g.isEmpty():
+                            (eqs if g.type()==0 else geos).append(g)
                 else:
                     pontos.append(QgsPointXY(*e['xy']))
             return ([('tubo',QgsGeometry.collectGeometry(geos))] if geos else [])+(
-                [('local',QgsGeometry.fromMultiPointXY(pontos))] if pontos else [])
+                [('local',QgsGeometry.fromMultiPointXY(pontos))] if pontos else [])+(
+                [('equipamento',QgsGeometry.collectGeometry(eqs))] if eqs else [])
         def mostrar(g):
             if self.pagina.foto is self.foto:
                 self.pagina.central.mapa.destacar_investigacao(g,crs,aproximar,toda_extensao=True)
@@ -216,11 +220,13 @@ class CatalogoConjuntos(QDialog):
             if r['categoria']=='JUNCTION':
                 por_marca[r['feicao'].split('_')[0]].add(r['feicao'])
                 por_original[r['feicao']].update(junctions.get(r['uid'],()))
+        for r in self.previa.get('equipamentos',()):
+            por_marca[r['feicao'].split('_')[0]].add(r['feicao'])
+            por_original[r['feicao']].add(('EQUIPAMENTO',r['uid']))
         camadas=self.pagina.central.modelo_gis.camadas()
         fontes=next(reversed(revisoes(self.projeto)),{}).get('fontes',())
         ids=set()
         for fonte in fontes:
-            if fonte['categoria'] not in ('PIPE','JUNCTION'):continue
             c=identificar(fonte,camadas)
             if not c or not c.selectedFeatureCount():continue
             req=QgsFeatureRequest().setFilterFids(c.selectedFeatureIds())

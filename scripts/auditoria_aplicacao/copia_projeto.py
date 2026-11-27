@@ -45,7 +45,9 @@ def _copiar_pacotes_modelbuilder(projeto,pasta,cancelar,etapa):
     arquivos={'MODELBUILDER.json','validacao.json','operacoes_topologicas.json','cadastro_modelagem.gpkg',
               'inventario_cadastral.csv','IMPORTAR_NO_MODELBUILDER.txt','CRIAR_SELECTION_SETS.txt',
               'MODELO_CONFERENCIA_WATERGEMS.csv','INDICE_QUERIES.csv','reconciliacao.json','correspondencias.gpkg'}
-    prefixos=('WNA_', 'MINUTA_ATIVIDADE_', 'pipes.', 'junctions.', 'reservoirs.', 'tanks.')
+    from .tipos_modelbuilder import CAMADAS
+    prefixos=('WNA_','MINUTA_ATIVIDADE_','pipes.','inventario_','referencia_',
+              *(n+'.' for n in CAMADAS.values()))
     for r in pg.revisoes(arq,projeto['uuid'],tipo='MODELBUILDER_EXPORTACAO'):
         verificar_cancelamento(cancelar)
         if not r.get('relativo'):

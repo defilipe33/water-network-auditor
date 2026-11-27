@@ -127,7 +127,7 @@ def vigentes(caminho, projeto_uid):
 
 def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *, referencia=None):
     if tipo not in ('ORIGEM','CONEXAO','PIPE','HIPOTESE','DECISAO','DESTINO_ZONA','CORREDOR_NOME','CONJUNTO_WG',
-                    'MODELBUILDER_PERFIL','MODELBUILDER_EXPORTACAO'):
+                    'MODELBUILDER_PERFIL','MODELBUILDER_EXPORTACAO','MODELBUILDER_CORRECAO','MODELBUILDER_DESTINO'):
         raise ValueError('Tipo de revisão inválido.')
     dados={k:v for k,v in dados.items() if k not in ('uuid','rev','tipo','anterior','data_utc')}
     if tipo in ('ORIGEM','CONEXAO','PIPE') and dados.get('situacao') not in SITUACOES:
@@ -151,6 +151,11 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *
     if tipo=='MODELBUILDER_PERFIL':
         from .modelbuilder_gis import validar_perfil
         validar_perfil(dados)
+    if tipo=='MODELBUILDER_CORRECAO':
+        from .correcao_modelbuilder import validar
+        validar(dados,projeto_uid)
+    if tipo=='MODELBUILDER_DESTINO' and (dados.get('projeto_uid')!=projeto_uid or not dados.get('pasta')):
+        raise ValueError('Informe a pasta escolhida para este projeto.')
     if tipo=='MODELBUILDER_EXPORTACAO' and (dados.get('projeto_uid')!=projeto_uid or not dados.get('topologia_uid')
                                            or not dados.get('pasta') or not dados.get('assinatura')):
         raise ValueError('Informe a execução, o pacote e sua assinatura.')
@@ -173,6 +178,44 @@ def salvar_revisao(caminho, projeto_uid, tipo, dados, uid=None, esperada=None, *
         data=_agora()
         con.execute('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',(rev,uid,tipo,esperada,data,_json(dados)))
     return dict(dados,uuid=uid,rev=rev,tipo=tipo,anterior=esperada,data_utc=data)
+
+
+def salvar_separacao_modelbuilder(caminho,projeto,hipotese,dados,relacao,uid,esperada):
+    """Grava a relação, a hipótese derivada e a decisão na mesma transação."""
+    from .correcao_modelbuilder import TIPO, validar
+
+    rel_uid,rel_rev,hip_uid,hip_rev,dec_rev=[uuid4().hex for _ in range(5)]
+    data=_agora()
+    with closing(sqlite3.connect(caminho)) as con, con:
+        con.execute('PRAGMA foreign_keys=ON')
+        con.execute('BEGIN IMMEDIATE')
+        _identidade(con,projeto)
+        linha=con.execute("SELECT dados FROM TG_REVISOES WHERE tipo='HIPOTESE' AND rev=? AND uuid=?",
+                         (hipotese['rev'],hipotese['uuid'])).fetchone()
+        if not linha:
+            raise ValueError('A hipótese de referência não está disponível.')
+        atual=con.execute('SELECT rev,tipo FROM TG_REVISOES WHERE uuid=? ORDER BY rowid DESC LIMIT 1',(uid,)).fetchone()
+        if atual!=((esperada,TIPO) if esperada else None):
+            raise ValueError('A decisão foi revisada por outra sessão. Reabra a correção.')
+        h=json.loads(linha[0])
+        if h.get('formato')!=2 or h.get('projeto_uid')!=projeto:
+            raise ValueError('Crie uma hipótese atual com revisões fixadas para poder derivá-la.')
+        vinculos=h['vinculos']
+        if (ant:=relacao.get('substitui_na_derivacao')):
+            if vinculos.get(ant['uuid'])!=ant['rev']:
+                raise ValueError('A relação exclusiva diverge da hipótese de referência.')
+            vinculos={u:r for u,r in vinculos.items() if u!=ant['uuid']}
+        vinculos[rel_uid]=rel_rev
+        h.update(nome=h['nome']+' · separar extremidades '+dados['elemento_uid'][:8],
+                 hipotese_origem=hipotese,vinculos=vinculos,selecionados=list(vinculos))
+        dados=dict(dados,nova_hipotese={'uuid':hip_uid,'rev':hip_rev},relacao_uid=rel_uid)
+        validar(dados,projeto)
+        con.executemany('INSERT INTO TG_REVISOES VALUES(?,?,?,?,?,?)',[
+            (rel_rev,rel_uid,'CONEXAO',None,data,_json(relacao)),
+            (hip_rev,hip_uid,'HIPOTESE',None,data,_json(h)),
+            (dec_rev,uid,TIPO,esperada,data,_json(dados)),
+        ])
+    return dict(dados,uuid=uid,rev=dec_rev,tipo=TIPO,anterior=esperada,data_utc=data)
 
 
 def selecionar(registros, ids):

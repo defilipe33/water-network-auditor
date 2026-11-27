@@ -40,7 +40,8 @@ def _declaracoes_existentes(fontes,tubos,equipamentos):
                     if len(ts)==1 and a['posicao'] in posicoes]
             if len(portas)!=len(a['tubulacoes']):
                 portas=[]
-            eq[0].setdefault('declaracoes',[]).append(dict(uuid=a['uuid'],portas=portas,posicao=a['posicao']))
+            eq[0].setdefault('declaracoes',[]).append(dict(uuid=a['uuid'],portas=portas,posicao=a['posicao'],
+                tubos_uid=[ts[0]['uid'] for ts in possiveis if len(ts)==1] if all(len(ts)==1 for ts in possiveis) else []))
             declaracoes.append(eq[0]['uid'])
     return set(declaracoes)
 

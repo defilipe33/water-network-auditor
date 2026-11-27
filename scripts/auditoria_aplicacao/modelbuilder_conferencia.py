@@ -9,14 +9,15 @@ from pathlib import Path
 import sqlite3
 
 from auditoria_fronteiras.modelos import verificar_cancelamento
-from .modelbuilder_gis import COLUNAS_EVIDENCIA, TIPOS_NOS, _numero
+from .modelbuilder_gis import COLUNAS_EVIDENCIA, COLUNAS_EVIDENCIA_LEGADO, TIPOS_NOS, _numero
 
 
 def ler_evidencia(caminho):
     p=Path(caminho)
     with p.open(newline='',encoding='utf-8-sig') as arq:
         leitor=csv.DictReader(arq)
-        if not leitor.fieldnames or set(leitor.fieldnames)!=set(COLUNAS_EVIDENCIA) or len(leitor.fieldnames)!=len(COLUNAS_EVIDENCIA):
+        colunas=leitor.fieldnames or ()
+        if len(set(colunas))!=len(colunas) or set(colunas) not in (set(COLUNAS_EVIDENCIA),set(COLUNAS_EVIDENCIA_LEGADO)):
             raise ValueError('Use as colunas do arquivo MODELO_CONFERENCIA_WATERGEMS.csv.')
         linhas=list(leitor)
     if any(None in r or None in r.values() for r in linhas):
@@ -46,7 +47,7 @@ def conferir(meta, esperado, observado, modelo, versao, *, cenario='', cancelar=
             motivos.append('WNA_UID repetido' if uids[u]>1 else 'Elemento ausente no modelo de destino')
         elif b['tipo']!=t or not b['id_modelo'] or ids[b['id_modelo']]!=1 or not b['label'] or labels[t,b['label'].casefold()]!=1:
             motivos.append('Tipo, ID efetivo ou Label sem correspondência unívoca')
-        elif t in TIPOS_NOS:
+        elif t in (*TIPOS_NOS,'REGISTRO'):
             xy=_numero(b['x']),_numero(b['y'])
             if None in xy or dist(xy,(a['x'],a['y']))>tolerancia:
                 motivos.append('Coordenadas ausentes ou divergentes no CRS do pacote')
@@ -55,12 +56,17 @@ def conferir(meta, esperado, observado, modelo, versao, *, cenario='', cancelar=
             continue
         verificadas[u]=b
     conexoes={}
+    vinculos={r['uid']:r for r in meta.get('vinculos_equipamentos',())}
     for a in esperado:
         verificar_cancelamento(cancelar)
         u=a['uid']
         b=verificadas.get(u)
         if b is None:
             continue
+        for k in ('montante','jusante','pipe_associado'):
+            ref=vinculos.get(u,{}).get(k)
+            if ref and (b.get(k) is None or verificadas.get(ref,{}).get('id_modelo')!=b[k]):
+                problemas.append(dict(uid=u,tipo=a['tipo'],motivo=f'{k}: Pipe não conferido na evidência de destino'))
         if a['tipo']=='PIPE':
             esperados=[verificadas.get(a[k],{}).get('id_modelo') for k in ('no_a','no_b')]
             if list((b['no_a'],b['no_b']))!=esperados:

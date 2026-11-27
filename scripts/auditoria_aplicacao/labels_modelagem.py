@@ -11,7 +11,9 @@ from auditoria_fronteiras.modelos import verificar_cancelamento
 from . import persistencia_grafo_gis as pg
 
 
-PREFIXOS={'PIPE':'P','JUNCTION':'J','RESERVOIR':'R','TANK':'T','HYDRANT':'H'}
+PREFIXOS={'PIPE':'P','JUNCTION':'J','RESERVOIR':'R','TANK':'T','HYDRANT':'H',
+          'PRV':'PRV','PSV':'PSV','PBV':'PBV','TCV':'TCV','FCV':'FCV','AIR_VALVE':'AV',
+          'PUMP':'PU','REGISTRO':'IV'}
 _ACEITO=re.compile(r'[A-Za-z0-9][A-Za-z0-9_ .-]{0,31}',re.ASCII)
 
 

@@ -4,8 +4,13 @@ from datetime import datetime, timezone
 from uuid import uuid4
 from qgis.core import QgsExpression, QgsFeatureRequest, QgsVariantUtils, Qgis
 from .modelo_gis import chave_feicao
+from .tipos_modelbuilder import CAMADAS
 
 POSICOES = ('DESCONHECIDA', 'INICIO', 'FIM', 'INTERMEDIARIA')
+
+
+def associavel(categoria):
+    return categoria in CAMADAS and categoria!='JUNCTION'
 
 
 def referencia(fonte, feicao):
@@ -36,8 +41,8 @@ def verificar_referencia(ref, fonte, snapshot, cancelar=lambda: False):
 
 
 def declarar(fonte, equipamento, tubos, posicao='DESCONHECIDA', anterior=None):
-    if fonte['categoria'] not in ('RESERVOIR', 'TANK') or equipamento['fonte_uid'] != fonte['uid']:
-        raise ValueError('Selecione um Reservoir ou Tank da fonte cadastrada.')
+    if not associavel(fonte['categoria']) or equipamento['fonte_uid'] != fonte['uid']:
+        raise ValueError('Selecione um equipamento da fonte cadastrada.')
     if not tubos or any(t['categoria'] != 'PIPE' for t in tubos) or posicao not in POSICOES:
         raise ValueError('Selecione tubulações e uma posição válida, ou desconhecida.')
     nova = deepcopy(fonte)

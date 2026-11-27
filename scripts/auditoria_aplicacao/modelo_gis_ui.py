@@ -191,7 +191,8 @@ class EditorFonte(QWidget):
         self.amostra_mais.setMenu(menu)
         navegar_registros(self.amostra,lambda i,a:self.destacar_amostra(aproximar=a),
                           limpar=lambda:self.painel.central.limpar_mapa())
-        if fonte['categoria'] in ('RESERVOIR', 'TANK'):
+        from .associacoes_gis import associavel
+        if associavel(fonte['categoria']):
             secao(area, 'Relações com a rede')
             self.abrir_conexoes, self._conexoes_area = expansivel(area, 'Definir conexões com a rede')
             self.abrir_conexoes.toggled.connect(self.preparar_conexoes)
@@ -268,7 +269,7 @@ class EditorFonte(QWidget):
         try:
             equipamento = self.camada()
             if equipamento.selectedFeatureCount() != 1:
-                raise ValueError('Selecione exatamente um Reservoir ou Tank desta fonte no QGIS.')
+                raise ValueError('Selecione exatamente um equipamento desta fonte no QGIS.')
             fontes = [self.fonte, *[f for f in self.painel.fontes if f['categoria'] == 'PIPE']]
             refs, tarefas = [], []
             for f in fontes:
